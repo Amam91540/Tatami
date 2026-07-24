@@ -294,7 +294,7 @@
   }
   .pdfcal-col-body{ border:1px solid #eee; border-top:none; border-radius:0 0 6px 6px; padding:6px; min-height:40px; background:#FCFCFA; }
   .pdfcal-col-empty{ font-size:10px; color:#bbb; text-align:center; padding:12px 4px; }
-  .pdfcal-event{ border-left:3px solid #6F8248; background:#F1F4EA; border-radius:4px; padding:5px 6px; margin-bottom:6px; }
+  .pdfcal-event{ position:relative; overflow:hidden; border-left:3px solid #6F8248; background:#F1F4EA; border-radius:4px; padding:5px 6px; margin-bottom:6px; }
   .pdfcal-event:last-child{ margin-bottom:0; }
   .pdfcal-event.type-stage{ border-left-color:#B3492F; background:#FDF3E7; }
   .pdfcal-event .pce-day{ font-family:'Rajdhani',sans-serif; font-weight:800; font-size:10.5px; color:#43592B; }
@@ -302,6 +302,13 @@
   .pdfcal-event .pce-name{ font-size:9.5px; font-weight:700; line-height:1.25; margin-top:1px; color:#1A1A1A; }
   .pdfcal-event .pce-city{ font-size:8.5px; color:#888; margin-top:1px; }
   .pdfcal-event .pce-cat{ font-size:7.5px; color:#999; margin-top:2px; font-style:italic; display:flex; align-items:center; flex-wrap:wrap; gap:3px; }
+  .pdfcal-event.is-cancelled .pce-day, .pdfcal-event.is-cancelled .pce-name, .pdfcal-event.is-cancelled .pce-city, .pdfcal-event.is-cancelled .pce-cat{ opacity:0.35; }
+  .pdfcal-cancelled-stamp{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-16deg);
+    font-family:'Rajdhani',sans-serif; font-weight:800; font-size:15px; letter-spacing:0.05em;
+    color:#C21F1F; border:2px solid #C21F1F; border-radius:4px; padding:1px 8px;
+    background:rgba(255,255,255,0.78); white-space:nowrap; pointer-events:none;
+  }
   .cat-dot{ display:inline-block; width:7px; height:7px; border-radius:50%; flex-shrink:0; }
   .pdfcal-legend{ display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 4px; }
   .pdfcal-legend .item{ display:flex; align-items:center; gap:4px; font-size:8.5px; color:#555; }
@@ -2205,10 +2212,14 @@ function renderAgeSettings(){
 function validatedBadgeHtml(validated){
   return validated ? ' <span title="Validé" style="display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%; background:#3F8F3F; color:#fff; font-size:10px; font-weight:800; vertical-align:middle;">✓</span>' : '';
 }
+function cancelledBadgeHtml(cancelled){
+  return cancelled ? ' <span class="tag" style="background:var(--clay-dim); color:var(--clay); font-weight:800; vertical-align:middle;">ANNULÉ</span>' : '';
+}
 function renderImportedCompetitionRow(c){
   const key = competitionKey(c);
   const editing = ui.editingCompetitionKey === key;
   const validated = getCompetitionOverride(c).validated === true;
+  const cancelled = getCompetitionOverride(c).cancelled === true;
   if(editing){
     return `
     <div class="convoc-row" style="flex-direction:column; align-items:stretch; gap:8px;" data-form="imported-edit">
@@ -2234,12 +2245,13 @@ function renderImportedCompetitionRow(c){
   return `
   <div class="convoc-row" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${validatedBadgeHtml(validated)}</div>
+      <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}</div>
       <div class="e">${c.date?fmtDate(c.date):escapeHtml(c.dayLabel)} · ${escapeHtml(effectiveCompetitionCity(c))}</div>
       <div style="margin-top:4px;">${calendarCategoryTagsHtml(importedCompetitionAgeCategories(c))}</div>
     </div>
     <div style="display:flex; gap:4px; flex-shrink:0;">
       <button class="ghost icon-btn" data-action="toggle-validate-imported" data-key="${escapeHtml(key)}" title="${validated?'Retirer la validation':'Valider'}" style="padding:6px 9px; font-size:12px; ${validated?'background:var(--tatami-dim); border-color:var(--tatami); color:var(--tatami);':''}">✓</button>
+      <button class="ghost icon-btn" data-action="toggle-cancel-imported" data-key="${escapeHtml(key)}" title="${cancelled?'Retirer l’annulation':'Marquer comme annulé'}" style="padding:6px 9px; font-size:12px; ${cancelled?'background:var(--clay-dim); border-color:var(--clay); color:var(--clay);':''}">🚫</button>
       <button class="ghost icon-btn" data-action="edit-imported-competition" data-key="${escapeHtml(key)}" title="Modifier" style="padding:6px 9px; font-size:12px;">✏️</button>
       <button class="ghost icon-btn" data-action="delete-imported-competition" data-key="${escapeHtml(key)}" title="Supprimer définitivement" style="padding:6px 9px; font-size:12px;">✕</button>
     </div>
@@ -2285,15 +2297,17 @@ function renderManualEventRow(e){
   }
   const typeBadge = e.type==='stage' ? '🥋' : '🏆';
   const validated = e.validated === true;
+  const cancelled = e.cancelled === true;
   return `
   <div class="convoc-row" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)} <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Ajouté</span></div>
+      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)} <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Ajouté</span></div>
       <div class="e">${e.date?fmtDate(e.date):''}${e.city?' · '+escapeHtml(e.city):''}</div>
       <div style="margin-top:4px;">${calendarCategoryTagsHtml(e.ageCategories!==undefined?e.ageCategories:[])}</div>
     </div>
     <div style="display:flex; gap:4px; flex-shrink:0;">
       <button class="ghost icon-btn" data-action="toggle-validate-manual" data-id="${escapeHtml(e.id)}" title="${validated?'Retirer la validation':'Valider'}" style="padding:6px 9px; font-size:12px; ${validated?'background:var(--tatami-dim); border-color:var(--tatami); color:var(--tatami);':''}">✓</button>
+      <button class="ghost icon-btn" data-action="toggle-cancel-manual" data-id="${escapeHtml(e.id)}" title="${cancelled?'Retirer l’annulation':'Marquer comme annulé'}" style="padding:6px 9px; font-size:12px; ${cancelled?'background:var(--clay-dim); border-color:var(--clay); color:var(--clay);':''}">🚫</button>
       <button class="ghost icon-btn" data-action="edit-manual-event" data-id="${escapeHtml(e.id)}" title="Modifier" style="padding:6px 9px; font-size:12px;">✏️</button>
       <button class="ghost icon-btn" data-action="delete-manual-event" data-id="${escapeHtml(e.id)}" title="Supprimer" style="padding:6px 9px; font-size:12px;">✕</button>
     </div>
@@ -2560,6 +2574,30 @@ function renderImportedCompetitionsSettings(){
       renderImportedCompetitionsSettings();
       renderCompetitionsCalendarCard();
       showToast(entry.validated ? 'Événement validé' : 'Validation retirée');
+    });
+  });
+  wrap.querySelectorAll('[data-action="toggle-cancel-imported"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!data.settings.competitionOverrides) data.settings.competitionOverrides = {};
+      const key = btn.dataset.key;
+      const existing = data.settings.competitionOverrides[key] || {};
+      const nowCancelled = !existing.cancelled;
+      data.settings.competitionOverrides[key] = { ...existing, cancelled: nowCancelled };
+      saveData();
+      renderImportedCompetitionsSettings();
+      renderCompetitionsCalendarCard();
+      showToast(nowCancelled ? 'Compétition marquée comme annulée' : 'Annulation retirée');
+    });
+  });
+  wrap.querySelectorAll('[data-action="toggle-cancel-manual"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
+      if(!entry) return;
+      entry.cancelled = !entry.cancelled;
+      saveData();
+      renderImportedCompetitionsSettings();
+      renderCompetitionsCalendarCard();
+      showToast(entry.cancelled ? 'Événement marqué comme annulé' : 'Annulation retirée');
     });
   });
 
@@ -3890,7 +3928,7 @@ function buildCalendarTimelineHtml(entries){
         <div class="cal-event type-${en.type}">
           <div class="cal-daybox"><div class="d">${day}</div><div class="m">${MONTH_NAMES_FR[d.getMonth()].slice(0,3)}</div></div>
           <div class="cal-info">
-            <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}${validatedBadgeHtml(en.validated || isPassed)}</div>
+            <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}${validatedBadgeHtml(en.validated || isPassed)}${cancelledBadgeHtml(en.cancelled)}</div>
             <div class="e">${escapeHtml(en.city||'')}</div>
             <div class="cats">${catsHtml}</div>
           </div>
@@ -3999,12 +4037,14 @@ function buildCalendarGridHtml(monthBlocks, logoSrc, title, showLegend){
               const bgStyle = catList.length===1 ? ` style="background:${hexToRgba(categoryColorForLabel(catList[0]), 0.16)};"`
                 : catList.length>1 ? ` style="background:${hexToRgba(MULTI_CATEGORY_COLOR, 0.16)};"` : '';
               const dotsHtml = catList.map(l=>`<span class="cat-dot" style="background:${categoryColorForLabel(l)}"></span>`).join('');
+              const cancelled = en.cancelled === true;
               return `
-              <div class="pdfcal-event type-${en.type}"${bgStyle}>
+              <div class="pdfcal-event type-${en.type}${cancelled?' is-cancelled':''}"${bgStyle}>
                 <div class="pce-day">${DAY_ABBR_FR[d.getDay()]} ${d.getDate()}</div>
                 <div class="pce-name">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}</div>
                 ${en.city ? `<div class="pce-city">${escapeHtml(en.city)}</div>` : ''}
                 <div class="pce-cat"${hasCategory?'':' style="color:#B3492F; font-weight:700;"'}>${dotsHtml}<span>${escapeHtml(catLabel)}</span></div>
+                ${cancelled ? '<div class="pdfcal-cancelled-stamp">ANNULÉ</div>' : ''}
               </div>`;
             }).join('')}
           </div>
@@ -4915,12 +4955,14 @@ function getAllCalendarEntries(){
     name: effectiveCompetitionName(c), date: c.date||'', dayLabel: c.dayLabel||'',
     city: effectiveCompetitionCity(c),
     ageCategories: importedCompetitionAgeCategories(c),
-    validated: getCompetitionOverride(c).validated === true
+    validated: getCompetitionOverride(c).validated === true,
+    cancelled: getCompetitionOverride(c).cancelled === true
   }));
   const manual = (data.calendarEvents||[]).map(e=>({
     key: 'manual-'+e.id, kind:'manual', id:e.id, type: e.type||'competition',
     name: e.name||'', date: e.date||'', dayLabel:'',
     city: e.city||'',
+    cancelled: e.cancelled === true,
     ageCategories: e.ageCategories!==undefined ? e.ageCategories : [],
     validated: e.validated === true
   }));
