@@ -886,6 +886,18 @@ function fmtDate(s){
   if(isNaN(d.getTime())) return '';
   return d.toLocaleDateString('fr-FR', { day:'2-digit', month:'short', year:'numeric' });
 }
+// Affiche une plage de dates pour une compétition/stage qui dure plusieurs jours (ex. "du 12 au
+// 13 juin 2027"). Si aucune date de fin n'est renseignée, ou qu'elle est identique à la date de
+// début, on retombe simplement sur une date unique — comportement inchangé pour tout ce qui
+// existait avant l'ajout de ce champ.
+function fmtDateRange(start, end){
+  if(!start) return '';
+  if(!end || end===start) return fmtDate(start);
+  const d1 = new Date(start+'T00:00:00'), d2 = new Date(end+'T00:00:00');
+  if(isNaN(d1.getTime()) || isNaN(d2.getTime())) return fmtDate(start);
+  const sameMonth = d1.getMonth()===d2.getMonth() && d1.getFullYear()===d2.getFullYear();
+  return sameMonth ? `du ${d1.getDate()} au ${fmtDate(end)}` : `du ${fmtDate(start)} au ${fmtDate(end)}`;
+}
 function showToast(msg, duration){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -2280,6 +2292,10 @@ function renderManualEventRow(e){
         </div>
       </div>
       <div>
+        <span class="field-label">Date de fin (optionnel, si l'événement dure plusieurs jours)</span>
+        <input type="date" data-field="dateEnd" value="${escapeHtml(e.dateEnd||'')}">
+      </div>
+      <div>
         <span class="field-label">Nom de l'événement</span>
         <input type="text" data-field="name" value="${escapeHtml(e.name||'')}">
       </div>
@@ -2305,7 +2321,7 @@ function renderManualEventRow(e){
   <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
       <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)} ${e.source ? '<span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">Fédération</span>' : '<span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Ajouté</span>'}</div>
-      <div class="e">${e.date?fmtDate(e.date):''}${e.city?' · '+escapeHtml(e.city):''}</div>
+      <div class="e">${e.date?fmtDateRange(e.date, e.dateEnd):''}${e.city?' · '+escapeHtml(e.city):''}</div>
       <div style="margin-top:4px;">${calendarCategoryTagsHtml(e.ageCategories!==undefined?e.ageCategories:[])}</div>
     </div>
     <div style="display:flex; gap:4px; flex-shrink:0;">
@@ -2331,6 +2347,10 @@ function renderCalendarAddForm(){
         <span class="field-label">Date</span>
         <input type="date" data-field="date">
       </div>
+    </div>
+    <div>
+      <span class="field-label">Date de fin (optionnel, si l'événement dure plusieurs jours)</span>
+      <input type="date" data-field="dateEnd">
     </div>
     <div>
       <span class="field-label">Nom de l'événement</span>
@@ -2551,6 +2571,8 @@ function renderImportedCompetitionsSettings(){
       const name = addForm.querySelector('[data-field="name"]').value.trim();
       const dateVal = addForm.querySelector('[data-field="date"]').value;
       if(!name || !dateVal){ showToast('Renseigne au moins le nom et la date'); return; }
+      let dateEndVal = addForm.querySelector('[data-field="dateEnd"]').value;
+      if(dateEndVal && dateEndVal < dateVal){ showToast('La date de fin ne peut pas être avant la date de début — ignorée'); dateEndVal = ''; }
       const cityVal = addForm.querySelector('[data-field="city"]').value.trim();
       const addressVal = addForm.querySelector('[data-field="address"]').value.trim();
       const ageCategoriesVal = readAgeCategoriesFromForm(addForm);
@@ -2559,6 +2581,7 @@ function renderImportedCompetitionsSettings(){
         type: addForm.querySelector('[data-field="type"]').value,
         name,
         date: dateVal,
+        dateEnd: dateEndVal,
         city: cityVal,
         address: addressVal,
         ageCategories: ageCategoriesVal
@@ -2697,6 +2720,9 @@ function renderImportedCompetitionsSettings(){
       entry.type = manualEditForm.querySelector('[data-field="type"]').value;
       entry.name = manualEditForm.querySelector('[data-field="name"]').value.trim();
       entry.date = manualEditForm.querySelector('[data-field="date"]').value;
+      let dateEndVal = manualEditForm.querySelector('[data-field="dateEnd"]').value;
+      if(dateEndVal && dateEndVal < entry.date){ showToast('La date de fin ne peut pas être avant la date de début — ignorée'); dateEndVal = ''; }
+      entry.dateEnd = dateEndVal;
       entry.city = manualEditForm.querySelector('[data-field="city"]').value.trim();
       entry.address = manualEditForm.querySelector('[data-field="address"]').value.trim();
       entry.ageCategories = readAgeCategoriesFromForm(manualEditForm);
@@ -4115,7 +4141,7 @@ function buildCalendarTimelineHtml(entries){
           <div class="cal-daybox"><div class="d">${day}</div><div class="m">${MONTH_NAMES_FR[d.getMonth()].slice(0,3)}</div></div>
           <div class="cal-info">
             <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}${validatedBadgeHtml(en.validated || isPassed)}${cancelledBadgeHtml(en.cancelled)}</div>
-            <div class="e">${escapeHtml(en.city||'')}</div>
+            <div class="e">${en.dateEnd && en.dateEnd!==en.date ? fmtDateRange(en.date, en.dateEnd)+' — ' : ''}${escapeHtml(en.city||'')}</div>
             <div class="cats">${catsHtml}</div>
           </div>
         </div>`;
@@ -4224,9 +4250,14 @@ function buildCalendarGridHtml(monthBlocks, logoSrc, title, showLegend){
                 : catList.length>1 ? ` style="background:${hexToRgba(MULTI_CATEGORY_COLOR, 0.16)};"` : '';
               const dotsHtml = catList.map(l=>`<span class="cat-dot" style="background:${categoryColorForLabel(l)}"></span>`).join('');
               const cancelled = en.cancelled === true;
+              let dayLabelHtml = `${DAY_ABBR_FR[d.getDay()]} ${d.getDate()}`;
+              if(en.dateEnd && en.dateEnd!==en.date){
+                const d2 = new Date(en.dateEnd+'T00:00:00');
+                if(!isNaN(d2.getTime())) dayLabelHtml += ` → ${DAY_ABBR_FR[d2.getDay()]} ${d2.getDate()}`;
+              }
               return `
               <div class="pdfcal-event type-${en.type}${cancelled?' is-cancelled':''}"${bgStyle}>
-                <div class="pce-day">${DAY_ABBR_FR[d.getDay()]} ${d.getDate()}</div>
+                <div class="pce-day">${dayLabelHtml}</div>
                 <div class="pce-name">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}</div>
                 ${en.city ? `<div class="pce-city">${escapeHtml(en.city)}</div>` : ''}
                 <div class="pce-cat"${hasCategory?'':' style="color:#B3492F; font-weight:700;"'}>${dotsHtml}<span>${escapeHtml(catLabel)}</span></div>
@@ -5146,7 +5177,7 @@ function getAllCalendarEntries(){
   }));
   const manual = (data.calendarEvents||[]).map(e=>({
     key: 'manual-'+e.id, kind:'manual', id:e.id, type: e.type||'competition',
-    name: e.name||'', date: e.date||'', dayLabel: e.dayLabel||'',
+    name: e.name||'', date: e.date||'', dateEnd: e.dateEnd||'', dayLabel: e.dayLabel||'',
     city: e.city||'',
     cancelled: e.cancelled === true,
     ageCategories: e.ageCategories!==undefined ? e.ageCategories : [],
@@ -5204,12 +5235,12 @@ function migrateFederationCalendarOnce(){
  * ici faute de date connue ; il est à ajouter à la main via "+ Ajouter une compétition ou un
  * stage" dès que la Ligue/le Comité communique la date. */
 const VETERAN_CALENDAR_2026_2027 = [
-  { name:"Championnat du Monde Vétérans", city:"Sarajevo (Bosnie-Herzégovine)", date:"2026-09-20", dayLabel:"du 20 au 24 septembre 2026", level:"International" },
-  { name:"Championnats d'Europe Vétérans", city:"Portimao (Portugal)", date:"2027-10-22", dayLabel:"du 22 au 25 octobre 2027", level:"International" },
+  { name:"Championnat du Monde Vétérans", city:"Sarajevo (Bosnie-Herzégovine)", date:"2026-09-20", dateEnd:"2026-09-24", dayLabel:"du 20 au 24 septembre 2026", level:"International" },
+  { name:"Championnats d'Europe Vétérans", city:"Portimao (Portugal)", date:"2027-10-22", dateEnd:"2027-10-25", dayLabel:"du 22 au 25 octobre 2027", level:"International" },
   { name:"Tournoi de Nantes", city:"Nantes", date:"2026-11-21", dayLabel:"21 novembre 2026", level:"Label A" },
   { name:"Tournoi de Fontaine", city:"Fontaine", date:"2026-11-21", dayLabel:"21 novembre 2026", level:"Excellence" },
   { name:"Tournoi d'Angers", city:"Angers", date:"2026-12-05", dayLabel:"5 décembre 2026", level:"Excellence" },
-  { name:"Tournoi de Mouvaux", city:"Mouvaux", date:"2027-01-23", dayLabel:"23 et 24 janvier 2027", level:"Super Excellence" },
+  { name:"Tournoi de Mouvaux", city:"Mouvaux", date:"2027-01-23", dateEnd:"2027-01-24", dayLabel:"23 et 24 janvier 2027", level:"Super Excellence" },
   { name:"Tournoi International Vétérans BFC", city:"Besançon", date:"2027-02-21", dayLabel:"21 février 2027", level:"Excellence" },
   { name:"Tournoi Elven", city:"Elven", date:"2027-02-27", dayLabel:"27 février 2027", level:"Label A" },
   { name:"Tournoi de France par équipe mixte (Tournoi Patrick Latour)", city:"Ozoir-la-Ferrière", date:"2027-03-13", dayLabel:"13 mars 2027", level:"France" },
@@ -5220,7 +5251,7 @@ const VETERAN_CALENDAR_2026_2027 = [
   { name:"Master d'Artagnan", city:"Auch", date:"2027-05-08", dayLabel:"8 mai 2027", level:"Excellence" },
   { name:"Tournoi de Provence", city:"", date:"2027-05-15", dayLabel:"15 mai 2027 (date à confirmer)", level:"Excellence" },
   { name:"Tournoi des Vikings", city:"Gonfreville-l'Orcher", date:"2027-05-29", dayLabel:"29 mai 2027", level:"Label A" },
-  { name:"Championnats de France Vétérans", city:"Villebon-sur-Yvette", date:"2027-06-12", dayLabel:"12 et 13 juin 2027", level:"France" }
+  { name:"Championnats de France Vétérans", city:"Villebon-sur-Yvette", date:"2027-06-12", dateEnd:"2027-06-13", dayLabel:"12 et 13 juin 2027", level:"France" }
 ];
 function seedVeteranCalendar2026Once(){
   const flag = 'veteranCalendar2026Seeded';
@@ -5228,7 +5259,7 @@ function seedVeteranCalendar2026Once(){
   if(!data.calendarEvents) data.calendarEvents = [];
   VETERAN_CALENDAR_2026_2027.forEach(v=>{
     data.calendarEvents.push({
-      id: uid(), type:'competition', name: v.name, date: v.date, city: v.city||'', address:'',
+      id: uid(), type:'competition', name: v.name, date: v.date, dateEnd: v.dateEnd||'', city: v.city||'', address:'',
       ageCategories:['Vétérans'], validated:false, cancelled:false,
       level: v.level, dayLabel: v.dayLabel, details:[], weighIn:[],
       source:'veteran-france-judo'
@@ -5570,7 +5601,7 @@ function renderCalendarOtherSearchResults(query){
     <div class="convoc-row" data-action="pick-calendar-other" data-key="${escapeHtml(en.key)}" style="cursor:pointer;">
       <div class="info">
         <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}</div>
-        <div class="e">${en.date?fmtDate(en.date):''} · ${escapeHtml(en.city||'')}</div>
+        <div class="e">${en.date?fmtDateRange(en.date, en.dateEnd):''} · ${escapeHtml(en.city||'')}</div>
       </div>
     </div>`).join('') || '<div class="empty" style="padding:10px;">Aucun résultat.</div>';
   wrap.querySelectorAll('[data-action="pick-calendar-other"]').forEach(row=>{
