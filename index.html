@@ -3,11 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Tatami — Suivi des présences</title><!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tatami — Suivi des présences</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600;700&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet">
@@ -1170,6 +1165,7 @@ function setBackendConfig(cfg){
 async function loadData(){
   const cfg = getBackendConfig();
   let loadedFromBackend = false;
+  let pendingMergeOnLoad = false;
   if(cfg && cfg.url && cfg.key){
     try{
       const res = await fetch(`${cfg.url}?key=${encodeURIComponent(cfg.key)}`);
@@ -1180,6 +1176,13 @@ async function loadData(){
         // champs au lieu de les effacer silencieusement à chaque chargement.
         let local = null;
         try{ const raw = localStorage.getItem('dojo-data'); if(raw) local = JSON.parse(raw); }catch(e){}
+        let lastSynced = null;
+        try{ const raw = localStorage.getItem('dojo-synced-snapshot'); if(raw) lastSynced = JSON.parse(raw); }catch(e){}
+        // On garde une copie du serveur AVANT de réinjecter les changements locaux en attente :
+        // c'est cette version-là (et pas la fusionnée) qui doit servir de référence "connue
+        // synchronisée" pour la prochaine sauvegarde, sans quoi un changement local pas encore
+        // confirmé serait à tort considéré comme déjà envoyé et ne serait jamais réessayé.
+        const preMergeServerSnapshot = snapshotFrom(json);
         data = json;
         if(local && typeof local === 'object'){
           Object.keys(local).forEach(key=>{
@@ -1190,6 +1193,19 @@ async function loadData(){
             Object.keys(local.settings).forEach(key=>{
               if(data.settings[key] === undefined) data.settings[key] = local.settings[key];
             });
+          }
+          SYNCED_SNAPSHOT_COLLECTIONS.forEach(coll=>{
+            const deletedIds = (local.deletedIds && local.deletedIds[coll]) || [];
+            const merged = mergeLocalPendingArray(data[coll], local[coll], lastSynced ? lastSynced[coll] : null, deletedIds);
+            if(JSON.stringify(merged) !== JSON.stringify(data[coll])){ pendingMergeOnLoad = true; data[coll] = merged; }
+          });
+          const mergedAtt = mergeLocalPendingAttendance(data.attendance, local.attendance, lastSynced ? lastSynced.attendance : null);
+          if(JSON.stringify(mergedAtt) !== JSON.stringify(data.attendance)){ pendingMergeOnLoad = true; data.attendance = mergedAtt; }
+          if(pendingMergeOnLoad){
+            // On sait maintenant que le serveur a une version en retard sur au moins une entité :
+            // on fixe la référence de synchro sur CETTE version serveur (pas la fusionnée), pour
+            // que la sauvegarde qu'on déclenche juste après renvoie bien les changements en attente.
+            syncedSnapshot = preMergeServerSnapshot;
           }
         }
         data.groups ||= []; data.members ||= []; data.sessions ||= []; data.attendance ||= {};
@@ -1222,9 +1238,17 @@ async function loadData(){
   ready = true;
   document.getElementById('clubName').value = data.clubName || '';
   document.getElementById('clubContact').value = data.clubContact || '';
-  // Point de référence pour ne renvoyer, à la prochaine sauvegarde, que ce qui aura réellement
-  // changé sur cet appareil depuis ce chargement (voir captureSyncedSnapshot).
-  captureSyncedSnapshot();
+  if(pendingMergeOnLoad){
+    // Un changement fait juste avant ce rechargement n'avait pas encore été confirmé par le
+    // serveur (voir mergeLocalPendingArray) : on relance tout de suite la sauvegarde pour qu'il
+    // ne reste pas bloqué en attente. saveData() se charge lui-même, une fois l'envoi réussi, de
+    // fixer la nouvelle référence de synchro (captureSyncedSnapshot) — inutile de l'appeler ici.
+    saveData();
+  } else {
+    // Point de référence pour ne renvoyer, à la prochaine sauvegarde, que ce qui aura réellement
+    // changé sur cet appareil depuis ce chargement (voir captureSyncedSnapshot).
+    captureSyncedSnapshot();
+  }
   renderAll();
 }
 let saveInFlight = false;
@@ -1246,18 +1270,18 @@ let savePendingAfter = false;
 let syncedSnapshot = null;
 function cloneArr(arr){ return JSON.parse(JSON.stringify(arr||[])); }
 function cloneObj(obj){ return JSON.parse(JSON.stringify(obj||{})); }
+const SYNCED_SNAPSHOT_COLLECTIONS = ['groups','members','sessions','stages','beltPassages','calendarEvents','convocEvents','archivedSeasons'];
+function snapshotFrom(source){
+  const snap = {};
+  SYNCED_SNAPSHOT_COLLECTIONS.forEach(k=> snap[k] = cloneArr(source[k]));
+  snap.attendance = cloneObj(source.attendance);
+  return snap;
+}
 function captureSyncedSnapshot(){
-  syncedSnapshot = {
-    groups: cloneArr(data.groups),
-    members: cloneArr(data.members),
-    sessions: cloneArr(data.sessions),
-    stages: cloneArr(data.stages),
-    beltPassages: cloneArr(data.beltPassages),
-    calendarEvents: cloneArr(data.calendarEvents),
-    convocEvents: cloneArr(data.convocEvents),
-    archivedSeasons: cloneArr(data.archivedSeasons),
-    attendance: cloneObj(data.attendance)
-  };
+  syncedSnapshot = snapshotFrom(data);
+  // Persisté à part de 'dojo-data' (qui peut être en avance dessus) pour survivre à un
+  // rechargement de page : voir mergeLocalPendingArray plus bas pour pourquoi c'est nécessaire.
+  try{ localStorage.setItem('dojo-synced-snapshot', JSON.stringify(syncedSnapshot)); }catch(e){}
 }
 // Ne garde que les éléments d'un tableau (identifiés par leur id) absents du dernier instantané
 // connu ou dont le contenu a changé depuis. Si on n'a encore aucun instantané (tout premier envoi,
@@ -1279,6 +1303,42 @@ function pickChangedAttendance(currentAtt, snapshotAtt){
     if(!prev || JSON.stringify(prev) !== JSON.stringify(cur)) out[sessionId] = cur;
   });
   return out;
+}
+
+// Symétrique de pickChangedById, utilisé au CHARGEMENT plutôt qu'à la sauvegarde : si une action
+// (ex. valider une compétition) a modifié 'dojo-data' localement juste avant qu'on recharge la
+// page — trop tôt pour que la sauvegarde en ligne ait eu le temps d'aboutir — la version du
+// classeur qu'on vient de récupérer est encore l'ancienne. Sans ça, elle écraserait purement et
+// simplement ce changement local en mémoire, qui semblerait alors "annulé" après actualisation.
+// On réinjecte donc, par-dessus les données fraîchement reçues du serveur, tout élément dont la
+// version locale diffère du dernier état qu'on sait avoir réellement été confirmé synchronisé.
+function mergeLocalPendingArray(serverArr, localArr, snapshotArr, deletedIds){
+  // Une suppression locale pas encore confirmée doit être respectée même si elle est la SEULE
+  // chose en attente (localArr ne contient alors plus l'élément du tout, donc rien à "réinjecter"
+  // pour lui — c'est le filtre ci-dessous, appliqué systématiquement, qui l'empêche de réapparaître).
+  const deletedSet = new Set(deletedIds||[]);
+  const base = (serverArr||[]).filter(x=> !deletedSet.has(x.id));
+  if(!localArr || !localArr.length) return base;
+  const snapshotMap = new Map((snapshotArr||[]).map(x=>[x.id, x]));
+  const pending = localArr.filter(item=>{
+    const snap = snapshotMap.get(item.id);
+    return !snap || JSON.stringify(snap) !== JSON.stringify(item);
+  });
+  if(pending.length===0) return base;
+  const merged = new Map(base.map(x=>[x.id, x]));
+  pending.forEach(item=> merged.set(item.id, item));
+  return Array.from(merged.values()).filter(x=> !deletedSet.has(x.id));
+}
+function mergeLocalPendingAttendance(serverAtt, localAtt, snapshotAtt){
+  if(!localAtt) return serverAtt||{};
+  const merged = { ...(serverAtt||{}) };
+  let any = false;
+  Object.keys(localAtt).forEach(sessionId=>{
+    const cur = localAtt[sessionId] || {};
+    const snap = (snapshotAtt||{})[sessionId];
+    if(!snap || JSON.stringify(snap) !== JSON.stringify(cur)){ merged[sessionId] = cur; any = true; }
+  });
+  return any ? merged : (serverAtt||{});
 }
 
 async function saveData(){
@@ -2235,6 +2295,9 @@ function validatedBadgeHtml(validated){
 function cancelledBadgeHtml(cancelled){
   return cancelled ? ' <span class="tag" style="background:var(--clay-dim); color:var(--clay); font-weight:800; vertical-align:middle;">ANNULÉ</span>' : '';
 }
+function incompleteBadgeHtml(incomplete){
+  return incomplete ? ' <span title="Informations manquantes — vérifie le nom, la ville, l’adresse et la catégorie d’âge" style="display:inline-block; vertical-align:middle; font-size:13px;">⚠️</span>' : '';
+}
 function renderImportedCompetitionRow(c){
   const key = competitionKey(c);
   const editing = ui.editingCompetitionKey === key;
@@ -2265,7 +2328,7 @@ function renderImportedCompetitionRow(c){
   return `
   <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}</div>
+      <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'imported', c}))}</div>
       <div class="e">${c.date?fmtDate(c.date):escapeHtml(c.dayLabel)} · ${escapeHtml(effectiveCompetitionCity(c))}</div>
       <div style="margin-top:4px;">${calendarCategoryTagsHtml(importedCompetitionAgeCategories(c))}</div>
     </div>
@@ -2325,7 +2388,7 @@ function renderManualEventRow(e){
   return `
   <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}</div>
+      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'manual', e}))}</div>
       <div class="e">${e.date?fmtDateRange(e.date, e.dateEnd):''}${e.city?' · '+escapeHtml(e.city):''}</div>
       <div style="margin-top:4px;">${calendarCategoryTagsHtml(e.ageCategories!==undefined?e.ageCategories:[])}</div>
     </div>
