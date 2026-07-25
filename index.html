@@ -1199,6 +1199,7 @@ async function loadData(){
   ensureKnownRecurrence();
   if(migrateValidatedFlag()){ saveData(); }
   if(cleanupUnvalidatedSessions()){ saveData(); }
+  if(seedVeteranCalendar2026Once()){ saveData(); }
   document.documentElement.setAttribute('data-theme', data.settings.theme);
   document.getElementById('themeToggle').textContent = data.settings.theme==='light' ? '🌙' : '☀️';
   ready = true;
@@ -2303,7 +2304,7 @@ function renderManualEventRow(e){
   return `
   <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)} ${e.source==='federation' ? '<span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">Fédération</span>' : '<span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Ajouté</span>'}</div>
+      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)} ${e.source ? '<span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">Fédération</span>' : '<span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Ajouté</span>'}</div>
       <div class="e">${e.date?fmtDate(e.date):''}${e.city?' · '+escapeHtml(e.city):''}</div>
       <div style="margin-top:4px;">${calendarCategoryTagsHtml(e.ageCategories!==undefined?e.ageCategories:[])}</div>
     </div>
@@ -5192,6 +5193,49 @@ function migrateFederationCalendarOnce(){
   });
   data.settings.federationCalendarMigrated = true;
   saveData();
+}
+
+/* ---------------- CALENDRIER VÉTÉRANS 2026-2027 (France Judo) ----------------
+ * Transcrit une seule fois depuis l'affiche officielle du calendrier vétérans, puis ajouté
+ * directement dans data.calendarEvents (comme n'importe quel événement ajouté manuellement,
+ * pleinement modifiable/supprimable ensuite). Le "level" reprend le code couleur de la légende
+ * (vert=Super Excellence, rouge=Excellence, bleu=Label A, crème=France, marron=International).
+ * Le tournoi "TREMBLAY EN FRANCE" (date encore en attente sur l'affiche) n'a pas pu être ajouté
+ * ici faute de date connue ; il est à ajouter à la main via "+ Ajouter une compétition ou un
+ * stage" dès que la Ligue/le Comité communique la date. */
+const VETERAN_CALENDAR_2026_2027 = [
+  { name:"Championnat du Monde Vétérans", city:"Sarajevo (Bosnie-Herzégovine)", date:"2026-09-20", dayLabel:"du 20 au 24 septembre 2026", level:"International" },
+  { name:"Championnats d'Europe Vétérans", city:"Portimao (Portugal)", date:"2027-10-22", dayLabel:"du 22 au 25 octobre 2027", level:"International" },
+  { name:"Tournoi de Nantes", city:"Nantes", date:"2026-11-21", dayLabel:"21 novembre 2026", level:"Label A" },
+  { name:"Tournoi de Fontaine", city:"Fontaine", date:"2026-11-21", dayLabel:"21 novembre 2026", level:"Excellence" },
+  { name:"Tournoi d'Angers", city:"Angers", date:"2026-12-05", dayLabel:"5 décembre 2026", level:"Excellence" },
+  { name:"Tournoi de Mouvaux", city:"Mouvaux", date:"2027-01-23", dayLabel:"23 et 24 janvier 2027", level:"Super Excellence" },
+  { name:"Tournoi International Vétérans BFC", city:"Besançon", date:"2027-02-21", dayLabel:"21 février 2027", level:"Excellence" },
+  { name:"Tournoi Elven", city:"Elven", date:"2027-02-27", dayLabel:"27 février 2027", level:"Label A" },
+  { name:"Tournoi de France par équipe mixte (Tournoi Patrick Latour)", city:"Ozoir-la-Ferrière", date:"2027-03-13", dayLabel:"13 mars 2027", level:"France" },
+  { name:"International des Vignobles du Médoc et du Bordelais (Tournoi Jean Thébault)", city:"Lormont", date:"2027-03-28", dayLabel:"28 mars 2027", level:"Excellence" },
+  { name:"Tournoi de Savoie", city:"", date:"2027-04-04", dayLabel:"4 avril 2027", level:"Label A" },
+  { name:"Master de Tours", city:"Tours", date:"2027-04-17", dayLabel:"17 avril 2027", level:"Excellence" },
+  { name:"Tournoi de Gérardmer", city:"Gérardmer", date:"2027-05-01", dayLabel:"1er mai 2027", level:"Excellence" },
+  { name:"Master d'Artagnan", city:"Auch", date:"2027-05-08", dayLabel:"8 mai 2027", level:"Excellence" },
+  { name:"Tournoi de Provence", city:"", date:"2027-05-15", dayLabel:"15 mai 2027 (date à confirmer)", level:"Excellence" },
+  { name:"Tournoi des Vikings", city:"Gonfreville-l'Orcher", date:"2027-05-29", dayLabel:"29 mai 2027", level:"Label A" },
+  { name:"Championnats de France Vétérans", city:"Villebon-sur-Yvette", date:"2027-06-12", dayLabel:"12 et 13 juin 2027", level:"France" }
+];
+function seedVeteranCalendar2026Once(){
+  const flag = 'veteranCalendar2026Seeded';
+  if(data.settings[flag]) return false;
+  if(!data.calendarEvents) data.calendarEvents = [];
+  VETERAN_CALENDAR_2026_2027.forEach(v=>{
+    data.calendarEvents.push({
+      id: uid(), type:'competition', name: v.name, date: v.date, city: v.city||'', address:'',
+      ageCategories:['Vétérans'], validated:false, cancelled:false,
+      level: v.level, dayLabel: v.dayLabel, details:[], weighIn:[],
+      source:'veteran-france-judo'
+    });
+  });
+  data.settings[flag] = true;
+  return true;
 }
 
 const CAL_MONTHS_FR = { SEPTEMBRE:9, OCTOBRE:10, NOVEMBRE:11, DECEMBRE:12, JANVIER:1, FEVRIER:2, MARS:3, AVRIL:4, MAI:5, JUIN:6, JUILLET:7, AOUT:8 };
