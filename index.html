@@ -175,6 +175,7 @@
   .member-chip.edit-fiche .fiche-row1 input[data-action="edit-lastname"]{ font-weight:700; }
   .member-chip.edit-fiche .fiche-field{ flex:1; min-width:0; }
   .member-chip.highlight-flash{ animation: fichePulse 1.8s ease; border-radius:8px; }
+  .convoc-row.highlight-flash{ animation: fichePulse 1.8s ease; border-radius:8px; }
   @keyframes fichePulse{ 0%{ background:var(--tatami-dim); } 100%{ background:transparent; } }
 
   .attend-row{
@@ -2244,7 +2245,7 @@ function renderImportedCompetitionRow(c){
     </div>`;
   }
   return `
-  <div class="convoc-row" style="align-items:flex-start;">
+  <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
       <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}</div>
       <div class="e">${c.date?fmtDate(c.date):escapeHtml(c.dayLabel)} · ${escapeHtml(effectiveCompetitionCity(c))}</div>
@@ -2300,7 +2301,7 @@ function renderManualEventRow(e){
   const validated = e.validated === true;
   const cancelled = e.cancelled === true;
   return `
-  <div class="convoc-row" style="align-items:flex-start;">
+  <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
       <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)} ${e.source==='federation' ? '<span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">Fédération</span>' : '<span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Ajouté</span>'}</div>
       <div class="e">${e.date?fmtDate(e.date):''}${e.city?' · '+escapeHtml(e.city):''}</div>
@@ -2392,13 +2393,6 @@ function renderImportedCompetitionsSettings(){
   if(ui.calendarSettingsSearchQuery===undefined) ui.calendarSettingsSearchQuery = '';
 
   let filteredRows = rows;
-  const searchQuery = calStripAccents(ui.calendarSettingsSearchQuery).toLowerCase().trim();
-  if(searchQuery){
-    filteredRows = filteredRows.filter(r=>{
-      const f = calendarRowFields(r);
-      return calStripAccents(f.name||'').toLowerCase().includes(searchQuery);
-    });
-  }
   if(ui.calendarSettingsFilterIncomplete){
     filteredRows = filteredRows.filter(r=> isCalendarRowIncomplete(r));
   }
@@ -2409,7 +2403,7 @@ function renderImportedCompetitionsSettings(){
       return calendarEntryAppliesToCategory(f.ageCategories, ui.calendarSettingsFilterCategory);
     });
   }
-  const filtersActive = ui.calendarSettingsFilterIncomplete || ui.calendarSettingsFilterCategory !== 'all' || !!searchQuery;
+  const filtersActive = ui.calendarSettingsFilterIncomplete || ui.calendarSettingsFilterCategory !== 'all';
   const countLabel = filtersActive ? `${filteredRows.length}/${rows.length}` : `${rows.length}`;
   const categoryOptions = calendarSelectableCategories();
 
@@ -2421,8 +2415,9 @@ function renderImportedCompetitionsSettings(){
     ${expanded ? `
     <p style="font-size:12.5px; color:var(--ink-dim); margin:10px 0;">Supprimer une compétition importée ici la retire définitivement — elle ne réapparaîtra plus. Le crayon permet de corriger le nom, la ville, l'adresse et les catégories d'âge concernées. Tu peux aussi ajouter toi-même une compétition ou un stage absent de la liste importée.</p>
     <div style="position:relative; margin-bottom:10px;">
-      <input type="text" id="calendarSettingsSearch" placeholder="Rechercher une compétition ou un stage par nom…" value="${escapeHtml(ui.calendarSettingsSearchQuery)}" style="width:100%; padding-right:32px;">
+      <input type="text" id="calendarSettingsSearch" placeholder="Rechercher une compétition ou un stage par nom…" value="${escapeHtml(ui.calendarSettingsSearchQuery)}" style="width:100%; padding-right:32px;" autocomplete="off">
       ${ui.calendarSettingsSearchQuery ? `<button class="ghost icon-btn" id="calendarSettingsSearchClear" title="Effacer" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); padding:2px 8px; font-size:12px; border:none; background:transparent;">✕</button>` : ''}
+      <div id="calendarSettingsSearchResults" class="global-search-results"></div>
     </div>
     <div class="row" style="align-items:flex-end;">
       <div style="flex:1;">
@@ -2454,13 +2449,43 @@ function renderImportedCompetitionsSettings(){
   });
 
   const searchInput = document.getElementById('calendarSettingsSearch');
-  if(searchInput){
+  const searchResultsWrap = document.getElementById('calendarSettingsSearchResults');
+  if(searchInput && searchResultsWrap){
+    const renderSearchResults = ()=>{
+      const q = calStripAccents(searchInput.value).toLowerCase().trim();
+      if(!q){ searchResultsWrap.innerHTML=''; searchResultsWrap.classList.remove('show'); return; }
+      const matches = rows.filter(r=> calStripAccents(calendarRowFields(r).name||'').toLowerCase().includes(q)).slice(0,15);
+      if(matches.length===0){
+        searchResultsWrap.innerHTML = '<div class="empty" style="padding:12px;">Aucune compétition ni stage trouvé.</div>';
+      } else {
+        searchResultsWrap.innerHTML = matches.map(r=>{
+          const rowKey = r.kind==='imported' ? competitionKey(r.c) : ('manual-'+r.e.id);
+          const f = calendarRowFields(r);
+          const icon = (r.kind==='imported' ? r.c.type : r.e.type)==='stage' ? '🥋' : '🏆';
+          return `
+          <div class="convoc-row" data-action="goto-calendar-entry" data-row-key="${escapeHtml(rowKey)}" style="cursor:pointer;">
+            <div class="info">
+              <div class="n">${icon} ${escapeHtml(f.name)}</div>
+              <div class="e">${r.date?fmtDate(r.date):''}${f.city?' · '+escapeHtml(f.city):''}</div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+      searchResultsWrap.classList.add('show');
+    };
     searchInput.addEventListener('input', ()=>{
       ui.calendarSettingsSearchQuery = searchInput.value;
-      renderImportedCompetitionsSettings();
-      const refocus = document.getElementById('calendarSettingsSearch');
-      if(refocus){ refocus.focus(); refocus.setSelectionRange(refocus.value.length, refocus.value.length); }
+      renderSearchResults();
     });
+    searchInput.addEventListener('focus', ()=>{
+      if(searchInput.value.trim()) renderSearchResults();
+    });
+    searchResultsWrap.addEventListener('click', e=>{
+      const row = e.target.closest('[data-action="goto-calendar-entry"]');
+      if(!row) return;
+      goToCalendarEntry(row.dataset.rowKey);
+    });
+    if(ui.calendarSettingsSearchQuery) renderSearchResults();
   }
   const searchClearBtn = document.getElementById('calendarSettingsSearchClear');
   if(searchClearBtn) searchClearBtn.addEventListener('click', ()=>{
@@ -2686,6 +2711,24 @@ function renderImportedCompetitionsSettings(){
       renderImportedCompetitionsSettings();
     });
   }
+}
+// Depuis un résultat de la recherche (dropdown), saute directement jusqu'à la ligne correspondante
+// dans la liste complète : on réinitialise les filtres qui pourraient la masquer, on referme la
+// recherche, puis on scrolle jusqu'à elle avec un bref flash pour la repérer facilement.
+function goToCalendarEntry(rowKey){
+  ui.calendarSettingsSearchQuery = '';
+  ui.calendarSettingsFilterCategory = 'all';
+  ui.calendarSettingsFilterIncomplete = false;
+  ui.importedCompetitionsExpanded = true;
+  renderImportedCompetitionsSettings();
+  setTimeout(()=>{
+    const el = [...document.querySelectorAll('[data-row-key]')].find(x=> x.dataset.rowKey === rowKey);
+    if(el){
+      el.scrollIntoView({ behavior:'smooth', block:'center' });
+      el.classList.add('highlight-flash');
+      setTimeout(()=> el.classList.remove('highlight-flash'), 1800);
+    }
+  }, 60);
 }
 
 function renderBackendSettings(){
@@ -3363,7 +3406,7 @@ function renderPresencesTab(){
     let session = data.sessions.find(s=>s.groupId===ui.presenceGroup && s.date===date);
     if(!session){
       const g = data.groups.find(x=>x.id===ui.presenceGroup);
-      session = { id: uid(), groupId: ui.presenceGroup, date, time: g ? matchingSlotTime(g, date) : '', validated:false };
+      session = { id: uid(), groupId: ui.presenceGroup, date, time: g ? matchingSlotTime(g, date) : '', validated:false, guestMemberIds:[] };
       data.sessions.push(session);
       data.attendance[session.id] = {};
       saveData();
@@ -3378,22 +3421,59 @@ function renderPresencesTab(){
   if(ui.presenceSessionId){ renderPresenceSheet(); } else { document.getElementById('presence-sheet').style.display='none'; }
 }
 
+// Un pratiquant d'un autre cours, ajouté ponctuellement à l'appel d'une séance qui n'est pas la
+// sienne (ex. il vient assister à une séance en plus de la sienne). On le retrouve ensuite comme
+// n'importe quel autre présent : son nom apparaît dans l'appel et l'historique, juste avec son
+// cours d'origine précisé entre parenthèses, et la séance compte bien dans ses propres statistiques
+// de présence (voir renderSuiviContent, qui additionne ses séances "invité" à celles de son cours).
+function sessionGuestMembers(session){
+  return (session.guestMemberIds||[])
+    .map(id=>data.members.find(m=>m.id===id))
+    .filter(Boolean)
+    .sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+}
 function renderPresenceSheet(){
   const sheet = document.getElementById('presence-sheet');
   const session = data.sessions.find(s=>s.id===ui.presenceSessionId);
   if(!session){ sheet.style.display='none'; return; }
+  if(!session.guestMemberIds) session.guestMemberIds = [];
   const members = data.members.filter(m=>m.groupId===session.groupId && isMemberVisibleInSessions(m, [session])).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+  const guestMembers = sessionGuestMembers(session);
   const att = data.attendance[session.id] || (data.attendance[session.id]={});
   sheet.style.display='block';
-  const present = members.filter(m=>isPresent(att[m.id])).length;
+  const totalCount = members.length + guestMembers.length;
+  const present = members.filter(m=>isPresent(att[m.id])).length + guestMembers.filter(m=>isPresent(att[m.id])).length;
+  if(ui.addingSessionGuest===undefined) ui.addingSessionGuest = false;
+  const guestRowHtml = m=>{
+    const g = data.groups.find(x=>x.id===m.groupId);
+    return `
+        <div class="attend-row" data-guest-row="${m.id}">
+          <span class="name">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''} <span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">${g?escapeHtml(g.name):'Sans cours'}</span></span>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <button class="toggle-present ${attendanceClass(att[m.id])}" data-member="${m.id}">${attendanceLabel(att[m.id])}</button>
+            <button class="ghost icon-btn" data-action="remove-session-guest" data-member="${m.id}" title="Retirer de cette séance" style="padding:6px 8px; font-size:12px;">✕</button>
+          </div>
+        </div>`;
+  };
   sheet.innerHTML = `
-    <h2>${weekdayAbbrForDate(session.date)} ${fmtDate(session.date)}${session.time?' · '+session.time:''} — ${present}/${members.length} présent${present===1?'':'s'}</h2>
+    <h2>${weekdayAbbrForDate(session.date)} ${fmtDate(session.date)}${session.time?' · '+session.time:''} — ${present}/${totalCount} présent${present===1?'':'s'}</h2>
     ${members.length===0 ? '<div class="empty">Ajoutez des pratiquants à ce cours dans l’onglet « Cours ».</div>' :
       members.map(m=>`
         <div class="attend-row">
           <span class="name">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}</span>
           <button class="toggle-present ${attendanceClass(att[m.id])}" data-member="${m.id}">${attendanceLabel(att[m.id])}</button>
         </div>`).join('')}
+    ${guestMembers.length ? `
+    <label class="small" style="display:block; margin-top:14px;">Invité(e)s d'autres cours</label>
+    ${guestMembers.map(guestRowHtml).join('')}` : ''}
+    <div style="position:relative; margin-top:14px;">
+      <button class="ghost icon-btn" id="toggleSessionGuestBtn" style="width:100%;">${ui.addingSessionGuest ? '✕ Annuler' : '+ Ajouter un pratiquant d’un autre cours'}</button>
+      ${ui.addingSessionGuest ? `
+      <div style="margin-top:8px;">
+        <input type="text" id="sessionGuestInput" placeholder="Tape le nom de l'élève…" autocomplete="off">
+        <div id="sessionGuestSuggestions" class="global-search-results"></div>
+      </div>` : ''}
+    </div>
     ${session.validated ? `
     <div class="validated-note">
       <span>✓ Appel validé</span>
@@ -3412,6 +3492,54 @@ function renderPresenceSheet(){
       renderPresenceHistory();
     });
   });
+  sheet.querySelectorAll('[data-action="remove-session-guest"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const mid = btn.dataset.member;
+      session.guestMemberIds = (session.guestMemberIds||[]).filter(id=>id!==mid);
+      delete att[mid];
+      saveData();
+      renderPresenceSheet();
+      renderPresenceHistory();
+    });
+  });
+  const toggleGuestBtn = document.getElementById('toggleSessionGuestBtn');
+  if(toggleGuestBtn) toggleGuestBtn.addEventListener('click', ()=>{
+    ui.addingSessionGuest = !ui.addingSessionGuest;
+    renderPresenceSheet();
+  });
+  const guestInput = document.getElementById('sessionGuestInput');
+  const guestWrap = document.getElementById('sessionGuestSuggestions');
+  if(guestInput && guestWrap){
+    guestInput.focus();
+    guestInput.addEventListener('input', ()=>{
+      const q = calStripAccents(guestInput.value).toLowerCase().trim();
+      if(!q){ guestWrap.innerHTML=''; guestWrap.classList.remove('show'); return; }
+      const alreadyIn = new Set([...members.map(m=>m.id), ...guestMembers.map(m=>m.id)]);
+      const matches = data.members.filter(m=> !m.archived && !alreadyIn.has(m.id) && calStripAccents(m.name).toLowerCase().includes(q)).slice(0,8);
+      if(matches.length===0){
+        guestWrap.innerHTML = '<div class="empty" style="padding:10px;">Aucun élève trouvé.</div>';
+      } else {
+        guestWrap.innerHTML = matches.map(m=>{
+          const g = data.groups.find(x=>x.id===m.groupId);
+          return `<div class="convoc-row" data-action="pick-session-guest" data-id="${m.id}" style="cursor:pointer;">
+            <div class="info"><div class="n">${nameWithBoldSurname(m.name)}</div><div class="e">${g?escapeHtml(g.name):'Sans cours'}</div></div>
+          </div>`;
+        }).join('');
+      }
+      guestWrap.classList.add('show');
+    });
+    guestWrap.addEventListener('click', e=>{
+      const row = e.target.closest('[data-action="pick-session-guest"]');
+      if(!row) return;
+      if(!session.guestMemberIds) session.guestMemberIds = [];
+      if(!session.guestMemberIds.includes(row.dataset.id)) session.guestMemberIds.push(row.dataset.id);
+      ui.addingSessionGuest = false;
+      saveData();
+      renderPresenceSheet();
+      renderPresenceHistory();
+      showToast('Pratiquant ajouté à cette séance');
+    });
+  }
   const validateBtn = document.getElementById('validateBtn');
   if(validateBtn){
     validateBtn.addEventListener('click', ()=>{
@@ -3552,6 +3680,13 @@ function beltBarHtml(pct){
     </div>`;
 }
 
+// Séances d'un AUTRE cours où ce pratiquant a été ajouté ponctuellement comme invité (voir
+// sessionGuestMembers / renderPresenceSheet). On les ajoute à ses propres séances pour que sa
+// présence y compte bien dans ses statistiques personnelles, sans fausser la moyenne du groupe
+// (le total du groupe, lui, ne compte que ses séances à lui — voir memberRows plus bas).
+function guestSessionsForMember(memberId, startYear){
+  return data.sessions.filter(s=> (s.guestMemberIds||[]).includes(memberId) && inSchoolYear(s.date, startYear) && sessionHasRollCall(s.id));
+}
 function renderSuiviContent(){
   const wrap = document.getElementById('suivi-content');
   const startYear = parseInt(document.getElementById('suiviYear').value, 10);
@@ -3566,8 +3701,11 @@ function renderSuiviContent(){
     const sessions = data.sessions.filter(s=>s.groupId===g.id && inSchoolYear(s.date, startYear) && sessionHasRollCall(s.id));
     const members = [...data.members.filter(m=>m.groupId===g.id && isMemberVisibleInSessions(m, sessions))];
     const memberPct = m=>{
-      const present = sessions.filter(s=> isPresent((data.attendance[s.id]||{})[m.id])).length;
-      return sessions.length ? (present/sessions.length)*100 : 0;
+      const guestSessions = guestSessionsForMember(m.id, startYear);
+      const present = sessions.filter(s=> isPresent((data.attendance[s.id]||{})[m.id])).length
+        + guestSessions.filter(s=> isPresent((data.attendance[s.id]||{})[m.id])).length;
+      const total = sessions.length + guestSessions.length;
+      return total ? (present/total)*100 : 0;
     };
     if(ui.suiviSort==='pct-desc') members.sort((a,b)=> memberPct(b)-memberPct(a) || memberSurname(a.name).localeCompare(memberSurname(b.name),'fr'));
     else if(ui.suiviSort==='pct-asc') members.sort((a,b)=> memberPct(a)-memberPct(b) || memberSurname(a.name).localeCompare(memberSurname(b.name),'fr'));
@@ -3576,16 +3714,20 @@ function renderSuiviContent(){
     const totalSlots = sessions.length * (members.length||1);
     let totalPresent = 0;
     const memberRows = members.map(m=>{
-      const present = sessions.filter(s=> isPresent((data.attendance[s.id]||{})[m.id])).length;
-      totalPresent += present;
-      const pct = sessions.length ? Math.round((present/sessions.length)*100) : 0;
+      const ownPresent = sessions.filter(s=> isPresent((data.attendance[s.id]||{})[m.id])).length;
+      totalPresent += ownPresent;
+      const guestSessions = guestSessionsForMember(m.id, startYear);
+      const guestPresent = guestSessions.filter(s=> isPresent((data.attendance[s.id]||{})[m.id])).length;
+      const present = ownPresent + guestPresent;
+      const totalForMember = sessions.length + guestSessions.length;
+      const pct = totalForMember ? Math.round((present/totalForMember)*100) : 0;
       return `
         <div class="member-stat">
           <div class="stat-line">
             <span class="who">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${computeCategory(m.birthDate) ? `<span class="tag">${escapeHtml(categoryYearLabel(m.birthDate))}</span>` : ''}</span>
             <span class="pct">${pct}%</span>
           </div>
-          <div class="frac">${present}/${sessions.length} séance${sessions.length===1?'':'s'}</div>
+          <div class="frac">${present}/${totalForMember} séance${totalForMember===1?'':'s'}${guestSessions.length? ` <span style="color:var(--ink-dim);">(dont ${guestSessions.length} en invité(e) dans un autre cours)</span>` : ''}</div>
           <button class="ghost icon-btn" data-action="cert" data-id="${m.id}" data-group="${g.id}" style="margin-top:8px; width:100%; font-size:12.5px;">🏅 Générer un certificat</button>
         </div>`;
     }).join('') || '<div class="empty">Aucun pratiquant dans ce cours.</div>';
@@ -8610,6 +8752,26 @@ function initGlobalSearch(){
   });
 }
 initGlobalSearch();
+// Ferme la liste déroulante de recherche du calendrier (Réglages) au clic extérieur — un seul
+// écouteur global posé une fois pour toutes (les éléments visés n'existent que quand ce bloc de
+// réglages est déplié, d'où la vérification de présence à chaque clic plutôt qu'un ré-attachement).
+document.addEventListener('click', e=>{
+  const input = document.getElementById('calendarSettingsSearch');
+  const wrap = document.getElementById('calendarSettingsSearchResults');
+  if(!input || !wrap) return;
+  if(!input.contains(e.target) && !wrap.contains(e.target)){
+    wrap.classList.remove('show');
+  }
+});
+// Même chose pour la recherche d'un pratiquant d'un autre cours à ajouter à l'appel d'une séance.
+document.addEventListener('click', e=>{
+  const input = document.getElementById('sessionGuestInput');
+  const wrap = document.getElementById('sessionGuestSuggestions');
+  if(!input || !wrap) return;
+  if(!input.contains(e.target) && !wrap.contains(e.target)){
+    wrap.classList.remove('show');
+  }
+});
 initCalendarCompetitionPicker();
 
 function goToMemberFiche(memberId, groupId){
