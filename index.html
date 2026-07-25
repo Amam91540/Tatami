@@ -2389,8 +2389,16 @@ function renderImportedCompetitionsSettings(){
   if(ui.addingCalendarEvent===undefined) ui.addingCalendarEvent = false;
   if(ui.calendarSettingsFilterIncomplete===undefined) ui.calendarSettingsFilterIncomplete = false;
   if(!ui.calendarSettingsFilterCategory) ui.calendarSettingsFilterCategory = 'all';
+  if(ui.calendarSettingsSearchQuery===undefined) ui.calendarSettingsSearchQuery = '';
 
   let filteredRows = rows;
+  const searchQuery = calStripAccents(ui.calendarSettingsSearchQuery).toLowerCase().trim();
+  if(searchQuery){
+    filteredRows = filteredRows.filter(r=>{
+      const f = calendarRowFields(r);
+      return calStripAccents(f.name||'').toLowerCase().includes(searchQuery);
+    });
+  }
   if(ui.calendarSettingsFilterIncomplete){
     filteredRows = filteredRows.filter(r=> isCalendarRowIncomplete(r));
   }
@@ -2401,7 +2409,7 @@ function renderImportedCompetitionsSettings(){
       return calendarEntryAppliesToCategory(f.ageCategories, ui.calendarSettingsFilterCategory);
     });
   }
-  const filtersActive = ui.calendarSettingsFilterIncomplete || ui.calendarSettingsFilterCategory !== 'all';
+  const filtersActive = ui.calendarSettingsFilterIncomplete || ui.calendarSettingsFilterCategory !== 'all' || !!searchQuery;
   const countLabel = filtersActive ? `${filteredRows.length}/${rows.length}` : `${rows.length}`;
   const categoryOptions = calendarSelectableCategories();
 
@@ -2412,6 +2420,10 @@ function renderImportedCompetitionsSettings(){
     </button>
     ${expanded ? `
     <p style="font-size:12.5px; color:var(--ink-dim); margin:10px 0;">Supprimer une compétition importée ici la retire définitivement — elle ne réapparaîtra plus. Le crayon permet de corriger le nom, la ville, l'adresse et les catégories d'âge concernées. Tu peux aussi ajouter toi-même une compétition ou un stage absent de la liste importée.</p>
+    <div style="position:relative; margin-bottom:10px;">
+      <input type="text" id="calendarSettingsSearch" placeholder="Rechercher une compétition ou un stage par nom…" value="${escapeHtml(ui.calendarSettingsSearchQuery)}" style="width:100%; padding-right:32px;">
+      ${ui.calendarSettingsSearchQuery ? `<button class="ghost icon-btn" id="calendarSettingsSearchClear" title="Effacer" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); padding:2px 8px; font-size:12px; border:none; background:transparent;">✕</button>` : ''}
+    </div>
     <div class="row" style="align-items:flex-end;">
       <div style="flex:1;">
         <label class="small">Filtrer par catégorie</label>
@@ -2438,6 +2450,21 @@ function renderImportedCompetitionsSettings(){
 
   document.getElementById('toggleImportedCompetitions').addEventListener('click', ()=>{
     ui.importedCompetitionsExpanded = !ui.importedCompetitionsExpanded;
+    renderImportedCompetitionsSettings();
+  });
+
+  const searchInput = document.getElementById('calendarSettingsSearch');
+  if(searchInput){
+    searchInput.addEventListener('input', ()=>{
+      ui.calendarSettingsSearchQuery = searchInput.value;
+      renderImportedCompetitionsSettings();
+      const refocus = document.getElementById('calendarSettingsSearch');
+      if(refocus){ refocus.focus(); refocus.setSelectionRange(refocus.value.length, refocus.value.length); }
+    });
+  }
+  const searchClearBtn = document.getElementById('calendarSettingsSearchClear');
+  if(searchClearBtn) searchClearBtn.addEventListener('click', ()=>{
+    ui.calendarSettingsSearchQuery = '';
     renderImportedCompetitionsSettings();
   });
 
