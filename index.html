@@ -2302,7 +2302,7 @@ function renderManualEventRow(e){
   return `
   <div class="convoc-row" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)} <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Ajouté</span></div>
+      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)} ${e.source==='federation' ? '<span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">Fédération</span>' : '<span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Ajouté</span>'}</div>
       <div class="e">${e.date?fmtDate(e.date):''}${e.city?' · '+escapeHtml(e.city):''}</div>
       <div style="margin-top:4px;">${calendarCategoryTagsHtml(e.ageCategories!==undefined?e.ageCategories:[])}</div>
     </div>
@@ -2426,7 +2426,11 @@ function renderImportedCompetitionsSettings(){
       <input type="checkbox" id="calendarSettingsIncompleteFilter" ${ui.calendarSettingsFilterIncomplete?'checked':''}>
       Compétition incomplète (nom, ville, adresse ou catégorie manquant)
     </label>
-    <button class="ghost icon-btn" id="toggleAddCalendarEvent" style="width:100%; margin:10px 0;">${ui.addingCalendarEvent ? '✕ Annuler l’ajout' : '+ Ajouter une compétition ou un stage'}</button>
+    <div class="row" style="margin:10px 0; gap:8px;">
+      <button class="ghost icon-btn" id="toggleAddCalendarEvent" style="flex:1;">${ui.addingCalendarEvent ? '✕ Annuler l’ajout' : '+ Ajouter une compétition ou un stage'}</button>
+      <button class="ghost icon-btn" id="importCalendarExcelBtn" style="flex:1;" title="Fichier Excel du calendrier du Comité de l’Essonne">⇪ Importer un calendrier (Excel)</button>
+      <input type="file" id="importCalendarExcelInput" accept=".xlsx,.xls" style="display:none;">
+    </div>
     ${ui.addingCalendarEvent ? renderCalendarAddForm() : ''}
     ${filteredRows.length===0 ? '<div class="empty">Aucun événement à afficher pour cette sélection.</div>' : filteredRows.map(r=> r.kind==='imported' ? renderImportedCompetitionRow(r.c) : renderManualEventRow(r.e)).join('')}
     ` : ''}
@@ -2453,6 +2457,17 @@ function renderImportedCompetitionsSettings(){
     ui.addingCalendarEvent = !ui.addingCalendarEvent;
     renderImportedCompetitionsSettings();
   });
+
+  const importExcelBtn = document.getElementById('importCalendarExcelBtn');
+  const importExcelInput = document.getElementById('importCalendarExcelInput');
+  if(importExcelBtn && importExcelInput){
+    importExcelBtn.addEventListener('click', ()=> importExcelInput.click());
+    importExcelInput.addEventListener('change', ()=>{
+      const file = importExcelInput.files && importExcelInput.files[0];
+      if(file) handleCalendarExcelImport(file);
+      importExcelInput.value = '';
+    });
+  }
 
   const addForm = wrap.querySelector('[data-form="add-calendar-event"]');
   if(addForm){
@@ -4961,13 +4976,247 @@ function getAllCalendarEntries(){
   }));
   const manual = (data.calendarEvents||[]).map(e=>({
     key: 'manual-'+e.id, kind:'manual', id:e.id, type: e.type||'competition',
-    name: e.name||'', date: e.date||'', dayLabel:'',
+    name: e.name||'', date: e.date||'', dayLabel: e.dayLabel||'',
     city: e.city||'',
     cancelled: e.cancelled === true,
     ageCategories: e.ageCategories!==undefined ? e.ageCategories : [],
     validated: e.validated === true
   }));
   return [...imported, ...manual].filter(e=>e.date).sort((a,b)=> a.date.localeCompare(b.date));
+}
+
+/* ---------------- IMPORT DU CALENDRIER FÉDÉRAL (Excel Comité de l'Essonne) ----------------
+ * Le calendrier "importé" (COMPETITION_CALENDAR) est figé dans le code de l'appli : impossible
+ * à corriger (dates, noms...) directement par le club. On le rend réellement modifiable en le
+ * "matérialisant" une bonne fois pour toutes dans data.calendarEvents (comme les événements déjà
+ * ajoutés à la main), puis on masque les entrées d'origine via le mécanisme de suppression déjà
+ * existant (deletedCalendarCompetitions). Les saisons suivantes, un nouvel import Excel vient
+ * simplement rafraîchir la date (et les infos) des compétitions déjà connues — retrouvées par
+ * leur "clé fédérale" stable (nom normalisé, indépendante d'un éventuel renommage manuel affiché)
+ * — ou en créer de nouvelles ; les événements ajoutés à la main par le club (absents du fichier)
+ * ne sont eux jamais touchés. */
+function calStripAccents(s){
+  return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'');
+}
+function calendarFederationKey(name, type){
+  return calStripAccents(name).toUpperCase().replace(/\s+/g,' ').trim() + '|' + (type||'competition');
+}
+function migrateFederationCalendarOnce(){
+  if(data.settings.federationCalendarMigrated) return;
+  if(!data.calendarEvents) data.calendarEvents = [];
+  const currentComps = visibleCompetitionCalendar();
+  currentComps.forEach(c=>{
+    const ov = getCompetitionOverride(c);
+    data.calendarEvents.push({
+      id: uid(), type:'competition',
+      name: effectiveCompetitionName(c), date: c.date||'', city: effectiveCompetitionCity(c),
+      address: effectiveCompetitionAddress(c), ageCategories: importedCompetitionAgeCategories(c),
+      validated: ov.validated===true, cancelled: ov.cancelled===true,
+      level: c.level||'', dayLabel: c.dayLabel||'', details: c.details||[], weighIn: c.weighIn||[],
+      source:'federation', federationKey: calendarFederationKey(c.name, 'competition')
+    });
+  });
+  if(!data.settings.deletedCalendarCompetitions) data.settings.deletedCalendarCompetitions = [];
+  COMPETITION_CALENDAR.forEach(c=>{
+    const k = competitionKey(c);
+    if(!data.settings.deletedCalendarCompetitions.includes(k)) data.settings.deletedCalendarCompetitions.push(k);
+  });
+  data.settings.federationCalendarMigrated = true;
+  saveData();
+}
+
+const CAL_MONTHS_FR = { SEPTEMBRE:9, OCTOBRE:10, NOVEMBRE:11, DECEMBRE:12, JANVIER:1, FEVRIER:2, MARS:3, AVRIL:4, MAI:5, JUIN:6, JUILLET:7, AOUT:8 };
+const CAL_NAME_CONTINUATION_STOP_KEYWORDS = ['POUSSIN','BENJAMIN','MINIME','CADET','JUNIOR','SENIOR','VETERAN','ESPOIR',
+  'M&F','MASC','MIXTE','JU-JITSU','JUJITSU','KATA','DUO','NE WAZA','NEWAZA',
+  'EQUIPE','INDIVIDUEL','VOIR ','INSCRIPTION','HORAIRES','ACCUEIL','CONFIRMATION','1ERE DIV',
+  '2EME DIV','3EME DIV','DAN','UV1','UV2','PARA JUDO','TIVP','FCD'];
+function calIsWeighInLine(line){
+  const l = calStripAccents(line).toLowerCase();
+  return l.includes('esee') || /\d{1,2}h\d{0,2}/.test(l);
+}
+function calIsNameContinuationLine(line){
+  const lu = calStripAccents(line).toUpperCase();
+  return !CAL_NAME_CONTINUATION_STOP_KEYWORDS.some(k=> lu.includes(k));
+}
+function calSeasonYearsFromTitle(title){
+  const m = String(title||'').match(/(\d{4})\s*-\s*(\d{4})/);
+  return m ? { startY: parseInt(m[1],10), endY: parseInt(m[2],10) } : null;
+}
+function calMonthYearFor(monthName, startY, endY){
+  const mnum = CAL_MONTHS_FR[calStripAccents(monthName).toUpperCase().trim()];
+  if(!mnum) return null;
+  return mnum<=8 ? endY : startY;
+}
+function calFirstDayNumber(dayLabel){
+  const m = String(dayLabel||'').match(/(\d{1,2})/);
+  return m ? parseInt(m[1],10) : null;
+}
+// Analyse une feuille au format "grille" du calendrier du Comité de l'Essonne : un mois par
+// colonne (une sur deux), chaque événement étalé sur une bande fixe de 9 lignes (jour, niveau,
+// jusqu'à 5 lignes de nom/catégorie/pesée, ville, ligne vide).
+function parseCalendarGridSheet(ws, defaultType){
+  const rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:false, defval:'' });
+  if(!rows.length) return [];
+  const titleRow = rows[0]||[];
+  const titleCell = titleRow.find(v=> /\d{4}\s*-\s*\d{4}/.test(String(v||'')));
+  const seasons = calSeasonYearsFromTitle(titleCell);
+  if(!seasons) return [];
+  const { startY, endY } = seasons;
+  let headerRowIdx = -1, monthCols = {};
+  for(let r=0; r<6 && r<rows.length; r++){
+    const found = {};
+    const row = rows[r]||[];
+    for(let c=0;c<row.length;c++){
+      const v = calStripAccents(String(row[c]||'')).toUpperCase().trim();
+      if(CAL_MONTHS_FR[v]) found[c] = v;
+    }
+    if(Object.keys(found).length >= 3){ headerRowIdx = r; monthCols = found; break; }
+  }
+  if(headerRowIdx===-1) return [];
+  const bandStart = headerRowIdx + 2;
+  const events = [];
+  for(let r=bandStart; r<rows.length; r+=9){
+    Object.keys(monthCols).forEach(cStr=>{
+      const c = parseInt(cStr,10);
+      const monthName = monthCols[c];
+      const dayLabel = (rows[r]||[])[c];
+      if(!dayLabel || !String(dayLabel).trim()) return;
+      const level = (rows[r+1]||[])[c] || '';
+      const lines = [];
+      for(let off=2; off<=6; off++){
+        const v = (rows[r+off]||[])[c];
+        if(v && String(v).trim()) lines.push(String(v).trim());
+      }
+      if(lines.length===0) return;
+      const cityRaw = (rows[r+7]||[])[c] || '';
+      const city = String(cityRaw).replace(/^lieu\s*:?\s*/i,'').trim();
+      let stillName = (defaultType==='stage');
+      const nameParts = [lines[0]];
+      const details = [], weighIn = [];
+      for(let i=1;i<lines.length;i++){
+        const l = lines[i];
+        if(calIsWeighInLine(l)){ stillName=false; weighIn.push(l); }
+        else if(stillName && calIsNameContinuationLine(l)){ nameParts.push(l); }
+        else { stillName=false; details.push(l); }
+      }
+      const name = nameParts.join(' ');
+      const day = calFirstDayNumber(dayLabel);
+      const yr = calMonthYearFor(monthName, startY, endY);
+      const mnum = CAL_MONTHS_FR[monthName];
+      const date = (day && yr && mnum) ? `${yr}-${String(mnum).padStart(2,'0')}-${String(day).padStart(2,'0')}` : '';
+      events.push({ type: defaultType, name, level:String(level).trim(), date, dayLabel:String(dayLabel).trim(), city, details, weighIn });
+    });
+  }
+  return events;
+}
+function parseCalendarWorkbook(wb){
+  const compName = wb.SheetNames.find(n=> calStripAccents(n).toUpperCase().includes('COMPETITION'));
+  const stageName = wb.SheetNames.find(n=> /STAGE|FORMATION/.test(calStripAccents(n).toUpperCase()));
+  const competitions = compName ? parseCalendarGridSheet(wb.Sheets[compName], 'competition') : [];
+  const stages = stageName ? parseCalendarGridSheet(wb.Sheets[stageName], 'stage') : [];
+  return competitions.concat(stages);
+}
+// Prépare le rapprochement sans rien modifier encore (pour l'aperçu) : associe chaque ligne
+// importée à une entrée déjà connue (même clé fédérale) à mettre à jour, ou la classe comme
+// nouvelle entrée à créer. N'a jamais aucun effet sur les événements ajoutés à la main par le
+// club (ils n'ont pas de federationKey, donc ne peuvent jamais être "retrouvés" par erreur).
+function planCalendarImport(parsedEvents){
+  const byFedKey = {};
+  (data.calendarEvents||[]).forEach(e=>{ if(e.federationKey) byFedKey[e.federationKey] = e; });
+  const toUpdate = [], toCreate = [];
+  parsedEvents.forEach(pe=>{
+    const fk = calendarFederationKey(pe.name, pe.type);
+    const existing = byFedKey[fk];
+    if(existing) toUpdate.push({ existing, incoming: pe, fk });
+    else toCreate.push({ incoming: pe, fk });
+  });
+  return { toUpdate, toCreate };
+}
+function applyCalendarImportPlan(plan){
+  plan.toUpdate.forEach(({existing, incoming})=>{
+    existing.name = incoming.name;
+    existing.city = incoming.city;
+    existing.level = incoming.level;
+    existing.dayLabel = incoming.dayLabel;
+    existing.details = incoming.details;
+    existing.weighIn = incoming.weighIn;
+    existing.date = incoming.date;
+  });
+  plan.toCreate.forEach(({incoming, fk})=>{
+    const guessed = matchConfiguredBandLabel(incoming.name + ' ' + (incoming.details||[]).join(' '));
+    data.calendarEvents.push({
+      id: uid(), type: incoming.type, name: incoming.name, date: incoming.date, city: incoming.city,
+      address:'', ageCategories: guessed ? [guessed] : [],
+      validated:false, cancelled:false,
+      level: incoming.level, dayLabel: incoming.dayLabel, details: incoming.details, weighIn: incoming.weighIn,
+      source:'federation', federationKey: fk
+    });
+  });
+  saveData();
+  renderImportedCompetitionsSettings();
+  renderCompetitionsCalendarCard();
+}
+function openCalendarImportPreview(plan){
+  const overlay = document.getElementById('import-archive-overlay');
+  const sortedUpdate = [...plan.toUpdate].sort((a,b)=> (a.incoming.date||'').localeCompare(b.incoming.date||''));
+  const sortedCreate = [...plan.toCreate].sort((a,b)=> (a.incoming.date||'').localeCompare(b.incoming.date||''));
+  const updateRows = sortedUpdate.map(({existing, incoming})=>`
+    <label class="iao-row">
+      <input type="checkbox" data-kind="update" data-fk="${escapeHtml(incoming.__fk||'')}" checked>
+      <span>
+        <div class="iao-name">${incoming.type==='stage'?'🥋':'🏆'} ${escapeHtml(incoming.name)}</div>
+        <div class="iao-group">${existing.date ? fmtDate(existing.date) : 'pas de date'} → ${incoming.date ? fmtDate(incoming.date) : 'pas de date'}${incoming.city?' · '+escapeHtml(incoming.city):''}</div>
+      </span>
+    </label>`).join('');
+  const createRows = sortedCreate.map(({incoming})=>`
+    <label class="iao-row" style="background:rgba(154,170,107,0.08);">
+      <input type="checkbox" data-kind="create" data-fk="${escapeHtml(incoming.__fk||'')}" checked>
+      <span>
+        <div class="iao-name">${incoming.type==='stage'?'🥋':'🏆'} ${escapeHtml(incoming.name)} <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Nouveau</span></div>
+        <div class="iao-group">${incoming.date?fmtDate(incoming.date):'pas de date'}${incoming.city?' · '+escapeHtml(incoming.city):''}</div>
+      </span>
+    </label>`).join('');
+  overlay.innerHTML = `
+    <div class="iao-card">
+      <h2 style="margin-top:0;">Import du calendrier de la saison</h2>
+      <p style="font-size:13px; color:var(--ink-dim); line-height:1.5;">
+        ${sortedUpdate.length} compétition${sortedUpdate.length===1?'':'s'}/stage${sortedUpdate.length===1?'':'s'} déjà connu${sortedUpdate.length===1?'':'s'} — sa date sera mise à jour.
+        ${sortedCreate.length} nouvelle${sortedCreate.length===1?'':'s'} entrée${sortedCreate.length===1?'':'s'}, absente${sortedCreate.length===1?'':'s'} du calendrier actuel.
+        Les événements que tu as ajoutés toi-même et absents de ce fichier ne sont jamais modifiés.
+      </p>
+      <div class="iao-list">${updateRows}${createRows}</div>
+      <button class="primary" id="confirmCalendarImportBtn" style="width:100%;">Appliquer la mise à jour</button>
+      <button class="ghost" id="cancelCalendarImportBtn" style="width:100%; margin-top:8px;">Annuler</button>
+    </div>`;
+  overlay.classList.add('show');
+  const close = ()=>{ overlay.classList.remove('show'); overlay.innerHTML=''; };
+  document.getElementById('cancelCalendarImportBtn').onclick = close;
+  document.getElementById('confirmCalendarImportBtn').onclick = ()=>{
+    const checkedFk = new Set([...overlay.querySelectorAll('input[type="checkbox"]:checked')].map(cb=>cb.dataset.fk));
+    const finalPlan = {
+      toUpdate: plan.toUpdate.filter(u=> checkedFk.has(u.fk)),
+      toCreate: plan.toCreate.filter(c=> checkedFk.has(c.fk))
+    };
+    applyCalendarImportPlan(finalPlan);
+    close();
+    showToast(`Calendrier mis à jour : ${finalPlan.toUpdate.length} date${finalPlan.toUpdate.length===1?'':'s'} rafraîchie${finalPlan.toUpdate.length===1?'':'s'}, ${finalPlan.toCreate.length} nouvelle${finalPlan.toCreate.length===1?'':'s'} entrée${finalPlan.toCreate.length===1?'':'s'}`);
+  };
+}
+async function handleCalendarExcelImport(file){
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:'array', cellDates:false, raw:false });
+    const parsed = parseCalendarWorkbook(wb);
+    if(parsed.length===0){ showToast('Aucun événement reconnu dans ce fichier — vérifie qu’il s’agit bien du calendrier du Comité de l’Essonne'); return; }
+    migrateFederationCalendarOnce();
+    const plan = planCalendarImport(parsed);
+    plan.toUpdate.forEach(u=> u.incoming.__fk = u.fk);
+    plan.toCreate.forEach(c=> c.incoming.__fk = c.fk);
+    if(plan.toUpdate.length===0 && plan.toCreate.length===0){ showToast('Rien à mettre à jour'); return; }
+    openCalendarImportPreview(plan);
+  }catch(err){
+    showToast('Impossible de lire ce fichier : ' + (err.message||err));
+  }
 }
 function competitionsWithinNextMonth(){
   const today = new Date(); today.setHours(0,0,0,0);
