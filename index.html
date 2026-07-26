@@ -530,7 +530,7 @@
   <div class="eyebrow">Suivi des présences</div>
   <input class="club-name" id="clubName" placeholder="Nom du club" maxlength="60">
   <div class="header-bottom-row" style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:2px; position:relative;">
-    <div id="headerSeasonLabel" style="font-size:11px; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; letter-spacing:0.03em; flex-shrink:0;"></div>
+    <select id="headerSeasonSwitch" style="font-size:11px; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; letter-spacing:0.03em; flex-shrink:0; background:transparent; border:none; padding:2px 0; cursor:pointer; max-width:120px;"></select>
     <div style="position:relative; flex:1; max-width:170px; min-width:80px;">
       <input type="text" id="globalSearchInput" placeholder="🔍 Rechercher un élève..." style="width:100%; font-size:11.5px; padding:6px 10px; border-radius:20px; background:var(--surface-2); border:1px solid var(--line); color:var(--ink);">
       <div id="globalSearchResults" class="global-search-results" style="left:auto; right:0; width:280px;"></div>
@@ -546,38 +546,50 @@
   </section>
 
   <section id="tab-groupes">
-    <div class="card" id="groups-list"></div>
-    <div id="belt-passage-section"></div>
-    <div id="belt-diplomas-section"></div>
-    <div id="belt-validated-section"></div>
+    <div id="groupes-live">
+      <div class="card" id="groups-list"></div>
+      <div id="belt-passage-section"></div>
+      <div id="belt-diplomas-section"></div>
+      <div id="belt-validated-section"></div>
+    </div>
+    <div id="groupes-archive-view" style="display:none;">
+      <div class="card" id="archive-view-groupes-banner"></div>
+      <div class="card" id="archive-view-groupes-body"></div>
+    </div>
   </section>
 
   <section id="tab-suivi">
-    <div id="suivi-alerts"></div>
-    <div class="card">
-      <div class="row">
-        <div style="flex:1">
-          <label class="small">Année scolaire</label>
-          <select id="suiviYear"></select>
+    <div id="suivi-live">
+      <div id="suivi-alerts"></div>
+      <div class="card">
+        <div class="row">
+          <div style="flex:1">
+            <label class="small">Année scolaire</label>
+            <select id="suiviYear"></select>
+          </div>
+          <div style="flex:1">
+            <label class="small">Cours</label>
+            <select id="suiviGroup"></select>
+          </div>
         </div>
-        <div style="flex:1">
-          <label class="small">Cours</label>
-          <select id="suiviGroup"></select>
+        <div class="row">
+          <div style="flex:1">
+            <label class="small">Trier par</label>
+            <select id="suiviSort">
+              <option value="name">Nom (alphabétique)</option>
+              <option value="pct-desc">% de présence (décroissant)</option>
+              <option value="pct-asc">% de présence (croissant)</option>
+            </select>
+          </div>
         </div>
       </div>
-      <div class="row">
-        <div style="flex:1">
-          <label class="small">Trier par</label>
-          <select id="suiviSort">
-            <option value="name">Nom (alphabétique)</option>
-            <option value="pct-desc">% de présence (décroissant)</option>
-            <option value="pct-asc">% de présence (croissant)</option>
-          </select>
-        </div>
-      </div>
+      <div id="suivi-content"></div>
+      <div id="competitions-calendar"></div>
     </div>
-    <div id="suivi-content"></div>
-    <div id="competitions-calendar"></div>
+    <div id="suivi-archive-view" style="display:none;">
+      <div class="card" id="archive-view-suivi-banner"></div>
+      <div class="card" id="archive-view-suivi-body"></div>
+    </div>
   </section>
 
   <section id="tab-convoc">
@@ -655,6 +667,7 @@
   </section>
 
   <section id="tab-resultats">
+   <div id="resultats-live">
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <h2 style="margin:0;">Résultats par événement</h2>
@@ -729,6 +742,12 @@
       <button class="primary" id="generateRecapPdfBtn" style="width:100%; margin-top:10px;">📄 Générer le récap PDF du mois</button>
 <button class="ghost" id="generateAnnualRecapBtn" style="width:100%; margin-top:8px;">📄 Générer le récap PDF de la saison (sept.–août)</button>
 <button class="ghost" id="generateAGReportBtn" style="width:100%; margin-top:8px;">📋 Générer le rapport annuel (Assemblée générale)</button>    </div>
+   </div>
+   <div id="resultats-archive-view" style="display:none;">
+     <div class="card" id="archive-view-resultats-banner"></div>
+     <div class="card" id="archive-view-resultats-body"></div>
+     <div class="card" id="archive-view-palmares-body"></div>
+   </div>
   </section>
 
   <section id="tab-param">
@@ -875,7 +894,7 @@ function matchBeltRank(text){
 }
 
 let data = { clubName:'', groups:[], members:[], sessions:[], attendance:{}, settings:{} };
-let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false };
+let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, viewingSeasonId:null };
 let ready = false;
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -961,6 +980,7 @@ function ensureSettings(){
   data.settings ||= {};
   if(!data.settings.ageBands || !data.settings.ageBands.length) data.settings.ageBands = defaultAgeBands();
   if(!data.settings.seasonStartYear) data.settings.seasonStartYear = autoSeasonStartYear();
+  if(data.settings.seasonAutoFollow===undefined) data.settings.seasonAutoFollow = true;
   if(!data.settings.theme) data.settings.theme = 'light';
   if(!data.clubName) data.clubName = "Académie Menneçoise d'Arts Martiaux";
   if(!data.clubContact) data.clubContact = "01.64.57.32.49 — amam91540@gmail.com\nThomas : 06.35.47.60.04";
@@ -1415,15 +1435,65 @@ document.getElementById('themeToggle').addEventListener('click', ()=>{
   document.getElementById('themeToggle').textContent = next==='light' ? '🌙' : '☀️';
   saveData();
 });
-function renderHeaderSeasonLabel(){
-  const el = document.getElementById('headerSeasonLabel');
+// Détermine la saison (année de rentrée) impliquée par une date au format YYYY-MM-DD.
+function seasonYearForDate(dateStr){
+  if(!dateStr) return null;
+  const parts = String(dateStr).split('-');
+  const y = parseInt(parts[0],10), m = parseInt(parts[1],10);
+  if(!y || !m) return null;
+  return m>=9 ? y : y-1;
+}
+// Avertit si la date saisie concerne une saison différente de la saison en cours, et laisse
+// l'utilisateur valider ou annuler — pour ne jamais mélanger deux saisons sans s'en rendre compte.
+function confirmIfSeasonMismatch(dateStr){
+  const targetYear = seasonYearForDate(dateStr);
+  const activeYear = data.settings.seasonStartYear || autoSeasonStartYear();
+  if(targetYear===null || targetYear===activeYear) return true;
+  return confirm(`Attention : la date saisie (${fmtDate(dateStr)}) concerne la saison ${schoolYearLabel(targetYear)}, alors que la saison en cours est ${schoolYearLabel(activeYear)}.\n\nSouhaites-tu valider quand même ?`);
+}
+// La saison en cours suit automatiquement la date du jour (bascule le 1er septembre), sauf si
+// l'utilisateur a modifié manuellement le champ "Saison — année de rentrée" dans Réglages, auquel
+// cas on respecte son choix jusqu'à ce qu'il redemande le mode automatique.
+function syncSeasonStartYearFromDate(){
+  if(data.settings.seasonAutoFollow===false) return;
+  const auto = autoSeasonStartYear();
+  if(data.settings.seasonStartYear !== auto){
+    data.settings.seasonStartYear = auto;
+    saveData();
+  }
+}
+function getViewingArchive(){
+  if(!ui.viewingSeasonId) return null;
+  return (data.archivedSeasons||[]).find(a=>a.id===ui.viewingSeasonId) || null;
+}
+function archiveBannerHtml(archive){
+  return `<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#FFF6DA; border:1px solid #E8C547; border-radius:8px; padding:9px 12px; font-size:13px; color:#6B5300;">
+    <div>🕓 Tu consultes la saison <strong>${escapeHtml(archive.name)}</strong> (lecture seule). Les autres onglets (Présences, Convocations, Param.) restent sur la saison en cours.</div>
+    <button class="ghost icon-btn" data-action="back-to-current-season" style="flex-shrink:0; background:#fff;">← Saison actuelle</button>
+  </div>`;
+}
+function wireArchiveBanner(containerEl){
+  const btn = containerEl.querySelector('[data-action="back-to-current-season"]');
+  if(btn) btn.addEventListener('click', ()=>{ ui.viewingSeasonId = null; renderAll(); });
+}
+function renderHeaderSeasonSwitch(){
+  const el = document.getElementById('headerSeasonSwitch');
   if(!el) return;
   const seasonYear = data.settings.seasonStartYear || autoSeasonStartYear();
-  el.textContent = `Saison ${schoolYearLabel(seasonYear)}`;
+  const archives = [...(data.archivedSeasons||[])].sort((a,b)=>{
+    const ay = (a.settings&&a.settings.seasonStartYear) || 0, by = (b.settings&&b.settings.seasonStartYear) || 0;
+    return by - ay;
+  });
+  const prevValue = ui.viewingSeasonId || '';
+  el.innerHTML = `<option value="">Saison ${schoolYearLabel(seasonYear)} (en cours)</option>`
+    + archives.map(a=>`<option value="${a.id}">Saison ${escapeHtml(a.name)}</option>`).join('');
+  if([...el.options].some(o=>o.value===prevValue)){ el.value = prevValue; } else { el.value=''; ui.viewingSeasonId = null; }
+  el.onchange = ()=>{ ui.viewingSeasonId = el.value || null; renderAll(); };
 }
 function renderAll(){
   if(!ready) return;
-  renderHeaderSeasonLabel();
+  syncSeasonStartYearFromDate();
+  renderHeaderSeasonSwitch();
   renderGroupsTab();
   renderDuplicateGroupsCard();
   renderBeltPassageSection();
@@ -1450,7 +1520,22 @@ document.getElementById('importWorkbookBtn').addEventListener('click', ()=>{
   document.getElementById('importFileInput').click();
 });
 
+function renderArchiveViewGroupes(archive){
+  const bannerEl = document.getElementById('archive-view-groupes-banner');
+  if(bannerEl){ bannerEl.innerHTML = archiveBannerHtml(archive); wireArchiveBanner(bannerEl); }
+  const bodyEl = document.getElementById('archive-view-groupes-body');
+  if(bodyEl){
+    bodyEl.innerHTML = `<h2 style="margin:0 0 10px;">Effectifs — ${escapeHtml(archive.name)}</h2>` + buildArchiveGroupShellHtml(archive, archive.id);
+    mountArchiveGroupHandlers(archive, archive.id);
+  }
+}
 function renderGroupsTab(){
+  const archive = getViewingArchive();
+  const liveEl = document.getElementById('groupes-live');
+  const archiveEl = document.getElementById('groupes-archive-view');
+  if(liveEl) liveEl.style.display = archive ? 'none' : '';
+  if(archiveEl) archiveEl.style.display = archive ? '' : 'none';
+  if(archive){ renderArchiveViewGroupes(archive); return; }
   const wrap = document.getElementById('groups-list');
   if(data.groups.length===0){
     wrap.innerHTML = `<div class="empty">Aucun cours pour l'instant. Ajoutez votre premier cours ci-dessus — par exemple « Judo débutants » ou « Karaté ados ».</div>`;
@@ -2206,7 +2291,7 @@ function renderAgeSettings(){
         <h2 style="margin:0;">Catégories d'âge</h2>
         <button class="ghost icon-btn" id="unlockAgeSettingsBtn" title="Modifier les catégories d'âge" style="flex-shrink:0; padding:8px 9px;">✏️</button>
       </div>
-      <p style="font-size:12.5px; color:var(--ink-dim); margin:8px 0 4px;">Saison — année de rentrée : <strong>${seasonYear}</strong></p>
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:8px 0 4px;">Saison — année de rentrée : <strong>${seasonYear}</strong> ${data.settings.seasonAutoFollow!==false ? '<span class="tag" style="background:#EAF3E2; color:#4C7A2A;">Auto (date du jour)</span>' : '<span class="tag" style="background:#FFF6DA; color:#6B5300;">Manuel</span>'}</p>
       <div style="margin-top:8px; font-size:14px; line-height:1.7;">
         ${bands.map(b=>{
           const minYear = seasonYear - b.maxAge;
@@ -2231,8 +2316,13 @@ function renderAgeSettings(){
     <div class="row">
       <div style="flex:1">
         <label class="small">Saison — année de rentrée (ex. 2026 pour 2026-2027)</label>
-        <input type="number" id="seasonStartYear" value="${seasonYear}">
+        <input type="number" id="seasonStartYear" value="${seasonYear}" ${data.settings.seasonAutoFollow!==false?'disabled':''}>
       </div>
+    </div>
+    <div style="margin-top:6px; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:var(--ink-dim);">
+      ${data.settings.seasonAutoFollow!==false
+        ? `<span>🟢 Suit automatiquement la date du jour (bascule le 1er septembre).</span><button class="ghost icon-btn" id="forceManualSeasonBtn" style="flex-shrink:0; font-size:11.5px; padding:5px 8px;">Forcer manuellement</button>`
+        : `<span>🟡 Saison réglée manuellement — ne suit plus la date du jour.</span><button class="ghost icon-btn" id="resumeAutoSeasonBtn" style="flex-shrink:0; font-size:11.5px; padding:5px 8px;">↻ Revenir à l'automatique</button>`}
     </div>
     <div style="margin-top:12px;">
       ${bands.map((b,i)=>{
@@ -2256,7 +2346,19 @@ function renderAgeSettings(){
   });
   document.getElementById('seasonStartYear').addEventListener('change', e=>{
     const v = parseInt(e.target.value,10);
-    if(v){ data.settings.seasonStartYear = v; saveData(); renderAll(); }
+    if(v){ data.settings.seasonStartYear = v; data.settings.seasonAutoFollow = false; saveData(); renderAll(); }
+  });
+  const forceManualBtn = document.getElementById('forceManualSeasonBtn');
+  if(forceManualBtn) forceManualBtn.addEventListener('click', ()=>{
+    data.settings.seasonAutoFollow = false;
+    saveData(); renderAll();
+  });
+  const resumeAutoBtn = document.getElementById('resumeAutoSeasonBtn');
+  if(resumeAutoBtn) resumeAutoBtn.addEventListener('click', ()=>{
+    data.settings.seasonAutoFollow = true;
+    data.settings.seasonStartYear = autoSeasonStartYear();
+    saveData(); renderAll();
+    showToast(`Saison automatique : ${schoolYearLabel(data.settings.seasonStartYear)}`);
   });
   wrap.querySelectorAll('.band-row').forEach(row=>{
     const idx = parseInt(row.dataset.idx,10);
@@ -2639,6 +2741,7 @@ function renderImportedCompetitionsSettings(){
       const name = addForm.querySelector('[data-field="name"]').value.trim();
       const dateVal = addForm.querySelector('[data-field="date"]').value;
       if(!name || !dateVal){ showToast('Renseigne au moins le nom et la date'); return; }
+      if(!confirmIfSeasonMismatch(dateVal)) return;
       let dateEndVal = addForm.querySelector('[data-field="dateEnd"]').value;
       if(dateEndVal && dateEndVal < dateVal){ showToast('La date de fin ne peut pas être avant la date de début — ignorée'); dateEndVal = ''; }
       const cityVal = addForm.querySelector('[data-field="city"]').value.trim();
@@ -2785,9 +2888,11 @@ function renderImportedCompetitionsSettings(){
       const id = manualEditForm.dataset.entryId;
       const entry = (data.calendarEvents||[]).find(e=>e.id===id);
       if(!entry) return;
+      const newDateVal = manualEditForm.querySelector('[data-field="date"]').value;
+      if(newDateVal !== entry.date && !confirmIfSeasonMismatch(newDateVal)) return;
       entry.type = manualEditForm.querySelector('[data-field="type"]').value;
       entry.name = manualEditForm.querySelector('[data-field="name"]').value.trim();
-      entry.date = manualEditForm.querySelector('[data-field="date"]').value;
+      entry.date = newDateVal;
       let dateEndVal = manualEditForm.querySelector('[data-field="dateEnd"]').value;
       if(dateEndVal && dateEndVal < entry.date){ showToast('La date de fin ne peut pas être avant la date de début — ignorée'); dateEndVal = ''; }
       entry.dateEnd = dateEndVal;
@@ -3499,6 +3604,7 @@ function renderPresencesTab(){
   document.getElementById('openSessionBtn').addEventListener('click', ()=>{
     const date = document.getElementById('presenceDate').value || todayStr();
     let session = data.sessions.find(s=>s.groupId===ui.presenceGroup && s.date===date);
+    if(!session && !confirmIfSeasonMismatch(date)) return;
     if(!session){
       const g = data.groups.find(x=>x.id===ui.presenceGroup);
       session = { id: uid(), groupId: ui.presenceGroup, date, time: g ? matchingSlotTime(g, date) : '', validated:false, guestMemberIds:[] };
@@ -3743,7 +3849,22 @@ function schoolYearsAvailable(){
   return Array.from(starts).sort((a,b)=>b-a);
 }
 
+function renderArchiveViewSuivi(archive){
+  const bannerEl = document.getElementById('archive-view-suivi-banner');
+  if(bannerEl){ bannerEl.innerHTML = archiveBannerHtml(archive); wireArchiveBanner(bannerEl); }
+  const bodyEl = document.getElementById('archive-view-suivi-body');
+  if(bodyEl){
+    bodyEl.innerHTML = `<h2 style="margin:0 0 10px;">Suivi de présence — ${escapeHtml(archive.name)}</h2>` + buildArchivePresenceShellHtml(archive, archive.id);
+    mountArchivePresenceHandlers(archive, archive.id);
+  }
+}
 function renderSuiviTab(){
+  const archive = getViewingArchive();
+  const liveEl = document.getElementById('suivi-live');
+  const archiveEl = document.getElementById('suivi-archive-view');
+  if(liveEl) liveEl.style.display = archive ? 'none' : '';
+  if(archiveEl) archiveEl.style.display = archive ? '' : 'none';
+  if(archive){ renderArchiveViewSuivi(archive); return; }
   const yearSel = document.getElementById('suiviYear');
   const groupSel = document.getElementById('suiviGroup');
   const years = schoolYearsAvailable();
@@ -4592,6 +4713,9 @@ function getOrCreateRecipientToken(ev, member){
 function ensureConvocEvent(members){
   const eventName = document.getElementById('convocEvent').value.trim() || 'Convocation';
   const date = document.getElementById('convocDate').value;
+  const existing = data.convocEvents.find(e=> e.name.trim().toLowerCase()===eventName.trim().toLowerCase());
+  const dateChanged = !existing || (date && existing.date!==date);
+  if(dateChanged && !confirmIfSeasonMismatch(date)) return null;
   const ev = findOrCreateConvocEvent(eventName, date);
   members.forEach(m=> getOrCreateRecipientToken(ev, m));
   snapshotConvocFormOntoEvent(ev);
@@ -4820,6 +4944,7 @@ function buildConvocTextMessage(){
   const cfg = getBackendConfig();
   if(selected.length===1 && cfg && cfg.url){
     const ev = ensureConvocEvent(selected);
+    if(!ev) return { subject:'', body:'', emails:[], selectedCount:selected.length };
     const recipient = ev.recipients.find(r=>r.memberId===selected[0].id);
     const link = recipient ? convocResponseLink(recipient.token) : '';
     if(link) body += `\nRépondez en un clic — Présent(e) ou Absent(e) :\n${link}\n`;
@@ -5043,6 +5168,7 @@ function renderConvocTab(){
     const { subject, body, emails } = buildConvocTextMessage();
     if(!emails.length){ showToast('Aucun destinataire sélectionné n’a d’email renseigné'); return; }
     const ev = ensureConvocEvent(convocSelectedMembers());
+    if(!ev) return;
     ev.emailSent = true;
     saveData();
     window.location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -5052,6 +5178,7 @@ function renderConvocTab(){
     const { body, selectedCount } = buildConvocTextMessage();
     if(selectedCount===0){ showToast('Sélectionne au moins un pratiquant à convoquer'); return; }
     const ev = ensureConvocEvent(convocSelectedMembers());
+    if(!ev) return;
     window.open(`https://wa.me/?text=${encodeURIComponent(body)}`, '_blank');
     resetConvocFormAfterGeneration();
   });
@@ -6121,7 +6248,27 @@ function attachResultsHistoryDetailHandlers(){
     });
   });
 }
+function renderArchiveViewResultats(archive){
+  const bannerEl = document.getElementById('archive-view-resultats-banner');
+  if(bannerEl){ bannerEl.innerHTML = archiveBannerHtml(archive); wireArchiveBanner(bannerEl); }
+  const bodyEl = document.getElementById('archive-view-resultats-body');
+  if(bodyEl){
+    bodyEl.innerHTML = `<h2 style="margin:0 0 10px;">Résultats par événement — ${escapeHtml(archive.name)}</h2>` + renderArchiveResultsShellHtml(archive, archive.id);
+    mountArchiveResultsHandlers(archive, archive.id);
+  }
+  const palmaresEl = document.getElementById('archive-view-palmares-body');
+  if(palmaresEl){
+    palmaresEl.innerHTML = `<h2 style="margin:0 0 10px;">Palmarès d'un élève — ${escapeHtml(archive.name)}</h2>` + buildArchivePalmaresShellHtml(archive, archive.id);
+    mountArchivePalmaresHandlers(archive, archive.id);
+  }
+}
 function renderResultsTab(){
+  const archive = getViewingArchive();
+  const liveEl = document.getElementById('resultats-live');
+  const archiveEl = document.getElementById('resultats-archive-view');
+  if(liveEl) liveEl.style.display = archive ? 'none' : '';
+  if(archiveEl) archiveEl.style.display = archive ? '' : 'none';
+  if(archive){ renderArchiveViewResultats(archive); return; }
   const sel = document.getElementById('resultsEventSel');
   if(!sel) return;
   renderResultsDashboard();
@@ -6256,7 +6403,9 @@ function renderStageForm(){
   document.getElementById('validateStageBtn').onclick = ()=>{
     const nameVal = document.getElementById('stageNameInput').value.trim();
     if(!nameVal){ showToast('Renseigne le nom du stage'); return; }
-    const s = findOrCreateStage(nameVal, document.getElementById('stageDateStart').value, document.getElementById('stageDateEnd').value);
+    const stageDateStartVal = document.getElementById('stageDateStart').value;
+    if(!confirmIfSeasonMismatch(stageDateStartVal)) return;
+    const s = findOrCreateStage(nameVal, stageDateStartVal, document.getElementById('stageDateEnd').value);
     if(s.participants.length===0){ showToast('Ajoute au moins un élève avant de valider'); return; }
     s.validated = true;
     saveData();
@@ -6460,6 +6609,9 @@ function initAddResultForm(){
     if(!ui.addResultMatchedMemberId){ showToast('Tape le nom d’un élève et choisis-le dans la liste proposée'); return; }
     const member = data.members.find(m=>m.id===ui.addResultMatchedMemberId);
     if(!member) return;
+    const existingResultEvent = data.convocEvents.find(e=> e.name.trim().toLowerCase()===nameVal.trim().toLowerCase());
+    const resultDateChanged = !existingResultEvent || (dateVal && existingResultEvent.date!==dateVal);
+    if(resultDateChanged && !confirmIfSeasonMismatch(dateVal)) return;
     const shiai = isShiaiEvent(nameVal);
     const weightInput = document.getElementById('addResultWeightValue');
     const resultInput = document.getElementById('addResultValue');
@@ -8139,6 +8291,7 @@ function openConvocPrint(){
   const members = convocSelectedMembers();
   if(members.length===0){ showToast('Sélectionne au moins un pratiquant à convoquer'); return; }
 const ev = ensureConvocEvent(members);
+  if(!ev) return;
   resetConvocFormAfterGeneration();
 
   const overlay = document.getElementById('convoc-print-overlay');
@@ -8229,6 +8382,7 @@ async function sendConvocationsWithPdf(){
 
   const event = document.getElementById('convocEvent').value.trim() || 'Convocation';
   const ev = ensureConvocEvent(members);
+  if(!ev) return;
   const ctx = buildConvocContext(ev);
   resetConvocFormAfterGeneration();
   let baseTextBody = `Bonjour,\n\nVotre enfant est convoqué(e) à : ${ctx.event}\n`;
