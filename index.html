@@ -164,172 +164,6 @@
   .fiche-summary-name{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; font-size:14.5px; }
   .fiche-summary-name .fs-prenom{ color:var(--ink-dim); font-weight:400; }
   .member-chip.edit-fiche .field-label{
-    font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Tatami — Suivi des présences</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600;700&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg: #12161B;
-    --surface: #1B2127;
-    --surface-2: #232A31;
-    --line: rgba(244,240,230,0.10);
-    --ink: #F3EFE5;
-    --ink-dim: #A8AEA0;
-    --tatami: #9CAA6B;
-    --tatami-dim: rgba(156,170,107,0.16);
-    --clay: #B3492F;
-    --clay-dim: rgba(179,73,47,0.16);
-    --radius: 14px;
-  }
-  :root[data-theme="light"]{
-    --bg: #F1ECDF;
-    --surface: #FFFFFF;
-    --surface-2: #F5F1E6;
-    --line: rgba(30,26,18,0.12);
-    --ink: #201C14;
-    --ink-dim: #6B6656;
-    --tatami: #5E7A3E;
-    --tatami-dim: rgba(94,122,62,0.14);
-    --clay: #A23F27;
-    --clay-dim: rgba(162,63,39,0.12);
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
-  body{
-    background: var(--bg);
-    color: var(--ink);
-    font-family:'Inter',system-ui,sans-serif;
-    min-height:100vh;
-    -webkit-font-smoothing:antialiased;
-    padding-bottom: 84px;
-  }
-  h1,h2,h3, .display{
-    font-family:'Big Shoulders Display', system-ui, sans-serif;
-    font-weight:800;
-    letter-spacing:0.01em;
-    text-transform:uppercase;
-  }
-  header.topbar{
-    padding: 18px 18px 14px;
-    border-bottom:1px solid var(--line);
-    position:sticky; top:0; z-index:10;
-    background: linear-gradient(180deg, var(--bg) 80%, transparent);
-    backdrop-filter: blur(6px);
-  }
-  header.topbar .header-top-row{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-  }
-  header.topbar .club-logo{
-    height:44px; width:auto; max-width:70%; object-fit:contain;
-    display:block;
-  }
-  header.topbar .club-logo-dark{ display:none; }
-  :root[data-theme="dark"] header.topbar .club-logo-dark{ display:block; }
-  :root[data-theme="dark"] header.topbar .club-logo-light{ display:none; }
-  header.topbar .eyebrow{
-    font-size:11px; letter-spacing:0.18em; text-transform:uppercase;
-    color: var(--tatami); font-weight:600; margin-top:10px;
-  }
-  header.topbar h1{
-    font-size:26px; margin:2px 0 0; line-height:1;
-  }
-  header.topbar input.club-name{
-    background:none; border:none; color:var(--ink);
-    font-family:'Rajdhani', system-ui, sans-serif;
-    font-weight:700; font-size:15px; text-transform:none;
-    letter-spacing:0; width:100%; padding:0; outline:none;
-    margin-top:2px;
-  }
-  header.topbar input.club-name::placeholder{ color: var(--ink-dim); }
-  .global-search-results{
-    display:none; position:absolute; top:calc(100% + 4px); left:0; right:0;
-    background:var(--surface); border:1px solid var(--line); border-radius:10px;
-    max-height:320px; overflow-y:auto; z-index:80; box-shadow:0 10px 26px rgba(0,0,0,0.35);
-  }
-  .global-search-results.show{ display:block; }
-
-  main{ padding: 16px 16px 8px; max-width:640px; margin:0 auto; }
-  section{ display:none; }
-  section.active{ display:block; animation: fade .18s ease; }
-  @keyframes fade{ from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:translateY(0);} }
-
-  .card{
-    background: var(--surface);
-    border:1px solid var(--line);
-    border-radius: var(--radius);
-    padding:16px;
-    margin-bottom:14px;
-  }
-  .card h2{ font-size:15px; margin:0 0 12px; color:var(--ink); }
-  .row{ display:flex; gap:8px; align-items:center; }
-  .row + .row{ margin-top:10px; }
-  label.small{ font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-dim); display:block; margin-bottom:6px; }
-
-  input[type=text], input[type=date], select{
-    background: var(--surface-2);
-    border:1px solid var(--line);
-    color: var(--ink);
-    border-radius:10px;
-    padding:11px 12px;
-    font-size:15px;
-    font-family:'Inter',sans-serif;
-    width:100%;
-    outline:none;
-  }
-  input[type=text]:focus, input[type=date]:focus, select:focus{ border-color: var(--tatami); }
-
-  button{
-    font-family:'Inter',sans-serif;
-    border:none; cursor:pointer;
-    border-radius:10px;
-    padding:11px 16px;
-    font-size:14px; font-weight:600;
-    background: var(--surface-2);
-    color: var(--ink);
-    transition: transform .08s ease, background .15s ease;
-  }
-  button:active{ transform: scale(0.97); }
-  button.primary{ background: var(--tatami); color:#1A1F14; }
-  button.ghost{ background:transparent; border:1px solid var(--line); }
-  button.danger{ background: var(--clay-dim); color:#F3B7A6; }
-  button:focus-visible{ outline:2px solid var(--tatami); outline-offset:2px; }
-  button.icon-btn{ padding:8px 10px; }
-
-  .empty{
-    color: var(--ink-dim); font-size:14px; line-height:1.5;
-    padding:18px 4px; text-align:left;
-  }
-
-  .group-block{ border-top:1px solid var(--line); padding-top:12px; margin-top:12px; }
-  .group-block:first-of-type{ border-top:none; padding-top:0; margin-top:0; }
-  .group-title-row{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
-  .group-title-row .name{ font-weight:700; font-size:15px; }
-  .group-title-row .meta{ font-size:12px; color:var(--ink-dim); }
-
-  .member-chip{
-    display:flex; align-items:center; justify-content:space-between;
-    padding:9px 2px; border-bottom:1px solid var(--line); font-size:14px;
-  }
-  .member-chip:last-child{ border-bottom:none; }
-  .member-chip.edit-fiche{
-    flex-direction:column; align-items:stretch; gap:8px;
-    padding:14px 12px; margin:0 0 10px; border-bottom:none;
-    border-radius:12px; background:rgba(128,128,128,0.13);
-  }
-  .member-chip.edit-fiche.alt{ background:rgba(128,128,128,0.22); }
-  .member-chip.edit-fiche:last-child{ margin-bottom:0; }
-  .fiche-summary-row{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-    cursor:pointer;
-  }
-  .fiche-summary-name{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; font-size:14.5px; }
-  .fiche-summary-name .fs-prenom{ color:var(--ink-dim); font-weight:400; }
-  .member-chip.edit-fiche .field-label{
     font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
     color:var(--ink-dim); margin-bottom:3px; display:block;
   }
@@ -6090,6 +5924,19 @@ function weightDisplayValue(birthDate, weight, forceMorphological){
   if(weight) return `${weight} kg`;
   return weightOptionsForBandLabel(groupedCategoryLabel(birthDate)) ? '—' : 'Poule morphologique';
 }
+// Retrouve le dernier poids renseigné pour ce pratiquant sur une compétition antérieure
+// (hors "Poule morphologique"), pour pré-remplir automatiquement le poids de la compétition suivante.
+function getMemberLastWeight(memberId, beforeDate, excludeEventId){
+  let best = null;
+  (data.convocEvents||[]).forEach(ev=>{
+    if(excludeEventId && ev.id===excludeEventId) return;
+    if(beforeDate && ev.date && ev.date >= beforeDate) return;
+    const r = (ev.recipients||[]).find(x=>x.memberId===memberId && x.weight && x.weight!=='Poule morphologique');
+    if(!r) return;
+    if(!best || (ev.date||'') > (best.date||'')) best = { date: ev.date, weight: r.weight };
+  });
+  return best ? best.weight : '';
+}
 function bandLabelFromCategorie(categorie){
   return String(categorie||'').replace(/\s*\([^)]*\)\s*$/, '').trim();
 }
@@ -6604,6 +6451,7 @@ function initAddResultForm(){
     renderResultsTab();
   };
   document.getElementById('addResultEventName').oninput = refreshAddResultField;
+  document.getElementById('addResultDate').addEventListener('change', refreshAddResultWeightField);
   initAddResultMemberAutocomplete();
   document.getElementById('confirmAddResultBtn').onclick = ()=>{
     const nameVal = document.getElementById('addResultEventName').value.trim();
@@ -6693,13 +6541,21 @@ function refreshAddResultWeightField(){
   const member = ui.addResultMatchedMemberId ? data.members.find(m=>m.id===ui.addResultMatchedMemberId) : null;
   const bandLabel = member ? groupedCategoryLabel(member.birthDate) : null;
   const cats = bandLabel ? weightOptionsForBandLabel(bandLabel) : null;
+  const dateInput = document.getElementById('addResultDate');
+  const suggested = member ? getMemberLastWeight(member.id, dateInput ? dateInput.value : '', ui.addResultDraftEventId) : '';
   wrap.innerHTML = `<label class="small">Poids</label>` + (cats
     ? `<select id="addResultWeightValue">
          <option value="">Poids —</option>
-         <optgroup label="Garçons">${cats.g.map(w=>`<option value="${w}">${w} kg</option>`).join('')}</optgroup>
-         <optgroup label="Filles">${cats.f.map(w=>`<option value="${w}">${w} kg</option>`).join('')}</optgroup>
+         <optgroup label="Garçons">${cats.g.map(w=>`<option value="${w}" ${suggested===w?'selected':''}>${w} kg</option>`).join('')}</optgroup>
+         <optgroup label="Filles">${cats.f.map(w=>`<option value="${w}" ${suggested===w?'selected':''}>${w} kg</option>`).join('')}</optgroup>
        </select>`
-    : `<input type="text" id="addResultWeightValue" placeholder="Poids (texte libre)">`);
+    : `<input type="text" id="addResultWeightValue" placeholder="Poids (texte libre)" value="${escapeHtml(suggested||'')}">`);
+  if(suggested){
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:11px; color:var(--ink-dim); margin-top:3px;';
+    hint.textContent = `Pré-rempli d'après sa dernière compétition (modifiable)`;
+    wrap.appendChild(hint);
+  }
 }
 
 function refreshAddResultField(){
@@ -6842,6 +6698,16 @@ function renderResultsList(){
   if(shiai){
     let changed = false;
     presents.forEach(r=>{ if(r.weight !== 'Poule morphologique'){ r.weight = 'Poule morphologique'; changed = true; } });
+    if(changed) saveData();
+  } else {
+    // Remplissage automatique du poids à partir de la dernière compétition renseignée pour ce pratiquant.
+    let changed = false;
+    presents.forEach(r=>{
+      if(!r.weight){
+        const suggested = getMemberLastWeight(r.memberId, ev.date, ev.id);
+        if(suggested){ r.weight = suggested; changed = true; }
+      }
+    });
     if(changed) saveData();
   }
   const sorted = [...presents].sort((a,b)=>{
