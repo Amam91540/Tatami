@@ -5905,24 +5905,54 @@ function renderExportCard(){
   document.getElementById('exportExcelBtn').addEventListener('click', ()=>{
     if(typeof XLSX === 'undefined'){ showToast("La lecture de fichiers n'a pas pu se charger"); return; }
     const wb = XLSX.utils.book_new();
-    const membresRows = [['Cours','Nom','Date de naissance','Catégorie','Ceinture','Email']];
-    data.groups.forEach(g=>{
-      data.members.filter(m=>m.groupId===g.id).forEach(m=>{
-        membresRows.push([g.name, m.name, m.birthDate||'', computeCategory(m.birthDate)||'', beltRankLabel(m.belt), m.email||'']);
+    // Onglet général + un onglet par cours, sur le même principe que le fichier de préparation
+    // d'import (COURS/onglets) — mais généré directement depuis les fiches de l'appli plutôt que
+    // via des formules, puisqu'on connaît déjà le cours de chacun. "Licence à prendre" et "Comité
+    // directeur" sont des groupes spéciaux, pas de vrais cours : exclus de l'export, sur demande.
+    // Certaines colonnes du fichier AssoConnect d'origine (ID du Contact, Pays, Complément
+    // d'adresse) ne sont pas stockées dans l'appli et n'ont donc pas d'équivalent ici.
+    const exportGroups = data.groups.filter(g=>!isLicensePendingGroup(g) && !isCommitteeGroup(g));
+    const HEADER_COMMON = ['Nom','Prénom','Email','Téléphone','Sexe','Date de naissance','Adresse','Code postal','Ville','Ceinture','Certificat médical','N° de licence','Notes'];
+    const memberRow = (m)=>{
+      const parts = String(m.name||'').trim().split(/\s+/);
+      const prenom = parts[0]||'';
+      const nom = parts.slice(1).join(' ');
+      return [nom, prenom, m.email||'', m.phone||'', m.gender==='F'?'F':(m.gender==='M'?'M':''), m.birthDate||'', m.address||'', m.postalCode||'', m.city||'', m.belt?beltRankLabel(m.belt):'', m.medicalCertDate||'', m.licenseNumber||'', m.note||''];
+    };
+    const usedSheetNames = new Set(['Général']);
+    const safeSheetName = (name)=>{
+      let base = String(name||'Cours').replace(/[\\/*?:[\]]/g,'').trim().slice(0,31) || 'Cours';
+      let candidate = base, n = 2;
+      while(usedSheetNames.has(candidate)){ candidate = `${base.slice(0,28)} ${n}`; n++; }
+      usedSheetNames.add(candidate);
+      return candidate;
+    };
+
+    const generalRows = [['Cours', ...HEADER_COMMON]];
+    exportGroups.forEach(g=>{
+      data.members.filter(m=>m.groupId===g.id && !m.archived).forEach(m=>{
+        generalRows.push([g.name, ...memberRow(m)]);
       });
     });
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(membresRows), 'Membres');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(generalRows), 'Général');
+
+    exportGroups.forEach(g=>{
+      const rows = [HEADER_COMMON];
+      data.members.filter(m=>m.groupId===g.id && !m.archived).forEach(m=> rows.push(memberRow(m)));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), safeSheetName(g.name));
+    });
 
     const presRows = [['Cours','Date séance','Nom','Statut']];
-    data.groups.forEach(g=>{
+    exportGroups.forEach(g=>{
       data.sessions.filter(s=>s.groupId===g.id).sort((a,b)=>a.date.localeCompare(b.date)).forEach(s=>{
-        data.members.filter(m=>m.groupId===g.id).forEach(m=>{
+        data.members.filter(m=>m.groupId===g.id && !m.archived).forEach(m=>{
           presRows.push([g.name, s.date, m.name, attendanceLabel((data.attendance[s.id]||{})[m.id])]);
         });
       });
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(presRows), 'Présences');
-    XLSX.writeFile(wb, `suivi-presence-${todayStr()}.xlsx`);
+
+    XLSX.writeFile(wb, `export-licencies-${todayStr()}.xlsx`);
     showToast('Fichier Excel généré');
   });
   document.getElementById('printBtn').addEventListener('click', ()=> window.print());
