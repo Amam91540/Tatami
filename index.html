@@ -930,7 +930,7 @@ function matchBeltRank(text){
 }
 
 let data = { clubName:'', groups:[], members:[], sessions:[], attendance:{}, settings:{} };
-let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, viewingSeasonId:null };
+let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, viewingSeasonId:null, groupNameEditing:{}, committeeSearchOpen:{}, addOtherGroupOpen:{} };
 let ready = false;
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -1218,6 +1218,30 @@ function migrateValidatedFlag(){
   return true;
 }
 
+// Groupe "Comité directeur" : reconnu par son nom (insensible aux accents/casse) plutôt que par un
+// simple id figé, pour que le renommer à nouveau plus tard (via le crayon) continue de marcher sans
+// plomberie supplémentaire. C'est le seul groupe où on peut rattacher une fiche déjà existante
+// (bureau/dirigeants devant être licenciés dans plusieurs disciplines à la fois).
+function isCommitteeGroup(g){
+  if(!g) return false;
+  return normalizeCategoryKey(g.name) === 'comite directeur';
+}
+
+// Le fichier Excel de préparation d'import contient un onglet "export" (toutes les lignes, avant
+// répartition par cours) : avant ce correctif, cet onglet était lui-même traité comme un cours par
+// importWorkbookMultiSheet (il a bien des colonnes Nom/Prénom), ce qui créait un groupe "Export"
+// rempli de TOUT le monde en double. On le renomme une bonne fois en "Comité directeur" (repris
+// comme groupe des dirigeants) et on l'exclut désormais des imports (voir SKIP_IMPORT_SHEET_NAMES)
+// pour qu'un futur import ne vienne plus jamais le repolluer avec la liste complète.
+function renameExportGroupToComiteDirecteurOnce(){
+  const flag = 'exportGroupRenamedToComite_v1';
+  if(data.settings[flag]) return false;
+  const g = data.groups.find(x=> normalizeCategoryKey(x.name) === 'export');
+  if(g) g.name = 'Comité directeur';
+  data.settings[flag] = true;
+  return !!g;
+}
+
 function getBackendConfig(){
   try{ return JSON.parse(localStorage.getItem('dojo-backend-config')||'null'); }catch(e){ return null; }
 }
@@ -1296,6 +1320,7 @@ async function loadData(){
   if(migrateValidatedFlag()){ saveData(); }
   if(cleanupUnvalidatedSessions()){ saveData(); }
   if(seedVeteranCalendar2026Once()){ saveData(); }
+  if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
   document.documentElement.setAttribute('data-theme', data.settings.theme);
   document.getElementById('themeToggle').textContent = data.settings.theme==='light' ? '🌙' : '☀️';
   ready = true;
@@ -1621,18 +1646,35 @@ function renderGroupsTab(){
     const members = data.members.filter(m=>m.groupId===g.id && !m.archived).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
     const draftId = 'draft-'+g.id;
     const expanded = !!ui.groupsExpanded[g.id];
+    const nameEditing = !!(ui.groupNameEditing && ui.groupNameEditing[g.id]);
+    const committee = isCommitteeGroup(g);
     return `
     <div class="group-block" data-group="${g.id}">
-      <div class="group-title-row" data-action="toggle-group" data-id="${g.id}" style="cursor:pointer;">
-        <div>
-          <div class="name">${escapeHtml(g.name)}</div>
-          <div class="meta">${members.length} pratiquant${members.length===1?'':'s'}</div>
+      <div class="group-title-row" ${nameEditing ? '' : `data-action="toggle-group" data-id="${g.id}"`} style="cursor:${nameEditing?'default':'pointer'};">
+        <div style="flex:1; min-width:0;">
+          ${nameEditing ? `
+          <div style="display:flex; align-items:center; gap:6px;" onclick="event.stopPropagation()">
+            <input type="text" data-action="edit-group-name-input" data-id="${g.id}" value="${escapeHtml(g.name)}" style="flex:1;">
+            <button class="ghost icon-btn" data-action="save-group-name-btn" data-id="${g.id}" style="padding:6px 9px; flex-shrink:0;" title="Enregistrer">✓</button>
+          </div>` : `
+          <div class="name" style="display:flex; align-items:center; gap:6px;">
+            <span>${escapeHtml(g.name)}</span>
+            <button class="ghost icon-btn" data-action="edit-group-name-btn" data-id="${g.id}" style="padding:3px 6px; font-size:12px; flex-shrink:0;" title="Renommer ce cours">✏️</button>
+          </div>
+          <div class="meta">${members.length} pratiquant${members.length===1?'':'s'}</div>`}
         </div>
         <div style="display:flex; align-items:center; gap:10px;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" style="flex-shrink:0; color:var(--ink-dim); transform:rotate(${expanded?90:0}deg); transition:transform .15s;"><path d="M9 6l6 6-6 6"/></svg>
+          ${nameEditing ? '' : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" style="flex-shrink:0; color:var(--ink-dim); transform:rotate(${expanded?90:0}deg); transition:transform .15s;"><path d="M9 6l6 6-6 6"/></svg>`}
         </div>
       </div>
       ${expanded ? `
+      ${committee ? `
+      <div class="row" style="margin-top:10px; position:relative;">
+        <input type="text" id="committee-search-${g.id}" placeholder="Rechercher une fiche existante (nom)" autocomplete="off" data-action="committee-search-input" data-group="${g.id}">
+        <div class="archived-suggest" id="suggest-committee-search-${g.id}"></div>
+      </div>
+      <div class="small" style="color:var(--ink-dim); margin-top:4px;">Ajoute une fiche liée (déjà existante ailleurs) dans ce groupe, sans la retirer de son cours d'origine.</div>
+      ` : ''}
       ${members.map((m, idx)=>{
         const cat = computeCategory(m.birthDate);
         const nameParts = String(m.name||'').trim().split(/\s+/);
@@ -1669,6 +1711,21 @@ function renderGroupsTab(){
                 <div style="margin-top:8px;"><span class="field-label">Cours</span><div>${curGroup ? escapeHtml(curGroup.name) : '—'}</div></div>
                 ${m.note ? `<div style="margin-top:8px;"><span class="field-label">Note</span><div style="white-space:pre-wrap;">${escapeHtml(m.note)}</div></div>` : ''}
               </div>
+              ${committee ? (()=>{
+                const addOpen = !!ui.addOtherGroupOpen[m.id];
+                const otherGroups = data.groups.filter(g2=>g2.id!==g.id);
+                if(!addOpen){
+                  return `<div style="margin-top:10px;"><button class="ghost icon-btn" data-action="toggle-add-other-group" data-id="${m.id}" style="padding:7px 10px; font-size:12.5px; width:100%;">+ Ajouter aussi dans un cours (fiche liée)</button></div>`;
+                }
+                return `
+                <div class="row" style="margin-top:10px; gap:8px;">
+                  <select data-action="add-other-group-select" data-id="${m.id}" style="flex:1;">
+                    ${otherGroups.map(g2=>`<option value="${g2.id}">${escapeHtml(g2.name)}</option>`).join('')}
+                  </select>
+                  <button class="ghost icon-btn" data-action="confirm-add-other-group" data-id="${m.id}" style="padding:7px 10px; flex-shrink:0;">Ajouter</button>
+                  <button class="ghost icon-btn" data-action="toggle-add-other-group" data-id="${m.id}" style="padding:7px 10px; flex-shrink:0;">✕</button>
+                </div>`;
+              })() : ''}
               <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px; flex-wrap:wrap;">
                 <button class="ghost icon-btn" data-action="member-history-pdf" data-id="${m.id}" title="Générer l'historique complet (résultats, passages de grade, stages) en PDF" style="padding:7px 10px;">📄 Historique PDF</button>
                 <button class="ghost icon-btn" data-action="edit-member-fiche" data-id="${m.id}" title="Modifier les informations" style="padding:7px 10px;">✏️</button>
@@ -1874,6 +1931,35 @@ async function generateIncompleteFichesPdf(){
 }
 
 document.getElementById('groups-list').addEventListener('click', e=>{
+  const renameBtn = e.target.closest('[data-action="edit-group-name-btn"]');
+  if(renameBtn){
+    ui.groupNameEditing[renameBtn.dataset.id] = true;
+    renderGroupsTab();
+    return;
+  }
+  const saveNameBtn = e.target.closest('[data-action="save-group-name-btn"]');
+  if(saveNameBtn){
+    const gid = saveNameBtn.dataset.id;
+    const input = document.querySelector(`input[data-action="edit-group-name-input"][data-id="${gid}"]`);
+    const g = data.groups.find(x=>x.id===gid);
+    if(g && input){
+      const val = input.value.trim();
+      if(val) g.name = val;
+    }
+    ui.groupNameEditing[gid] = false;
+    saveData(); renderAll();
+    return;
+  }
+  const committeeSuggestItem = e.target.closest('.committee-suggest-item');
+  if(committeeSuggestItem){
+    const source = data.members.find(x=>x.id===committeeSuggestItem.dataset.member);
+    const targetGroupId = committeeSuggestItem.dataset.group;
+    if(source){
+      const linked = createLinkedMemberRecord(source, targetGroupId);
+      if(linked){ saveData(); renderAll(); showToast(`${source.name} ajouté(e) — fiche liée créée`); }
+    }
+    return;
+  }
   const toggleEl = e.target.closest('[data-action="toggle-group"]');
   if(toggleEl){
     const gid = toggleEl.dataset.id;
@@ -1934,6 +2020,23 @@ document.getElementById('groups-list').addEventListener('click', e=>{
     ui.importMode = 'single';
     ui.importTargetGroup = btn.dataset.id;
     document.getElementById('importFileInput').click();
+  } else if(action==='toggle-add-other-group'){
+    const mid = btn.dataset.id;
+    ui.addOtherGroupOpen[mid] = !ui.addOtherGroupOpen[mid];
+    renderGroupsTab();
+  } else if(action==='confirm-add-other-group'){
+    const mid = btn.dataset.id;
+    const source = data.members.find(x=>x.id===mid);
+    const select = document.querySelector(`select[data-action="add-other-group-select"][data-id="${mid}"]`);
+    if(source && select && select.value){
+      const linked = createLinkedMemberRecord(source, select.value);
+      if(linked){
+        ui.addOtherGroupOpen[mid] = false;
+        const targetGroup = data.groups.find(x=>x.id===select.value);
+        saveData(); renderAll();
+        showToast(`${source.name} ajouté(e) dans « ${targetGroup?targetGroup.name:''} » — fiche liée créée`);
+      }
+    }
   }
 });
 
@@ -1978,23 +2081,97 @@ function renderArchivedSuggestBox(inputEl){
 
 document.getElementById('groups-list').addEventListener('input', e=>{
   const input = e.target.closest('[data-action="archived-search-input"]');
-  if(!input) return;
-  renderArchivedSuggestBox(input);
+  if(input){ renderArchivedSuggestBox(input); return; }
+  const csInput = e.target.closest('[data-action="committee-search-input"]');
+  if(csInput){ renderCommitteeSuggestBox(csInput); return; }
 });
 
 document.getElementById('groups-list').addEventListener('focusin', e=>{
   const input = e.target.closest('[data-action="archived-search-input"]');
-  if(!input) return;
-  renderArchivedSuggestBox(input);
+  if(input){ renderArchivedSuggestBox(input); return; }
+  const csInput = e.target.closest('[data-action="committee-search-input"]');
+  if(csInput){ renderCommitteeSuggestBox(csInput); return; }
 });
 
 document.getElementById('groups-list').addEventListener('focusout', e=>{
   const input = e.target.closest('[data-action="archived-search-input"]');
-  if(!input) return;
-  const suggestBox = document.getElementById('suggest-' + input.id);
-  // Petit délai pour laisser le temps au clic sur une suggestion de se déclencher avant fermeture.
-  setTimeout(()=>{ if(suggestBox) suggestBox.classList.remove('show'); }, 150);
+  if(input){
+    const suggestBox = document.getElementById('suggest-' + input.id);
+    // Petit délai pour laisser le temps au clic sur une suggestion de se déclencher avant fermeture.
+    setTimeout(()=>{ if(suggestBox) suggestBox.classList.remove('show'); }, 150);
+    return;
+  }
+  const csInput = e.target.closest('[data-action="committee-search-input"]');
+  if(csInput){
+    const suggestBox = document.getElementById('suggest-' + csInput.id);
+    setTimeout(()=>{ if(suggestBox) suggestBox.classList.remove('show'); }, 150);
+    return;
+  }
 });
+
+// Recherche parmi TOUS les membres ACTIFS (n'importe quel cours, y compris déjà dans le groupe
+// courant — au cas où un homonyme existerait) : utilisé pour ajouter une fiche liée dans un groupe
+// spécial (ex: Comité directeur) sans retirer la personne de son cours d'origine.
+function findActiveMemberMatches(query){
+  const q = query.trim().toLowerCase();
+  if(!q) return [];
+  return data.members
+    .filter(m=>!m.archived && m.name && m.name.toLowerCase().includes(q))
+    .sort((a,b)=>{
+      const aStarts = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+      const bStarts = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+      if(aStarts !== bStarts) return aStarts - bStarts;
+      return memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr');
+    })
+    .slice(0, 8);
+}
+
+function renderCommitteeSuggestBox(inputEl){
+  const suggestBox = document.getElementById('suggest-' + inputEl.id);
+  if(!suggestBox) return;
+  const query = inputEl.value.trim();
+  if(query.length < 2){ suggestBox.innerHTML = ''; suggestBox.classList.remove('show'); return; }
+  const targetGroupId = inputEl.dataset.group;
+  const matches = findActiveMemberMatches(query).filter(m=>m.groupId!==targetGroupId);
+  if(matches.length===0){
+    suggestBox.innerHTML = '<div class="archived-suggest-empty">Aucun élève trouvé</div>';
+  } else {
+    suggestBox.innerHTML = matches.map(m=>{
+      const grp = data.groups.find(g2=>g2.id===m.groupId);
+      const grpLabel = grp ? grp.name : 'cours supprimé';
+      return `<div class="archived-suggest-item committee-suggest-item" data-member="${m.id}" data-group="${targetGroupId}">
+        <strong>${escapeHtml(m.name)}</strong>
+        <span>cours actuel : ${escapeHtml(grpLabel)}</span>
+      </div>`;
+    }).join('');
+  }
+  suggestBox.classList.add('show');
+}
+
+// Crée une fiche liée (nouvel id) pour une personne déjà existante, dans un autre cours — sans
+// toucher à sa fiche d'origine. Utilisé pour le groupe spécial "Comité directeur" (une personne
+// peut avoir besoin d'être licenciée/comptée dans plusieurs cours à la fois) et, plus largement,
+// pour ajouter une personne du Comité directeur dans une discipline supplémentaire.
+function createLinkedMemberRecord(sourceMember, targetGroupId){
+  const targetGroup = data.groups.find(x=>x.id===targetGroupId);
+  if(!sourceMember || !targetGroup) return null;
+  const already = data.members.find(m=>!m.archived && m.groupId===targetGroupId
+    && memberSurname(m.name).toLowerCase()===memberSurname(sourceMember.name).toLowerCase()
+    && (m.birthDate||'')===(sourceMember.birthDate||''));
+  if(already) return already;
+  const noBelt = groupHasNoBelt(targetGroup);
+  const newMember = {
+    id: uid(), groupId: targetGroupId, name: sourceMember.name, birthDate: sourceMember.birthDate||'',
+    email: sourceMember.email||'', belt: noBelt ? undefined : sourceMember.belt,
+    gender: sourceMember.gender, beltHistory: (!noBelt && sourceMember.belt) ? [{ belt: sourceMember.belt, date: todayStr() }] : [],
+    archived:false, phone: sourceMember.phone||'', address: sourceMember.address||'',
+    postalCode: sourceMember.postalCode||'', city: sourceMember.city||'',
+    medicalCertDate: sourceMember.medicalCertDate||null, licenseNumber: sourceMember.licenseNumber||'',
+    note: sourceMember.note||''
+  };
+  data.members.push(newMember);
+  return newMember;
+}
 
 // Réactive un élève archivé en le rattachant au cours indiqué : on modifie l'élève existant
 // (même id) au lieu d'en créer un nouveau, donc tout son historique (passages de grade,
@@ -2749,6 +2926,26 @@ function courseDisciplineKey(groupName){
   if(/ta[iï][sz]o/.test(n)) return 'TAISO';
   if(/karat/.test(n)) return 'KARATE';
   if(/judo/.test(n)) return 'JUDO';
+  return null;
+}
+
+/* ---------------- STATS PAR "DISCIPLINE" (Suivi annuel) ---------------- */
+// Regroupement des cours en grandes disciplines pour les statistiques (distinct de
+// courseDisciplineKey ci-dessus, qui sert uniquement à la grille tarifaire et découpe plus finement
+// — ex: Aïki Enfants à part). Ici, sur demande explicite : Baby Judo / Baby Karaté restent séparés
+// du Judo / Karaté "adultes", mais toutes les variantes d'Aïkibudo (Enfants/Adultes/Soft) sont
+// regroupées ensemble. Insensible aux accents et à la casse (Karaté = Karate, Aïkibudo = Aikibudo).
+const DISCIPLINE_GROUPS = ['Baby Judo', 'Baby Karate', 'Judo', 'Karate', 'Aikibudo', 'Kobudo', 'Taiso'];
+function courseToDiscipline(groupName){
+  const n = normalizeCategoryKey(groupName);
+  const isBaby = /baby/.test(n);
+  if(isBaby && /judo/.test(n)) return 'Baby Judo';
+  if(isBaby && /karat/.test(n)) return 'Baby Karate';
+  if(/a[iï]kibudo/.test(n)) return 'Aikibudo';
+  if(/kobudo/.test(n)) return 'Kobudo';
+  if(/ta[iï][sz]o/.test(n)) return 'Taiso';
+  if(/karat/.test(n)) return 'Karate';
+  if(/judo/.test(n)) return 'Judo';
   return null;
 }
 function fmtDateLong(s){
@@ -3661,6 +3858,10 @@ function importWorkbookMultiSheet(wb){
   const groupChangeConflicts = []; // [{ key, fromMemberId, fromName, fromGroupName, toGroupId, toGroupName, rowData }] — la personne existe dans un AUTRE cours
 
   const pushMulti = (map, key, val)=>{ if(!key) return; if(!map.has(key)) map.set(key, []); map.get(key).push(val); };
+  // Onglets "techniques" du classeur de préparation (feuille brute avec toutes les lignes, et
+  // feuille cachée des listes déroulantes) : jamais des cours, on ne doit surtout pas en faire un
+  // groupe (voir renameExportGroupToComiteDirecteurOnce plus haut pour l'historique du problème).
+  const SKIP_IMPORT_SHEET_NAMES = new Set(['export', 'listes']);
 
   // Index global de tous les membres existants, construit une seule fois avant de parcourir les
   // onglets. Plusieurs fiches peuvent partager le même nom+date de naissance : un élève inscrit à
@@ -3675,6 +3876,7 @@ function importWorkbookMultiSheet(wb){
   });
 
   wb.SheetNames.forEach(sheetName=>{
+    if(SKIP_IMPORT_SHEET_NAMES.has(sheetName.trim().toLowerCase())){ sheetsIgnored++; return; }
     const sheet = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(sheet, { header:1, raw:true, defval:'' });
     let headerIdx=-1, colNom=-1, colPrenom=-1, colDate=-1, colBelt=-1, colMail=-1, colSexe=-1;
@@ -4802,6 +5004,41 @@ function beltBarHtml(pct){
 function guestSessionsForMember(memberId, startYear){
   return data.sessions.filter(s=> (s.guestMemberIds||[]).includes(memberId) && inSchoolYear(s.date, startYear) && sessionHasRollCall(s.id));
 }
+// Carte "Par discipline" : agrège tous les cours qui se rattachent à la même discipline (voir
+// courseToDiscipline) — utile pour une vision d'ensemble (ex: tout le Judo, toutes disciplines
+// d'Aïkibudo confondues) plutôt que cours par cours. Affichée seulement quand "Tous les cours" est
+// sélectionné (l'agrégation n'a pas de sens une fois filtré sur un seul cours).
+function renderDisciplineStatsCard(startYear){
+  const stats = new Map(DISCIPLINE_GROUPS.map(d=>[d, { sessions:0, memberIds:new Set(), present:0, slots:0 }]));
+  data.groups.forEach(g=>{
+    const disc = courseToDiscipline(g.name);
+    if(!disc || !stats.has(disc)) return;
+    const s = stats.get(disc);
+    const sessions = data.sessions.filter(x=>x.groupId===g.id && inSchoolYear(x.date, startYear) && sessionHasRollCall(x.id));
+    const members = data.members.filter(m=>m.groupId===g.id && isMemberVisibleInSessions(m, sessions));
+    s.sessions += sessions.length;
+    members.forEach(m=> s.memberIds.add(m.id));
+    sessions.forEach(sess=>{
+      members.forEach(m=>{
+        s.slots++;
+        if(isPresent((data.attendance[sess.id]||{})[m.id])) s.present++;
+      });
+    });
+  });
+  const active = DISCIPLINE_GROUPS.filter(d=>{ const s = stats.get(d); return s.memberIds.size>0 || s.sessions>0; });
+  if(active.length===0) return '';
+  const boxes = active.map(d=>{
+    const s = stats.get(d);
+    const avgPct = s.slots ? Math.round((s.present/s.slots)*100) : 0;
+    return `<div class="box"><div class="n">${s.memberIds.size}</div><div class="l">${escapeHtml(d)}${s.sessions ? ` — ${avgPct}%` : ''}</div></div>`;
+  }).join('');
+  return `
+    <div class="card">
+      <h2 style="margin:0 0 4px;">Par discipline — ${schoolYearLabel(startYear)}</h2>
+      <div class="small" style="color:var(--ink-dim); margin-bottom:10px;">Cours regroupés : Baby Judo, Baby Karaté, Judo (1 à 4), Karaté (1, 2, Adultes), Aïkibudo (Enfants, Adultes, Soft), Kobudo, Taïso.</div>
+      <div class="summary-grid">${boxes}</div>
+    </div>`;
+}
 function renderSuiviContent(){
   const wrap = document.getElementById('suivi-content');
   const startYear = parseInt(document.getElementById('suiviYear').value, 10);
@@ -4811,8 +5048,9 @@ function renderSuiviContent(){
     return;
   }
   const groups = groupFilter==='all' ? data.groups : data.groups.filter(g=>g.id===groupFilter);
+  const disciplineCardHtml = groupFilter==='all' ? renderDisciplineStatsCard(startYear) : '';
 
-  wrap.innerHTML = groups.map(g=>{
+  wrap.innerHTML = disciplineCardHtml + groups.map(g=>{
     const sessions = data.sessions.filter(s=>s.groupId===g.id && inSchoolYear(s.date, startYear) && sessionHasRollCall(s.id));
     const members = [...data.members.filter(m=>m.groupId===g.id && isMemberVisibleInSessions(m, sessions))];
     const memberPct = m=>{
@@ -10132,7 +10370,7 @@ footer.querySelector('#resetBtn').addEventListener('click', async ()=>{
     }
   };
   await saveData();
-  ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false };
+  ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, groupNameEditing:{}, committeeSearchOpen:{}, addOtherGroupOpen:{} };
   renderAll();
   showToast('Toutes les données ont été réinitialisées');
 });
