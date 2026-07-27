@@ -296,304 +296,6 @@
   .pdfcal-col-body{ border:1px solid #eee; border-top:none; border-radius:0 0 6px 6px; padding:6px; min-height:40px; background:#FCFCFA; }
   .pdfcal-col-empty{ font-size:10px; color:#bbb; text-align:center; padding:12px 4px; }
   .pdfcal-event{ position:relative; overflow:hidden; border-left:3px solid #6F8248; background:#F1F4EA; border-radius:4px; padding:5px 6px; margin-bottom:6px; }
-  .pdfcal-event:last-child{ margin-bottom:0; }<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Tatami — Suivi des présences</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600;700&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg: #12161B;
-    --surface: #1B2127;
-    --surface-2: #232A31;
-    --line: rgba(244,240,230,0.10);
-    --ink: #F3EFE5;
-    --ink-dim: #A8AEA0;
-    --tatami: #9CAA6B;
-    --tatami-dim: rgba(156,170,107,0.16);
-    --clay: #B3492F;
-    --clay-dim: rgba(179,73,47,0.16);
-    --radius: 14px;
-  }
-  :root[data-theme="light"]{
-    --bg: #F1ECDF;
-    --surface: #FFFFFF;
-    --surface-2: #F5F1E6;
-    --line: rgba(30,26,18,0.12);
-    --ink: #201C14;
-    --ink-dim: #6B6656;
-    --tatami: #5E7A3E;
-    --tatami-dim: rgba(94,122,62,0.14);
-    --clay: #A23F27;
-    --clay-dim: rgba(162,63,39,0.12);
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
-  body{
-    background: var(--bg);
-    color: var(--ink);
-    font-family:'Inter',system-ui,sans-serif;
-    min-height:100vh;
-    -webkit-font-smoothing:antialiased;
-    padding-bottom: 84px;
-  }
-  h1,h2,h3, .display{
-    font-family:'Big Shoulders Display', system-ui, sans-serif;
-    font-weight:800;
-    letter-spacing:0.01em;
-    text-transform:uppercase;
-  }
-  header.topbar{
-    padding: 18px 18px 14px;
-    border-bottom:1px solid var(--line);
-    position:sticky; top:0; z-index:10;
-    background: linear-gradient(180deg, var(--bg) 80%, transparent);
-    backdrop-filter: blur(6px);
-  }
-  header.topbar .header-top-row{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-  }
-  header.topbar .club-logo{
-    height:44px; width:auto; max-width:70%; object-fit:contain;
-    display:block;
-  }
-  header.topbar .club-logo-dark{ display:none; }
-  :root[data-theme="dark"] header.topbar .club-logo-dark{ display:block; }
-  :root[data-theme="dark"] header.topbar .club-logo-light{ display:none; }
-  header.topbar .eyebrow{
-    font-size:11px; letter-spacing:0.18em; text-transform:uppercase;
-    color: var(--tatami); font-weight:600; margin-top:10px;
-  }
-  header.topbar h1{
-    font-size:26px; margin:2px 0 0; line-height:1;
-  }
-  header.topbar input.club-name{
-    background:none; border:none; color:var(--ink);
-    font-family:'Rajdhani', system-ui, sans-serif;
-    font-weight:700; font-size:15px; text-transform:none;
-    letter-spacing:0; width:100%; padding:0; outline:none;
-    margin-top:2px;
-  }
-  header.topbar input.club-name::placeholder{ color: var(--ink-dim); }
-  .global-search-results{
-    display:none; position:absolute; top:calc(100% + 4px); left:0; right:0;
-    background:var(--surface); border:1px solid var(--line); border-radius:10px;
-    max-height:320px; overflow-y:auto; z-index:80; box-shadow:0 10px 26px rgba(0,0,0,0.35);
-  }
-  .global-search-results.show{ display:block; }
-
-  main{ padding: 16px 16px 8px; max-width:640px; margin:0 auto; }
-  section{ display:none; }
-  section.active{ display:block; animation: fade .18s ease; }
-  @keyframes fade{ from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:translateY(0);} }
-
-  .card{
-    background: var(--surface);
-    border:1px solid var(--line);
-    border-radius: var(--radius);
-    padding:16px;
-    margin-bottom:14px;
-  }
-  .card h2{ font-size:15px; margin:0 0 12px; color:var(--ink); }
-  .row{ display:flex; gap:8px; align-items:center; }
-  .row + .row{ margin-top:10px; }
-  label.small{ font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-dim); display:block; margin-bottom:6px; }
-
-  input[type=text], input[type=date], select{
-    background: var(--surface-2);
-    border:1px solid var(--line);
-    color: var(--ink);
-    border-radius:10px;
-    padding:11px 12px;
-    font-size:15px;
-    font-family:'Inter',sans-serif;
-    width:100%;
-    outline:none;
-  }
-  input[type=text]:focus, input[type=date]:focus, select:focus{ border-color: var(--tatami); }
-
-  button{
-    font-family:'Inter',sans-serif;
-    border:none; cursor:pointer;
-    border-radius:10px;
-    padding:11px 16px;
-    font-size:14px; font-weight:600;
-    background: var(--surface-2);
-    color: var(--ink);
-    transition: transform .08s ease, background .15s ease;
-  }
-  button:active{ transform: scale(0.97); }
-  button.primary{ background: var(--tatami); color:#1A1F14; }
-  button.ghost{ background:transparent; border:1px solid var(--line); }
-  button.danger{ background: var(--clay-dim); color:#F3B7A6; }
-  button:focus-visible{ outline:2px solid var(--tatami); outline-offset:2px; }
-  button.icon-btn{ padding:8px 10px; }
-
-  .empty{
-    color: var(--ink-dim); font-size:14px; line-height:1.5;
-    padding:18px 4px; text-align:left;
-  }
-
-  .group-block{ border-top:1px solid var(--line); padding-top:12px; margin-top:12px; }
-  .group-block:first-of-type{ border-top:none; padding-top:0; margin-top:0; }
-  .group-title-row{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
-  .group-title-row .name{ font-weight:700; font-size:15px; }
-  .group-title-row .meta{ font-size:12px; color:var(--ink-dim); }
-
-  .member-chip{
-    display:flex; align-items:center; justify-content:space-between;
-    padding:9px 2px; border-bottom:1px solid var(--line); font-size:14px;
-  }
-  .member-chip:last-child{ border-bottom:none; }
-  .member-chip.edit-fiche{
-    flex-direction:column; align-items:stretch; gap:8px;
-    padding:14px 12px; margin:0 0 10px; border-bottom:none;
-    border-radius:12px; background:rgba(128,128,128,0.13);
-  }
-  .member-chip.edit-fiche.alt{ background:rgba(128,128,128,0.22); }
-  .member-chip.edit-fiche:last-child{ margin-bottom:0; }
-  .fiche-summary-row{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-    cursor:pointer;
-  }
-  .fiche-summary-name{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; font-size:14.5px; }
-  .fiche-summary-name .fs-prenom{ color:var(--ink-dim); font-weight:400; }
-  .member-chip.edit-fiche .field-label{
-    font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
-    color:var(--ink-dim); margin-bottom:3px; display:block;
-  }
-  .member-chip.edit-fiche input, .member-chip.edit-fiche select{
-    font-size:13px; padding:6px 9px; width:100%; height:34px;
-  }
-  .member-chip.edit-fiche .fiche-row1{ display:flex; align-items:center; gap:6px; }
-  .member-chip.edit-fiche .fiche-row1 input{ flex:1; width:auto; }
-  .member-chip.edit-fiche .fiche-row1 input[data-action="edit-lastname"]{ font-weight:700; }
-  .member-chip.edit-fiche .fiche-field{ flex:1; min-width:0; }
-  .member-chip.highlight-flash{ animation: fichePulse 1.8s ease; border-radius:8px; }
-  .convoc-row.highlight-flash{ animation: fichePulse 1.8s ease; border-radius:8px; }
-  @keyframes fichePulse{ 0%{ background:var(--tatami-dim); } 100%{ background:transparent; } }
-
-  .attend-row{
-    display:flex; align-items:center; justify-content:space-between;
-    padding:11px 2px; border-bottom:1px solid var(--line);
-  }
-  .attend-row:last-child{ border-bottom:none; }
-  .attend-row .name{ font-size:15px; }
-  .toggle-present{
-    border:1px solid var(--line); background:var(--surface-2); color:var(--ink-dim);
-    border-radius:20px; padding:7px 14px; font-size:12.5px; font-weight:700;
-    text-transform:uppercase; letter-spacing:0.04em;
-  }
-  .toggle-present.on{ background: var(--tatami-dim); border-color: var(--tatami); color: var(--tatami); }
-  .toggle-present.excused{ background: var(--clay-dim); border-color: var(--clay); color: var(--clay); }
-  .session-row .badge-validated{ display:inline-block; margin-left:6px; color:var(--tatami); font-size:11px; }
-  .session-row .date-validated{ color:var(--tatami); }
-  .validated-note{ display:flex; align-items:center; justify-content:space-between; background:var(--tatami-dim); border:1px solid var(--tatami); border-radius:10px; padding:10px 12px; font-size:13px; color:var(--tatami); margin-top:12px; }
-  .validated-note button{ background:none; padding:4px 8px; font-size:12px; color:var(--ink-dim); text-decoration:underline; }
-
-  .session-row{
-    display:flex; align-items:center; justify-content:space-between;
-    padding:10px 2px; border-bottom:1px solid var(--line); font-size:14px;
-  }
-  .session-row:last-child{ border-bottom:none; }
-  .session-row .date{ font-weight:600; }
-  .session-row .sub{ color:var(--ink-dim); font-size:12.5px; }
-  .session-row .actions{ display:flex; gap:6px; }
-
-  /* Belt bar — signature visual */
-  .beltbar-wrap{ margin-top:6px; }
-  .beltbar{
-    position:relative; height:14px; border-radius:7px; overflow:hidden;
-    display:flex; border:1px solid rgba(0,0,0,0.35);
-  }
-  .beltbar span{ flex:1 1 0; height:100%; }
-  .beltbar .marker{
-    position:absolute; top:-4px; bottom:-4px; width:2px; background:var(--ink);
-    box-shadow:0 0 0 2px var(--bg);
-  }
-  .belt-legend{ display:flex; justify-content:space-between; margin-top:4px; }
-  .belt-legend span{ font-size:10px; color: var(--ink-dim); }
-
-  .stat-line{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:2px; }
-  .stat-line .who{ font-size:14px; font-weight:600; }
-  .stat-line .pct{ font-family:'Big Shoulders Display', system-ui; font-size:18px; font-weight:700; color:var(--tatami); }
-  .member-stat{ padding:12px 2px; border-bottom:1px solid var(--line); }
-  .member-stat:last-child{ border-bottom:none; }
-  .frac{ font-size:12px; color:var(--ink-dim); }
-
-  .summary-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:6px; }
-  .summary-grid .box{ background:var(--surface-2); border-radius:10px; padding:10px; text-align:center; }
-  .summary-grid .box .n{ font-family:'Big Shoulders Display'; font-size:22px; color:var(--tatami); }
-  .summary-grid .box .l{ font-size:10.5px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.05em; margin-top:2px; }
-
-  nav.tabbar{
-    position:fixed; bottom:0; left:0; right:0;
-    display:flex; background: var(--surface);
-    border-top:1px solid var(--line);
-    padding: 8px max(8px, env(safe-area-inset-left)) calc(8px + env(safe-area-inset-bottom));
-    z-index:20;
-  }
-  nav.tabbar button{
-    flex:1; background:none; display:flex; flex-direction:column; align-items:center; gap:4px;
-    padding:8px 4px; color:var(--ink-dim); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em;
-  }
-  nav.tabbar button.active{ color: var(--tatami); }
-  nav.tabbar svg{ width:22px; height:22px; stroke: currentColor; }
-
-  .link-btn{ background:none; color:var(--tatami); padding:6px 0; font-weight:600; font-size:13px; text-decoration:underline; }
-  textarea:focus{ border-color: var(--tatami); outline:none; }
-
-  .band-row{ display:flex; gap:6px; align-items:center; padding:7px 0; border-bottom:1px solid var(--line); }
-  .band-row:last-child{ border-bottom:none; }
-  .band-row input[type=text]{ flex:2; }
-  .band-row input[type=number]{ flex:1; background:var(--surface-2); border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:9px 6px; text-align:center; width:100%; }
-  .band-row button{ padding:8px 9px; }
-  .tag{ display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; background:var(--surface-2); color:var(--ink-dim); margin-left:6px; }
-  .tag.warn{ background: var(--clay-dim); color:#F3B7A6; }
-  .belt-swatch{ display:inline-block; width:26px; height:11px; border-radius:3px; border:1px solid rgba(128,128,128,0.55); vertical-align:middle; flex-shrink:0; }
-  .belt-swatch.small{ width:16px; height:8px; border-radius:2px; margin-left:6px; }
-  .category-divider{
-    font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;
-    color:var(--tatami); background:var(--tatami-dim); padding:7px 10px; border-radius:6px;
-    margin:14px 0 6px;
-  }
-  .category-divider:first-child{ margin-top:0; }
-  .medal-breakdown{ display:flex; gap:8px; margin-top:12px; }
-  .medal-chip{ flex:1; display:flex; align-items:center; justify-content:center; text-align:center; padding:18px 6px; border-radius:8px; border:1px solid var(--line); }
-  .medal-chip .mn{ font-size:20px; font-weight:800; }
-
-  .recap-doc{ background:#fff; color:#1A1A1A; font-family:'Inter',sans-serif; width:700px; padding:34px; }
-  .recap-header{ display:flex; align-items:center; gap:18px; border-bottom:3px solid #1A1A1A; padding-bottom:16px; margin-bottom:24px; }
-  .recap-header img{ height:56px; }
-  .recap-header .rh-club{ font-family:'Rajdhani',sans-serif; font-weight:800; font-size:22px; text-transform:uppercase; letter-spacing:0.02em; }
-  .recap-header .rh-sub{ font-size:13px; color:#666; margin-top:2px; }
-  .recap-summary{ display:flex; gap:12px; margin-bottom:16px; }
-  .recap-summary .box{ flex:1; background:#F1F4EA; border-radius:10px; padding:16px 8px; text-align:center; }
-  .recap-summary .box .n{ font-family:'Rajdhani',sans-serif; font-size:28px; font-weight:800; color:#43592B; }
-  .recap-summary .box .l{ font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:#666; margin-top:2px; }
-  .recap-medals{ display:flex; gap:10px; margin-bottom:8px; }
-  .recap-medals .chip{ flex:1; text-align:center; padding:14px 6px; border-radius:10px; font-size:20px; font-weight:800; }
-  .recap-event .re-title{ font-family:'Rajdhani',sans-serif; font-weight:800; font-size:18px; border-left:5px solid #6F8248; padding-left:10px; margin-bottom:4px; }
-  .recap-event .re-date{ font-size:12px; color:#666; margin-bottom:12px; padding-left:15px; }
-  .recap-table{ width:100%; border-collapse:collapse; font-size:13px; }
-  .recap-table th{ background:#2A2F26; color:#fff; text-align:left; padding:9px 10px; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; }
-  .recap-table td{ padding:9px 10px; border-bottom:1px solid #eee; }
-  .recap-table tr:nth-child(even) td{ background:#FAFAF7; }
-
-  /* Calendrier PDF — grille par mois (paysage) */
-  .pdfcal-grid{ display:flex; gap:10px; align-items:flex-start; margin-top:6px; }
-  .pdfcal-col{ flex:1; min-width:0; }
-  .pdfcal-col-head{
-    font-family:'Rajdhani',sans-serif; font-weight:800; font-size:12.5px; text-transform:uppercase;
-    letter-spacing:0.04em; text-align:center; color:#fff; background:#2A2F26;
-    padding:7px 4px; border-radius:6px 6px 0 0;
-  }
-  .pdfcal-col-body{ border:1px solid #eee; border-top:none; border-radius:0 0 6px 6px; padding:6px; min-height:40px; background:#FCFCFA; }
-  .pdfcal-col-empty{ font-size:10px; color:#bbb; text-align:center; padding:12px 4px; }
-  .pdfcal-event{ position:relative; overflow:hidden; border-left:3px solid #6F8248; background:#F1F4EA; border-radius:4px; padding:5px 6px; margin-bottom:6px; }
   .pdfcal-event:last-child{ margin-bottom:0; }
   .pdfcal-event.type-stage{ border-left-color:#B3492F; background:#FDF3E7; }
   .pdfcal-event .pce-day{ font-family:'Rajdhani',sans-serif; font-weight:800; font-size:10.5px; color:#43592B; }
@@ -845,6 +547,7 @@
 
   <section id="tab-groupes">
     <div id="groupes-live">
+      <div class="card" id="incomplete-fiches-section"></div>
       <div class="card" id="groups-list"></div>
       <div id="belt-passage-section"></div>
       <div id="belt-diplomas-section"></div>
@@ -1146,6 +849,21 @@ function genderBadgeHtml(gender){
 function beltLabelFor(key){
   const r = BELT_RANKS.find(x=>x.key===key);
   return r ? r.label : '';
+}
+// Certaines disciplines (Taïso) n'ont pas de système de ceinture — le champ ne doit
+// alors ni s'afficher ni se saisir sur la fiche des élèves de ce cours.
+function groupHasNoBelt(g){
+  return !!g && /ta[iï][sz]o/i.test(g.name||'');
+}
+function memberInNoBeltCourse(m){
+  return groupHasNoBelt(data.groups.find(g=>g.id===m.groupId));
+}
+function stripBeltForNoBeltCourses(){
+  let changed = false;
+  data.members.forEach(m=>{
+    if(m.belt && memberInNoBeltCourse(m)){ m.belt = ''; changed = true; }
+  });
+  if(changed) saveData();
 }
 function beltSwatchHtml(key, small){
   const r = BELT_RANKS.find(x=>x.key===key);
@@ -1793,6 +1511,7 @@ function renderAll(){
   syncSeasonStartYearFromDate();
   renderHeaderSeasonSwitch();
   renderGroupsTab();
+  renderIncompleteFichesSection();
   renderDuplicateGroupsCard();
   renderBeltPassageSection();
   renderBeltDiplomasSection();
@@ -1834,6 +1553,7 @@ function renderGroupsTab(){
   if(liveEl) liveEl.style.display = archive ? 'none' : '';
   if(archiveEl) archiveEl.style.display = archive ? '' : 'none';
   if(archive){ renderArchiveViewGroupes(archive); return; }
+  stripBeltForNoBeltCourses();
   const wrap = document.getElementById('groups-list');
   if(data.groups.length===0){
     wrap.innerHTML = `<div class="empty">Aucun cours pour l'instant. Ajoutez votre premier cours ci-dessus — par exemple « Judo débutants » ou « Karaté ados ».</div>`;
@@ -1882,7 +1602,7 @@ function renderGroupsTab(){
               <div style="margin-top:10px; font-size:14px; line-height:1.7;">
                 <div><span class="field-label">Date de naissance</span><div>${m.birthDate ? fmtDate(m.birthDate) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Sexe</span><div>${m.gender ? (m.gender==='F'?'Fille':'Garçon') : '—'}</div></div>
-                <div style="margin-top:8px;"><span class="field-label">Ceinture</span><div style="display:flex; align-items:center; gap:8px;">${m.belt ? beltSwatchHtml(m.belt, true) : ''}<span>${m.belt ? escapeHtml(beltLabelFor(m.belt)) : 'Non renseignée'}</span></div></div>
+                ${groupHasNoBelt(curGroup) ? '' : `<div style="margin-top:8px;"><span class="field-label">Ceinture</span><div style="display:flex; align-items:center; gap:8px;">${m.belt ? beltSwatchHtml(m.belt, true) : ''}<span>${m.belt ? escapeHtml(beltLabelFor(m.belt)) : 'Non renseignée'}</span></div></div>`}
                 <div style="margin-top:8px;"><span class="field-label">Email (pour convocations)</span><div>${m.email ? escapeHtml(m.email) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Téléphone</span><div>${m.phone ? escapeHtml(m.phone) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Adresse</span><div>${(m.address || m.postalCode || m.city) ? escapeHtml([m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '—'}</div></div>
@@ -1913,6 +1633,7 @@ function renderGroupsTab(){
               <option value="M" ${m.gender==='M'?'selected':''}>Garçon</option>
             </select>
           </div>
+          ${groupHasNoBelt(curGroup) ? '' : `
           <div>
             <span class="field-label">Ceinture</span>
             <div style="display:flex; align-items:center; gap:8px;">
@@ -1922,7 +1643,7 @@ function renderGroupsTab(){
               </select>
               ${m.belt ? beltSwatchHtml(m.belt, true) : ''}
             </div>
-          </div>
+          </div>`}
           <div>
             <span class="field-label">Email (pour convocations)</span>
             <input type="text" data-action="edit-email" data-id="${m.id}" value="${escapeHtml(m.email||'')}" placeholder="parent@exemple.fr">
@@ -1968,6 +1689,106 @@ function renderGroupsTab(){
       ` : ''}
     </div>`;
   }).join('');
+}
+
+/* ---------------- FICHES INCOMPLÈTES (PDF récap) ---------------- */
+const INCOMPLETE_FICHE_FIELDS = [
+  { key:'birthDate', label:'Date de naissance' },
+  { key:'gender', label:'Sexe' },
+  { key:'email', label:'Email' },
+  { key:'phone', label:'Téléphone' },
+  { key:'address', label:'Adresse' },
+  { key:'postalCode', label:'Code postal' },
+  { key:'city', label:'Ville' }
+];
+function memberIncompleteFieldLabels(m){
+  return INCOMPLETE_FICHE_FIELDS.filter(f=>!String(m[f.key]||'').trim()).map(f=>f.label);
+}
+function renderIncompleteFichesSection(){
+  const wrap = document.getElementById('incomplete-fiches-section');
+  if(!wrap) return;
+  if(!ui.incompleteFichesCourseFilter) ui.incompleteFichesCourseFilter = 'all';
+  wrap.innerHTML = `
+    <div style="display:flex; justify-content:flex-end; align-items:center; gap:10px; flex-wrap:wrap;">
+      <label class="small" style="margin:0;">Cours</label>
+      <select id="incompleteFichesCourseFilter" style="width:auto;">
+        <option value="all" ${ui.incompleteFichesCourseFilter==='all'?'selected':''}>Tous les cours</option>
+        ${data.groups.map(g=>`<option value="${g.id}" ${ui.incompleteFichesCourseFilter===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}
+      </select>
+      <button class="ghost icon-btn" id="generateIncompleteFichesPdfBtn" title="Générer un PDF listant les fiches où il manque une ou plusieurs informations">⚠️ Fiches incomplètes</button>
+    </div>
+  `;
+  const sel = document.getElementById('incompleteFichesCourseFilter');
+  if(sel) sel.addEventListener('change', ()=>{ ui.incompleteFichesCourseFilter = sel.value; });
+  const btn = document.getElementById('generateIncompleteFichesPdfBtn');
+  if(btn) btn.addEventListener('click', generateIncompleteFichesPdf);
+}
+function buildIncompleteFichesPdfRows(groupFilter){
+  const groups = groupFilter==='all' ? data.groups : data.groups.filter(g=>g.id===groupFilter);
+  const rows = [];
+  groups.forEach(g=>{
+    const incomplete = data.members.filter(m=>m.groupId===g.id && !m.archived)
+      .map(m=>({ m, missing: memberIncompleteFieldLabels(m) }))
+      .filter(x=>x.missing.length>0)
+      .sort((a,b)=> memberSurname(a.m.name).localeCompare(memberSurname(b.m.name), 'fr'));
+    if(incomplete.length===0) return;
+    rows.push({
+      html: `<td colspan="2" style="background:#2A2F26; color:#fff; font-weight:800; font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:8px 10px;">${escapeHtml(g.name)}</td>`,
+      isDivider:true, dividerType:'category', categoryLabel: g.name
+    });
+    incomplete.forEach(({m, missing})=>{
+      rows.push({
+        html: `
+          <td>${escapeHtml(m.name)}</td>
+          <td>${escapeHtml(missing.join(', '))}</td>`,
+        isDivider:false
+      });
+    });
+  });
+  return rows;
+}
+async function generateIncompleteFichesPdf(){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const groupFilter = ui.incompleteFichesCourseFilter || 'all';
+  const group = groupFilter!=='all' ? data.groups.find(g=>g.id===groupFilter) : null;
+  const rows = buildIncompleteFichesPdfRows(groupFilter);
+  if(rows.length===0){ showToast('Aucune fiche incomplète 🎉'); return; }
+  const btn = document.getElementById('generateIncompleteFichesPdfBtn');
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
+  try{
+    const logoImg = document.querySelector('header.topbar .club-logo-light');
+    const logoSrc = logoImg ? logoImg.src : '';
+    const buildContextHtml = (isFirst)=> !isFirst ? '' : `
+      <div class="recap-header">
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
+        <div>
+          <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
+          <div class="rh-sub">⚠️ Fiches incomplètes${group ? ' — '+escapeHtml(group.name) : ' — tous les cours'}</div>
+        </div>
+      </div>`;
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    const margin = 24;
+    await paginateRowsIntoPdf(pdf, {
+      rows,
+      tableHeadHtml: `<th>Élève</th><th>Informations manquantes</th>`,
+      buildContextHtml,
+      containerClass: 'recap-doc',
+      containerWidthPx: 700,
+      margin
+    });
+    const safeName = (group ? group.name : 'tous-les-cours').replace(/[^\w-]+/g,'-');
+    pdf.save(`fiches-incompletes-${safeName}.pdf`);
+    showToast('PDF généré');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
 }
 
 document.getElementById('groups-list').addEventListener('click', e=>{
