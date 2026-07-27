@@ -2559,7 +2559,7 @@ function renderBeltPassageSection(){
   if(!wrap) return;
   const hidden = loadBeltPassageHidden();
   if(!ui.beltPassageGroupFilter) ui.beltPassageGroupFilter = 'all';
-  const eligible = data.members.filter(m=> !m.archived && m.belt !== 'noire' && !memberHasPassageThisSeason(m.id))
+  const eligible = data.members.filter(m=> !m.archived && m.belt !== 'noire' && !memberHasPassageThisSeason(m.id) && !memberInNoBeltCourse(m))
     .filter(m=> ui.beltPassageGroupFilter==='all' || m.groupId===ui.beltPassageGroupFilter)
     .sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
 
@@ -2576,7 +2576,7 @@ function renderBeltPassageSection(){
           <label class="small">Filtrer par cours</label>
           <select id="beltPassageGroupSelect">
             <option value="all" ${ui.beltPassageGroupFilter==='all'?'selected':''}>Tous les cours</option>
-            ${data.groups.map(g=>`<option value="${g.id}" ${ui.beltPassageGroupFilter===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}
+            ${data.groups.filter(g=>!groupHasNoBelt(g)).map(g=>`<option value="${g.id}" ${ui.beltPassageGroupFilter===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}
           </select>
         </div>
       </div>
@@ -3344,26 +3344,26 @@ function buildAttestationHtml(m, fee, logoSrc){
   const F = v => (v!==undefined && v!==null) ? String(v).replace('.',',') : '—';
   const feeLine = (label, num)=> `<tr><td style="width:190px; padding:2px 0;">${label}</td><td style="padding:2px 0;">${num}</td></tr>`;
   return `
-    <div style="width:700px; padding:34px 46px; background:#fff; box-sizing:border-box; font-family:'Inter',sans-serif; color:#1a1a1a; font-size:13px; line-height:1.5;">
+    <div style="width:700px; padding:16px 46px 40px; background:#fff; box-sizing:border-box; font-family:'Inter',sans-serif; color:#1a1a1a; font-size:14.5px; line-height:1.8;">
       <table style="width:100%; border-collapse:collapse; margin-bottom:20px;"><tr>
-        <td style="width:140px; vertical-align:middle; padding:0;">${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="width:130px; height:auto; display:block;">` : ''}</td>
+        <td style="width:150px; vertical-align:middle; padding:0;">${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="width:140px; height:auto; display:block;">` : ''}</td>
         <td style="vertical-align:middle; padding:0;">
-          <div style="font-weight:700; font-size:14px;">ACADEMIE MENNECOISE D'ARTS MARTIAUX</div>
-          <div style="font-size:12px; margin-top:3px;">Dojo Gérard Pizzonéro – Parc des sports de Villeroy</div>
-          <div style="font-size:12px;">91540 MENNECY – Tel : 01.64.57.32.49</div>
-          <div style="font-size:12px;">Email : mennecydojo@free.fr &nbsp;&nbsp; Site internet : mennecy-dojo.com</div>
+          <div style="font-weight:700; font-size:15.5px;">ACADEMIE MENNECOISE D'ARTS MARTIAUX</div>
+          <div style="font-size:13px; margin-top:5px;">Dojo Gérard Pizzonéro – Parc des sports de Villeroy</div>
+          <div style="font-size:13px;">91540 MENNECY – Tel : 01.64.57.32.49</div>
+          <div style="font-size:13px;">Email : amam91540@gmail.com &nbsp;&nbsp; Site internet : mennecy-dojo.com</div>
         </td>
       </tr></table>
 
-      <div style="text-align:center; font-weight:700; font-size:15px; letter-spacing:4px; border:1.4px solid #1a1a1a; padding:9px 0; margin:0 0 20px;">A T T E S T A T I O N D'A D H E S I O N</div>
+      <div style="text-align:center; font-weight:700; font-size:17px; letter-spacing:4px; border:1.4px solid #1a1a1a; padding:13px 0; margin:0 0 28px;"><span>A T T E S T A T I O N</span><span style="margin-left:32px;">D'A D H E S I O N</span></div>
 
-      <div>Je soussignée <strong>Sandrine BARREZ,</strong> Trésorière de « l'Académie Menneçoise d'Arts Martiaux » certifie que :</div>
+      <div>Je soussignée <strong>Christel BARREZ,</strong> Trésorière de « l'Académie Menneçoise d'Arts Martiaux » certifie que :</div>
 
-      <div style="margin-top:14px;">
+      <div style="margin-top:20px;">
         <div>Déclaration en sous-préfecture N° W091000432</div>
         <div>Siret : 389 705 542 000 14</div>
         <div>Agrément DDCS : 91 S 930</div>
-        <table style="border-collapse:collapse; margin-top:2px;"><tbody>
+        <table style="border-collapse:collapse; margin-top:6px;"><tbody>
           ${feeLine('Club affilié à la F.F.J.D.A', 'N° IE 91911680')}
           ${feeLine('Club affilié à la F.F.K.A.M.A', 'N° 910062')}
           ${feeLine('Club affilié à la F.F.A.A.A', 'N° 91910443')}
@@ -3371,21 +3371,21 @@ function buildAttestationHtml(m, fee, logoSrc){
         </tbody></table>
       </div>
 
-      <div style="margin-top:18px;">${namePrefix} <strong>${escapeHtml(prenom)} ${escapeHtml(nom)}</strong> né le <strong>${fmtDateLong(m.birthDate)}</strong> fait partie de l'Académie Menneçoise d'Arts Martiaux et pratique régulièrement le <strong>${escapeHtml(fee.disciplineLabel)}</strong>.</div>
+      <div style="margin-top:26px;">${namePrefix} <strong>${escapeHtml(prenom)} ${escapeHtml(nom)}</strong> né le <strong>${fmtDateLong(m.birthDate)}</strong> fait partie de l'Académie Menneçoise d'Arts Martiaux et pratique régulièrement le <strong>${escapeHtml(fee.disciplineLabel)}</strong>.</div>
 
-      <div style="margin-top:14px;">Un règlement de <strong>${F(fee.total)} €</strong> a été effectué pour la saison ${escapeHtml(seasonLabel)}</div>
+      <div style="margin-top:20px;">Un règlement de <strong>${F(fee.total)} €</strong> a été effectué pour la saison ${escapeHtml(seasonLabel)}</div>
 
-      <div style="margin-top:14px;">Se décomposant comme suit : </div>
-      <div style="margin-top:4px;">Adhésion au club : ${F(fee.adhesion)} €</div>
-      <div>Licence-Assurance : ${F(fee.license)} € </div>
-      <div>Cours saison ${escapeHtml(seasonLabel)} : ${F(fee.course)} €</div>
+      <div style="margin-top:20px;">Se décomposant comme suit : </div>
+      <div style="margin-top:8px;">Adhésion au club : ${F(fee.adhesion)} €</div>
+      <div style="margin-top:4px;">Licence-Assurance : ${F(fee.license)} € </div>
+      <div style="margin-top:4px;">Cours saison ${escapeHtml(seasonLabel)} : ${F(fee.course)} €</div>
 
-      <div style="margin-top:16px;">Attestation faite à la demande de l'intéressé pour servir et valoir ce que de droit.</div>
+      <div style="margin-top:24px;">Attestation faite à la demande de l'intéressé pour servir et valoir ce que de droit.</div>
 
-      <div style="margin-top:24px; text-align:right;">
+      <div style="margin-top:34px; text-align:right;">
         <div>Fait à MENNECY, le ${fmtDateLong(todayStr())}</div>
-        <div style="margin-top:4px;">Trésorière de « l'AMAM »</div>
-        <div style="margin-top:16px;">Christel BARREZ</div>
+        <div style="margin-top:6px;">Trésorière de « l'AMAM »</div>
+        <div style="margin-top:20px;">Christel BARREZ</div>
       </div>
     </div>`;
 }
@@ -3408,7 +3408,11 @@ async function generatePaymentAttestationPdf(){
     const canvas = await captureOffscreenSection(html, '', 700);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
-    addCanvasFitPage(pdf, canvas, 24);
+    // addCanvasFitPage centrait tout le bloc verticalement sur la page (logo/texte inclus) : quel
+    // que soit le padding en haut du contenu HTML, le rendu final restait visuellement centré au
+    // milieu de la page. addCanvasFitOrTop aligne au contraire le contenu en haut de page (et ne
+    // réduit/centre que si le contenu est trop grand pour tenir sur une seule page).
+    addCanvasFitOrTop(pdf, canvas, 24);
     const safeName = m.name.replace(/[^\w-]+/g,'-');
     pdf.save(`attestation-paiement-${safeName}.pdf`);
     showToast('Attestation générée');
@@ -5358,12 +5362,20 @@ function renderSuiviTab(){
 
   const toggleAllBtn = document.getElementById('suiviToggleAllBtn');
   toggleAllBtn.onclick = ()=>{
-    const groups = groupSel.value==='all' ? data.groups : data.groups.filter(g=>g.id===groupSel.value);
-    const anyExpanded = groups.some(g=>ui.suiviExpanded[g.id]);
-    groups.forEach(g=>{ ui.suiviExpanded[g.id] = !anyExpanded; });
+    saveSuiviGroupsHidden(!loadSuiviGroupsHidden());
     renderSuiviContent();
   };
   renderSuiviContent();
+}
+// Le bouton "Tout masquer/afficher" du Suivi annuel cache désormais tout le bloc (carte "Par
+// discipline" + les cartes de cours) plutôt que de juste déplier/replier la liste d'élèves à
+// l'intérieur de chaque carte déjà visible — il faut un clic pour voir apparaître les cours, puis
+// un clic sur un cours précis (voir ui.suiviExpanded, inchangé) pour en dérouler la liste d'élèves.
+function loadSuiviGroupsHidden(){
+  try{ const v = localStorage.getItem('dojo-suivi-groups-hidden'); return v===null ? true : v==='1'; }catch(e){ return true; }
+}
+function saveSuiviGroupsHidden(val){
+  try{ localStorage.setItem('dojo-suivi-groups-hidden', val?'1':'0'); }catch(e){}
 }
 
 function beltBarHtml(pct){
@@ -5430,10 +5442,14 @@ function renderSuiviContent(){
     return;
   }
   const groups = groupFilter==='all' ? data.groups : data.groups.filter(g=>g.id===groupFilter);
+  const allHidden = loadSuiviGroupsHidden();
   if(toggleAllBtn){
     toggleAllBtn.style.display = '';
-    const anyExpanded = groups.some(g=>ui.suiviExpanded[g.id]);
-    toggleAllBtn.textContent = anyExpanded ? '🙈 Tout masquer' : '👁️ Tout afficher';
+    toggleAllBtn.textContent = allHidden ? '👁️ Tout afficher' : '🙈 Tout masquer';
+  }
+  if(allHidden){
+    wrap.innerHTML = '';
+    return;
   }
   const disciplineCardHtml = groupFilter==='all' ? renderDisciplineStatsCard(startYear) : '';
 
@@ -6394,6 +6410,9 @@ function restrictedCategoriesForCurrentEvent(){
 function categoryYearLabel(birthDate){
   const cat = computeCategory(birthDate);
   if(!cat) return '';
+  // Les Seniors n'ont pas de sous-catégorie annuelle (contrairement aux jeunes) : on n'affiche donc
+  // pas leur année de naissance entre parenthèses, ça n'apporte pas d'information utile.
+  if(cat==='Seniors') return cat;
   const birthYear = parseInt((birthDate||'').slice(0,4),10);
   return birthYear ? `${cat} (${birthYear})` : cat;
 }
@@ -10170,6 +10189,7 @@ function computeCategoryForArchive(birthDate, settings){
 function categoryYearLabelForArchive(birthDate, settings){
   const cat = computeCategoryForArchive(birthDate, settings);
   if(!cat) return '';
+  if(cat==='Seniors') return cat;
   const birthYear = parseInt((birthDate||'').slice(0,4),10);
   return birthYear ? `${cat} (${birthYear})` : cat;
 }
