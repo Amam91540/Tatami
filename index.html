@@ -838,7 +838,19 @@ const BELT_RANKS = [
   { key:'bleue', label:'Bleue', type:'solid', colors:['#3B6EA5'] },
   { key:'bleue-marron', label:'Bleue-Marron', type:'split', colors:['#3B6EA5','#6B4A34'] },
   { key:'marron', label:'Marron', type:'solid', colors:['#6B4A34'] },
-  { key:'noire', label:'Noire', type:'solid', colors:['#1A1A1A'] }
+  { key:'noire', label:'Noire', type:'solid', colors:['#1A1A1A'] },
+  { key:'noire-1dan', label:'Noire 1er Dan', type:'solid', colors:['#1A1A1A'] },
+  { key:'noire-2dan', label:'Noire 2ème Dan', type:'solid', colors:['#1A1A1A'] },
+  { key:'noire-3dan', label:'Noire 3ème Dan', type:'solid', colors:['#1A1A1A'] },
+  { key:'noire-4dan', label:'Noire 4ème Dan', type:'solid', colors:['#1A1A1A'] },
+  { key:'noire-5dan', label:'Noire 5ème Dan', type:'solid', colors:['#1A1A1A'] },
+  // À partir du 6ème dan, la ceinture se porte blanc-rouge (kôhaku) même si le grade reste
+  // officiellement appelé « Ceinture noire » — seul l'aspect visuel change ici.
+  { key:'noire-6dan', label:'Noire 6ème Dan', type:'stripes', colors:['#B3492F','#EFEAD9','#B3492F','#EFEAD9','#B3492F','#EFEAD9'] },
+  { key:'noire-7dan', label:'Noire 7ème Dan', type:'stripes', colors:['#B3492F','#EFEAD9','#B3492F','#EFEAD9','#B3492F','#EFEAD9'] },
+  { key:'noire-8dan', label:'Noire 8ème Dan', type:'stripes', colors:['#B3492F','#EFEAD9','#B3492F','#EFEAD9','#B3492F','#EFEAD9'] },
+  { key:'noire-9dan', label:'Noire 9ème Dan', type:'stripes', colors:['#B3492F','#EFEAD9','#B3492F','#EFEAD9','#B3492F','#EFEAD9'] },
+  { key:'noire-10dan', label:'Noire 10ème Dan', type:'stripes', colors:['#B3492F','#EFEAD9','#B3492F','#EFEAD9','#B3492F','#EFEAD9'] }
 ];
 function beltRankLabel(key){
   const r = BELT_RANKS.find(x=>x.key===key);
@@ -878,6 +890,11 @@ function beltSwatchHtml(key, small){
     bg = r.count===1
       ? `linear-gradient(90deg, ${r.base} 0%, ${r.base} 44%, ${r.stripe} 44%, ${r.stripe} 56%, ${r.base} 56%, ${r.base} 100%)`
       : `linear-gradient(90deg, ${r.base} 0%, ${r.base} 26%, ${r.stripe} 26%, ${r.stripe} 38%, ${r.base} 38%, ${r.base} 62%, ${r.stripe} 62%, ${r.stripe} 74%, ${r.base} 74%, ${r.base} 100%)`;
+  } else if(r.type==='stripes'){
+    // Ceinture kôhaku (blanc-rouge) des hauts dan : bandes alternées sur toute la largeur.
+    const seg = 100 / r.colors.length;
+    const stops = r.colors.map((c,i)=> `${c} ${(i*seg).toFixed(2)}%, ${c} ${((i+1)*seg).toFixed(2)}%`).join(', ');
+    bg = `linear-gradient(90deg, ${stops})`;
   } else {
     bg = r.colors[0];
   }
@@ -1647,7 +1664,10 @@ function renderGroupsTab(){
                 <div style="margin-top:8px;"><span class="field-label">Email (pour convocations)</span><div>${m.email ? escapeHtml(m.email) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Téléphone</span><div>${m.phone ? escapeHtml(m.phone) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Adresse</span><div>${(m.address || m.postalCode || m.city) ? escapeHtml([m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '—'}</div></div>
+                <div style="margin-top:8px;"><span class="field-label">Certificat médical</span><div>${m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—'}</div></div>
+                <div style="margin-top:8px;"><span class="field-label">N° de licence</span><div>${m.licenseNumber ? escapeHtml(m.licenseNumber) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Cours</span><div>${curGroup ? escapeHtml(curGroup.name) : '—'}</div></div>
+                ${m.note ? `<div style="margin-top:8px;"><span class="field-label">Note</span><div style="white-space:pre-wrap;">${escapeHtml(m.note)}</div></div>` : ''}
               </div>
               <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px; flex-wrap:wrap;">
                 <button class="ghost icon-btn" data-action="member-history-pdf" data-id="${m.id}" title="Générer l'historique complet (résultats, passages de grade, stages) en PDF" style="padding:7px 10px;">📄 Historique PDF</button>
@@ -1707,11 +1727,25 @@ function renderGroupsTab(){
               <input type="text" data-action="edit-city" data-id="${m.id}" value="${escapeHtml(m.city||'')}" placeholder="Mennecy">
             </div>
           </div>
+          <div class="row" style="width:100%; margin:0; gap:8px;">
+            <div class="fiche-field">
+              <span class="field-label">Certificat médical</span>
+              <input type="date" data-action="edit-medicalcert" data-id="${m.id}" value="${m.medicalCertDate||''}">
+            </div>
+            <div class="fiche-field">
+              <span class="field-label">N° de licence</span>
+              <input type="text" data-action="edit-license" data-id="${m.id}" value="${escapeHtml(m.licenseNumber||'')}" placeholder="M08102009ACHAR01">
+            </div>
+          </div>
           <div>
             <span class="field-label">Cours</span>
             <select data-action="change-group" data-id="${m.id}">
               ${data.groups.map(g2=>`<option value="${g2.id}" ${g2.id===m.groupId?'selected':''}>${escapeHtml(g2.name)}</option>`).join('')}
             </select>
+          </div>
+          <div>
+            <span class="field-label">Note</span>
+            <textarea data-action="edit-note" data-id="${m.id}" placeholder="Informations diverses..." style="width:100%; min-height:50px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:11px 12px; color:var(--ink); font-family:'Inter',sans-serif; font-size:14px; resize:vertical;">${escapeHtml(m.note||'')}</textarea>
           </div>
           <div style="display:flex; justify-content:flex-end; gap:8px;">
             <button class="ghost icon-btn" data-action="done-member-fiche" data-id="${m.id}" title="Terminer la modification" style="padding:7px 10px;">✓ Terminé</button>
@@ -2050,6 +2084,24 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   if(cityInput){
     const m = data.members.find(x=>x.id===cityInput.dataset.id);
     if(m){ m.city = cityInput.value.trim(); saveData(); }
+    return;
+  }
+  const certInput = e.target.closest('[data-action="edit-medicalcert"]');
+  if(certInput){
+    const m = data.members.find(x=>x.id===certInput.dataset.id);
+    if(m){ m.medicalCertDate = certInput.value || null; saveData(); }
+    return;
+  }
+  const licenseInput = e.target.closest('[data-action="edit-license"]');
+  if(licenseInput){
+    const m = data.members.find(x=>x.id===licenseInput.dataset.id);
+    if(m){ m.licenseNumber = licenseInput.value.trim(); saveData(); }
+    return;
+  }
+  const noteInput = e.target.closest('[data-action="edit-note"]');
+  if(noteInput){
+    const m = data.members.find(x=>x.id===noteInput.dataset.id);
+    if(m){ m.note = noteInput.value; saveData(); }
     return;
   }
   const input = e.target.closest('[data-action="edit-email"]');
@@ -3605,24 +3657,28 @@ function importWorkbookMultiSheet(wb){
   const missingInfoCandidates = []; // élèves traités par cet import (ajoutés ou déjà présents) avec au moins un champ vide
   const touchedGroupIds = new Set(); // cours pour lesquels un onglet correspondant a été trouvé dans ce fichier
   const seenByGroup = new Map(); // groupId -> Set des noms (clé) vus dans l'onglet de ce cours
-  const conflictByMemberId = new Map(); // memberId -> { memberId, name, changes:[{field,label,oldVal,newVal,newGroupId?}] }
+  const fieldConflictByMemberId = new Map(); // memberId -> { memberId, name, changes:[{field,label,oldVal,newVal}] } — même cours, un champ diffère
+  const groupChangeConflicts = []; // [{ key, fromMemberId, fromName, fromGroupName, toGroupId, toGroupName, rowData }] — la personne existe dans un AUTRE cours
+
+  const pushMulti = (map, key, val)=>{ if(!key) return; if(!map.has(key)) map.set(key, []); map.get(key).push(val); };
 
   // Index global de tous les membres existants, construit une seule fois avant de parcourir les
-  // onglets, pour un rapprochement qui ne dépend pas du cours.
+  // onglets. Plusieurs fiches peuvent partager le même nom+date de naissance : un élève inscrit à
+  // 2 disciplines a une fiche par cours — d'où des listes de candidats plutôt qu'un candidat unique.
   const globalByDob = new Map();
   const globalByFullName = new Map();
   data.members.forEach(m=>{
     const k1 = memberDobKey(memberSurname(m.name), m.birthDate);
-    if(k1 && !globalByDob.has(k1)) globalByDob.set(k1, m);
+    pushMulti(globalByDob, k1, m);
     const k2 = (m.name||'').trim().toLowerCase();
-    if(k2 && !globalByFullName.has(k2)) globalByFullName.set(k2, m);
+    pushMulti(globalByFullName, k2, m);
   });
 
   wb.SheetNames.forEach(sheetName=>{
     const sheet = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(sheet, { header:1, raw:true, defval:'' });
     let headerIdx=-1, colNom=-1, colPrenom=-1, colDate=-1, colBelt=-1, colMail=-1, colSexe=-1;
-    let colTel=-1, colAdresse1=-1, colAdresse2=-1, colCP=-1, colVille=-1;
+    let colTel=-1, colAdresse1=-1, colAdresse2=-1, colCP=-1, colVille=-1, colCert=-1, colLicense=-1, colNote=-1;
     for(let i=0;i<rows.length;i++){
       const row = rows[i].map(c=>String(c===undefined||c===null?'':c).trim().toLowerCase());
       const nomIdx = row.findIndex(c=>c==='nom');
@@ -3638,6 +3694,9 @@ function importWorkbookMultiSheet(wb){
         colAdresse2 = row.findIndex(c=>c.includes('adresse2') || c.includes('adresse 2'));
         colCP = row.findIndex(c=>c.includes('code postal') || c==='cp' || c==='codepostal');
         colVille = row.findIndex(c=>c==='ville');
+        colCert = row.findIndex(c=>c.includes('certificat'));
+        colLicense = row.findIndex(c=>c.includes('licence') || c.includes('license'));
+        colNote = row.findIndex(c=>c==='notes' || c==='note');
         if(colBelt===-1 && row.length>6) colBelt = 6; // colonne G par défaut si aucun en-tête de ceinture détecté
         break;
       }
@@ -3677,16 +3736,24 @@ function importWorkbookMultiSheet(wb){
       const postalCodeRaw = colCP>-1 ? cellOrEmpty(row[colCP]) : '';
       const postalCodeFinal = postalCodeRaw ? postalCodeRaw.padStart(5,'0') : '';
       const ville = colVille>-1 ? toTitleCase(cellOrEmpty(row[colVille])) : '';
+      const medicalCertDate = colCert>-1 ? parseBirthCell(row[colCert]) : '';
+      const licenseNumber = colLicense>-1 ? cellOrEmpty(row[colLicense]) : '';
+      const note = colNote>-1 ? cellOrEmpty(row[colNote]) : '';
 
-      // Rapprochement global : d'abord nom de famille + date de naissance (fiable même si l'élève
-      // a changé de cours), puis à défaut nom complet (repli pour les fiches sans date de naissance).
+      // Rapprochement : nom de famille + date de naissance, puis à défaut nom complet. Plusieurs
+      // fiches peuvent correspondre (2 disciplines) : on cherche en priorité une fiche déjà dans CE
+      // cours. Si aucune, la personne existe mais ailleurs — proposé à validation (déplacer ou
+      // ajouter une 2ème discipline) plutôt que décidé automatiquement.
       const rowDobKey = memberDobKey(nom, birthDate);
-      let existingMember = (rowDobKey && globalByDob.get(rowDobKey)) || globalByFullName.get(key) || null;
+      const seenIds = new Set();
+      const candidates = [];
+      (rowDobKey ? (globalByDob.get(rowDobKey)||[]) : []).concat(globalByFullName.get(key)||[]).forEach(c=>{
+        if(!seenIds.has(c.id)){ seenIds.add(c.id); candidates.push(c); }
+      });
+      const sameGroupMatch = candidates.find(c=>c.groupId===group.id);
 
-      if(existingMember){
-        // pratiquant déjà présent : on complète les champs vides directement, mais toute valeur
-        // qui contredit une information déjà renseignée (mail, tel, adresse, cours...) est mise de
-        // côté et proposée à validation après l'import plutôt qu'écrasée silencieusement.
+      if(sameGroupMatch){
+        const existingMember = sameGroupMatch;
         let updated = false;
         let wasReactivated = false;
         if(existingMember.archived){ existingMember.archived = false; totalReactivated++; wasReactivated = true; }
@@ -3698,6 +3765,11 @@ function importWorkbookMultiSheet(wb){
         if(!existingMember.address && address){ existingMember.address = address; updated = true; }
         if(!existingMember.postalCode && postalCodeFinal){ existingMember.postalCode = postalCodeFinal; updated = true; }
         if(!existingMember.city && ville){ existingMember.city = ville; updated = true; }
+        // Certificat médical et n° de licence : champs officiels, toujours resynchronisés sur la
+        // dernière valeur importée (comme la ceinture) — pas de conflit à valider pour ceux-là.
+        if(medicalCertDate && existingMember.medicalCertDate !== medicalCertDate){ existingMember.medicalCertDate = medicalCertDate; updated = true; }
+        if(licenseNumber && existingMember.licenseNumber !== licenseNumber){ existingMember.licenseNumber = licenseNumber; updated = true; }
+        if(!existingMember.note && note){ existingMember.note = note; updated = true; }
 
         const changes = [];
         if(mail && existingMember.email && mail !== existingMember.email) changes.push({field:'email', label:'Email', oldVal:existingMember.email, newVal:mail});
@@ -3705,18 +3777,33 @@ function importWorkbookMultiSheet(wb){
         if(address && existingMember.address && address !== existingMember.address) changes.push({field:'address', label:'Adresse', oldVal:existingMember.address, newVal:address});
         if(postalCodeFinal && existingMember.postalCode && postalCodeFinal !== existingMember.postalCode) changes.push({field:'postalCode', label:'Code postal', oldVal:existingMember.postalCode, newVal:postalCodeFinal});
         if(ville && existingMember.city && ville !== existingMember.city) changes.push({field:'city', label:'Ville', oldVal:existingMember.city, newVal:ville});
-        if(group.id !== existingMember.groupId){
-          const oldGroup = data.groups.find(g2=>g2.id===existingMember.groupId);
-          changes.push({field:'groupId', label:'Cours', oldVal: oldGroup?oldGroup.name:'—', newVal: group.name, newGroupId: group.id});
-        }
+        if(note && existingMember.note && note !== existingMember.note) changes.push({field:'note', label:'Note', oldVal:existingMember.note, newVal:note});
         if(changes.length){
-          conflictByMemberId.set(existingMember.id, { memberId: existingMember.id, name: existingMember.name, changes });
+          fieldConflictByMemberId.set(existingMember.id, { memberId: existingMember.id, name: existingMember.name, changes });
         }
 
         if(updated) totalUpdated++; else if(!wasReactivated) totalSkipped++;
         if(memberMissingFields(existingMember).length){
           missingInfoCandidates.push({ memberId: existingMember.id, groupName: group.name });
         }
+        continue;
+      }
+
+      if(candidates.length){
+        // La personne existe déjà, mais dans un cours différent de cet onglet : elle a peut-être
+        // changé de cours, ou pratique désormais une 2ème discipline — proposé à validation, jamais
+        // décidé automatiquement.
+        const from = candidates[0];
+        const fromGroup = data.groups.find(g2=>g2.id===from.groupId);
+        groupChangeConflicts.push({
+          key: uid(),
+          fromMemberId: from.id,
+          fromName: from.name,
+          fromGroupName: fromGroup ? fromGroup.name : '—',
+          toGroupId: group.id,
+          toGroupName: group.name,
+          rowData: { name: fullName, birthDate, email: mail, belt, gender, phone, address, postalCode: postalCodeFinal, city: ville, medicalCertDate, licenseNumber, note }
+        });
         continue;
       }
 
@@ -3728,12 +3815,15 @@ function importWorkbookMultiSheet(wb){
       if(address) member.address = address;
       if(postalCodeFinal) member.postalCode = postalCodeFinal;
       if(ville) member.city = ville;
+      if(medicalCertDate) member.medicalCertDate = medicalCertDate;
+      if(licenseNumber) member.licenseNumber = licenseNumber;
+      if(note) member.note = note;
       data.members.push(member);
-      // On enregistre aussitôt la nouvelle fiche dans l'index global : si ce même élève apparaît
-      // par erreur une seconde fois plus loin dans le fichier (autre onglet), on le retrouvera au
-      // lieu d'en recréer un troisième exemplaire.
-      if(rowDobKey) globalByDob.set(rowDobKey, member);
-      globalByFullName.set(key, member);
+      // On enregistre aussitôt la nouvelle fiche dans l'index global : si ce même élève apparaît une
+      // 2ème fois plus loin dans le fichier (2ème onglet = 2ème discipline), on la retrouvera comme
+      // candidate au lieu d'en recréer une 3ème.
+      if(rowDobKey) pushMulti(globalByDob, rowDobKey, member);
+      pushMulti(globalByFullName, key, member);
       totalAdded++;
       if(memberMissingFields(member).length){
         missingInfoCandidates.push({ memberId: member.id, groupName: group.name });
@@ -3743,13 +3833,14 @@ function importWorkbookMultiSheet(wb){
 
   // Élèves actuellement actifs dans un cours traité par ce fichier, mais absents de son onglet :
   // candidats à l'archivage. On exclut les élèves dont le cours change (conflit ci-dessus, encore
-  // en attente de validation) : leur absence de l'ancien onglet s'explique par le changement de
-  // cours, ce n'est pas un départ du club — inutile de proposer aussi de les archiver.
+  // en attente de validation) : leur absence de l'ancien onglet s'explique par ce conflit, pas par
+  // un départ du club — inutile de proposer aussi de les archiver.
+  const groupChangeFromIds = new Set(groupChangeConflicts.map(c=>c.fromMemberId));
   const missingCandidates = [];
   touchedGroupIds.forEach(gid=>{
     const seen = seenByGroup.get(gid) || new Set();
     const g = data.groups.find(x=>x.id===gid);
-    data.members.filter(m=>m.groupId===gid && !m.archived && !seen.has(m.name.toLowerCase()) && !conflictByMemberId.has(m.id)).forEach(m=>{
+    data.members.filter(m=>m.groupId===gid && !m.archived && !seen.has(m.name.toLowerCase()) && !fieldConflictByMemberId.has(m.id) && !groupChangeFromIds.has(m.id)).forEach(m=>{
       missingCandidates.push({ memberId: m.id, name: m.name, groupName: g?g.name:'' });
     });
   });
@@ -3760,15 +3851,15 @@ function importWorkbookMultiSheet(wb){
   const missingCourseCandidates = [];
   data.groups.forEach(g=>{
     if(touchedGroupIds.has(g.id)) return;
-    const activeMemberIds = data.members.filter(m=>m.groupId===g.id && !m.archived && !conflictByMemberId.has(m.id)).map(m=>m.id);
+    const activeMemberIds = data.members.filter(m=>m.groupId===g.id && !m.archived && !fieldConflictByMemberId.has(m.id) && !groupChangeFromIds.has(m.id)).map(m=>m.id);
     if(activeMemberIds.length===0) return;
     missingCourseCandidates.push({ groupId: g.id, groupName: g.name, memberIds: activeMemberIds });
   });
 
-  const conflicts = [...conflictByMemberId.values()];
+  const fieldConflicts = [...fieldConflictByMemberId.values()];
 
   saveData(); renderAll();
-  if(groupsCreated===0 && totalAdded===0 && totalUpdated===0 && totalReactivated===0 && conflicts.length===0 && missingCandidates.length===0 && missingCourseCandidates.length===0){
+  if(groupsCreated===0 && totalAdded===0 && totalUpdated===0 && totalReactivated===0 && fieldConflicts.length===0 && groupChangeConflicts.length===0 && missingCandidates.length===0 && missingCourseCandidates.length===0){
     showToast(sheetsIgnored ? "Aucune colonne NOM/PRENOM détectée dans ce fichier" : 'Aucune donnée trouvée');
     return;
   }
@@ -3778,7 +3869,8 @@ function importWorkbookMultiSheet(wb){
   if(totalSkipped) msg += `, ${totalSkipped} inchangé${totalSkipped===1?'':'s'}`;
   if(beltsMatched) msg += `, ${beltsMatched} ceinture${beltsMatched===1?'':'s'} reconnue${beltsMatched===1?'':'s'}`;
   if(beltsUnmatched) msg += `, ${beltsUnmatched} ceinture${beltsUnmatched===1?'':'s'} non reconnue${beltsUnmatched===1?'':'s'}`;
-  if(conflicts.length) msg += `, ${conflicts.length} à valider`;
+  const totalConflicts = fieldConflicts.length + groupChangeConflicts.length;
+  if(totalConflicts) msg += `, ${totalConflicts} à valider`;
   showToast(msg);
   // On enchaîne les fenêtres de suivi d'import l'une après l'autre (jamais en même temps) : d'abord
   // les changements détectés sur des fiches déjà existantes (mail/tel/cours différents) à valider ou
@@ -3793,23 +3885,30 @@ function importWorkbookMultiSheet(wb){
       openImportArchivePreview(missingCandidates, missingCourseCandidates);
     }
   };
-  if(conflicts.length){
-    openImportConflictOverlay(conflicts, runMissingInfoThenArchive);
+  if(totalConflicts){
+    openImportConflictOverlay(fieldConflicts, groupChangeConflicts, runMissingInfoThenArchive);
   } else {
     runMissingInfoThenArchive();
   }
 }
 
-// Fenêtre de validation des changements détectés sur des fiches déjà existantes (rapprochées par
-// nom + date de naissance) : une valeur déjà renseignée (mail, tel, adresse, cours...) diffère de
-// celle du fichier importé. Décocher une ligne revient à garder la fiche actuelle inchangée pour cet
-// élève ; les lignes cochées (par défaut) sont appliquées, y compris le changement de cours — dans
-// ce cas la fiche existante est simplement déplacée vers le nouveau cours, jamais dupliquée.
-function openImportConflictOverlay(conflicts, onDone){
+// Fenêtre de validation des changements détectés sur des fiches déjà existantes. Deux types de
+// conflits, affichés séparément :
+//  - fieldConflicts : une valeur déjà renseignée (mail, tel, adresse, note...) diffère de celle du
+//    fichier importé, sur une fiche déjà dans le BON cours. Décocher = garder la fiche inchangée.
+//  - groupChangeConflicts : la personne (nom + date de naissance) existe déjà mais dans un AUTRE
+//    cours que celui de l'onglet en cours d'import. Comme ça peut être un déménagement de cours OU
+//    une 2ème discipline (élève inscrit à 2 cours), rien n'est décidé automatiquement : un menu
+//    propose de déplacer la fiche existante, d'ajouter une fiche liée dans le nouveau cours (2ème
+//    discipline, l'ancienne fiche reste intacte), ou de ne rien faire.
+function openImportConflictOverlay(fieldConflicts, groupChangeConflicts, onDone){
   const overlay = document.getElementById('import-archive-overlay');
-  if(!conflicts.length){ if(onDone) onDone(); return; }
-  const sorted = [...conflicts].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name),'fr'));
-  const rows = sorted.map(c=>`
+  fieldConflicts = fieldConflicts || [];
+  groupChangeConflicts = groupChangeConflicts || [];
+  if(!fieldConflicts.length && !groupChangeConflicts.length){ if(onDone) onDone(); return; }
+
+  const sortedField = [...fieldConflicts].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name),'fr'));
+  const fieldRows = sortedField.map(c=>`
     <label class="iao-row">
       <input type="checkbox" data-id="${c.memberId}" checked>
       <span>
@@ -3817,15 +3916,36 @@ function openImportConflictOverlay(conflicts, onDone){
         <div class="iao-group">${c.changes.map(ch=>`${escapeHtml(ch.label)} : ${escapeHtml(ch.oldVal||'—')} → ${escapeHtml(ch.newVal||'—')}`).join(' · ')}</div>
       </span>
     </label>`).join('');
+
+  const sortedGC = [...groupChangeConflicts].sort((a,b)=> memberSurname(a.fromName).localeCompare(memberSurname(b.fromName),'fr'));
+  const gcRows = sortedGC.map(c=>`
+    <div class="iao-row" style="flex-direction:column; align-items:stretch; gap:6px;">
+      <div>
+        <div class="iao-name">${escapeHtml(c.fromName)}</div>
+        <div class="iao-group">Déjà dans « ${escapeHtml(c.fromGroupName)} », apparaît aussi dans « ${escapeHtml(c.toGroupName)} »</div>
+      </div>
+      <select data-gc="${c.key}" style="width:100%;">
+        <option value="move" selected>Déplacer vers « ${escapeHtml(c.toGroupName)} »</option>
+        <option value="add">Ajouter aussi dans « ${escapeHtml(c.toGroupName)} » (2ème discipline)</option>
+        <option value="ignore">Ne rien changer</option>
+      </select>
+    </div>`).join('');
+
   overlay.innerHTML = `
     <div class="iao-card">
       <h2 style="margin-top:0;">Modifications détectées</h2>
+      ${fieldConflicts.length ? `
       <p style="font-size:13px; color:var(--ink-dim); line-height:1.5;">
-        ${sorted.length} fiche${sorted.length===1?'':'s'} déjà existante${sorted.length===1?'':'s'} ${sorted.length===1?'a':'ont'} des informations différentes dans le fichier importé.
-        Décoche celles à laisser inchangées : les autres seront mises à jour — si le cours change, l'élève est déplacé vers le nouveau cours, l'ancienne fiche n'est jamais dupliquée.
+        ${sortedField.length} fiche${sortedField.length===1?'':'s'} déjà existante${sortedField.length===1?'':'s'} ${sortedField.length===1?'a':'ont'} des informations différentes dans le fichier importé.
+        Décoche celles à laisser inchangées.
       </p>
-      <div class="iao-list">${rows}</div>
-      <button class="primary" id="confirmConflictBtn" style="width:100%;">Valider les modifications cochées</button>
+      <div class="iao-list">${fieldRows}</div>` : ''}
+      ${groupChangeConflicts.length ? `
+      <p style="font-size:13px; color:var(--ink-dim); line-height:1.5; margin-top:${fieldConflicts.length?'16px':'0'};">
+        ${sortedGC.length} élève${sortedGC.length===1?'':'s'} apparai${sortedGC.length===1?'t':'ssent'} dans un cours différent de celui déjà enregistré — précise s'il s'agit d'un déplacement ou d'une 2ème discipline.
+      </p>
+      <div class="iao-list">${gcRows}</div>` : ''}
+      <button class="primary" id="confirmConflictBtn" style="width:100%; margin-top:12px;">Valider</button>
       <button class="ghost" id="cancelConflictBtn" style="width:100%; margin-top:8px;">Ne rien changer</button>
     </div>`;
   overlay.classList.add('show');
@@ -3834,15 +3954,36 @@ function openImportConflictOverlay(conflicts, onDone){
   document.getElementById('confirmConflictBtn').onclick = ()=>{
     const checkedIds = new Set([...overlay.querySelectorAll('input[type="checkbox"]:checked')].map(cb=>cb.dataset.id));
     let count = 0;
-    conflicts.forEach(c=>{
+    fieldConflicts.forEach(c=>{
       if(!checkedIds.has(c.memberId)) return;
       const m = data.members.find(x=>x.id===c.memberId);
       if(!m) return;
-      c.changes.forEach(ch=>{
-        if(ch.field==='groupId') m.groupId = ch.newGroupId;
-        else m[ch.field] = ch.newVal;
-      });
+      c.changes.forEach(ch=>{ m[ch.field] = ch.newVal; });
       count++;
+    });
+    groupChangeConflicts.forEach(c=>{
+      const sel = overlay.querySelector(`select[data-gc="${c.key}"]`);
+      const action = sel ? sel.value : 'move';
+      if(action==='ignore') return;
+      if(action==='move'){
+        const m = data.members.find(x=>x.id===c.fromMemberId);
+        if(m){ m.groupId = c.toGroupId; count++; }
+      } else if(action==='add'){
+        const rd = c.rowData;
+        const newMember = { id: uid(), groupId: c.toGroupId, name: rd.name, birthDate: rd.birthDate };
+        if(rd.email) newMember.email = rd.email;
+        if(rd.belt) newMember.belt = rd.belt;
+        if(rd.gender) newMember.gender = rd.gender;
+        if(rd.phone) newMember.phone = rd.phone;
+        if(rd.address) newMember.address = rd.address;
+        if(rd.postalCode) newMember.postalCode = rd.postalCode;
+        if(rd.city) newMember.city = rd.city;
+        if(rd.medicalCertDate) newMember.medicalCertDate = rd.medicalCertDate;
+        if(rd.licenseNumber) newMember.licenseNumber = rd.licenseNumber;
+        if(rd.note) newMember.note = rd.note;
+        data.members.push(newMember);
+        count++;
+      }
     });
     saveData(); renderAll();
     showToast(count ? `${count} fiche${count===1?'':'s'} mise${count===1?'':'s'} à jour` : 'Aucune modification appliquée');
