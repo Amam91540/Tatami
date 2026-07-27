@@ -1731,6 +1731,7 @@ function renderGroupsTab(){
                 <div style="margin-top:8px;"><span class="field-label">N° de licence</span><div>${m.licenseNumber ? escapeHtml(m.licenseNumber) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Cours</span><div>${curGroup ? escapeHtml(curGroup.name) : '—'}</div></div>
                 ${m.note ? `<div style="margin-top:8px;"><span class="field-label">Note</span><div style="white-space:pre-wrap;">${escapeHtml(m.note)}</div></div>` : ''}
+                ${(m.linkedMemberId && !isLicensePendingGroup(curGroup)) ? `<div style="margin-top:8px; color:var(--ink-dim); font-size:12.5px;">🔗 Fiche liée déjà créée dans « Licence à prendre » pour la saison prochaine — synchronisée automatiquement.</div>` : ''}
               </div>
               ${committee ? (()=>{
                 const addOpen = !!ui.addOtherGroupOpen[m.id];
@@ -2057,8 +2058,16 @@ document.getElementById('groups-list').addEventListener('click', e=>{
     const targetId = select ? select.value : (m && m.pendingGroupId);
     const targetGroup = targetId ? data.groups.find(x=>x.id===targetId) : null;
     if(m && targetGroup){
+      // La fiche liée de la saison précédente (dans son cours réel) devient obsolète une fois la
+      // nouvelle licence validée : on l'archive (elle reste consultable/réactivable) plutôt que de
+      // la supprimer, et on coupe le lien pour arrêter la synchronisation en direct des deux côtés.
+      if(m.linkedMemberId){
+        const old = data.members.find(x=>x.id===m.linkedMemberId);
+        if(old && old.linkedMemberId===m.id){ old.archived = true; old.linkedMemberId = null; }
+      }
       m.groupId = targetGroup.id;
       m.pendingGroupId = null;
+      m.linkedMemberId = null;
       saveData(); renderAll();
       showToast(`${m.name} inscrit(e) dans « ${targetGroup.name} »`);
     }
@@ -2198,6 +2207,26 @@ function createLinkedMemberRecord(sourceMember, targetGroupId){
   return newMember;
 }
 
+// Champs "identité/contact" répliqués en direct entre deux fiches liées via linkedMemberId (voir
+// prepareNextSeasonLicenses) — jamais groupId/pendingGroupId/archived/id/linkedMemberId, qui
+// doivent rester propres à chaque fiche (l'une reste active dans son cours réel, l'autre patiente
+// dans "Licence à prendre"). Contrairement aux fiches liées du Comité directeur (indépendantes une
+// fois créées), celles-ci restent synchronisées tant que la fiche en attente n'a pas été validée.
+const LINKED_MEMBER_SYNC_FIELDS = ['name','birthDate','gender','email','phone','address','postalCode','city','medicalCertDate','licenseNumber','note'];
+function syncLinkedMember(m){
+  if(!m || !m.linkedMemberId) return;
+  const other = data.members.find(x=>x.id===m.linkedMemberId);
+  if(!other || other.linkedMemberId!==m.id) return;
+  LINKED_MEMBER_SYNC_FIELDS.forEach(f=>{ other[f] = m[f]; });
+  if(m.belt !== other.belt){
+    if(m.belt){
+      if(!other.beltHistory) other.beltHistory = [];
+      other.beltHistory.push({ belt: m.belt, date: todayStr() });
+    }
+    other.belt = m.belt;
+  }
+}
+
 // Réactive un élève archivé en le rattachant au cours indiqué : on modifie l'élève existant
 // (même id) au lieu d'en créer un nouveau, donc tout son historique (passages de grade,
 // résultats, stages, présences passées) reste automatiquement rattaché.
@@ -2222,14 +2251,14 @@ document.getElementById('groups-list').addEventListener('change', e=>{
       const prenom = row.querySelector('[data-action="edit-firstname"]').value.trim();
       const nom = row.querySelector('[data-action="edit-lastname"]').value.trim();
       const full = `${prenom} ${nom}`.trim();
-      if(full){ m.name = full; saveData(); }
+      if(full){ m.name = full; syncLinkedMember(m); saveData(); }
     }
     return;
   }
   const bdInput = e.target.closest('[data-action="edit-birthdate"]');
   if(bdInput){
     const m = data.members.find(x=>x.id===bdInput.dataset.id);
-    if(m){ m.birthDate = bdInput.value || null; saveData(); renderGroupsTab(); }
+    if(m){ m.birthDate = bdInput.value || null; syncLinkedMember(m); saveData(); renderGroupsTab(); }
     return;
   }
   const beltSel = e.target.closest('[data-action="edit-belt"]');
@@ -2242,6 +2271,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
         m.beltHistory.push({ belt: newBelt, date: todayStr() });
       }
       m.belt = newBelt;
+      syncLinkedMember(m);
       saveData(); renderGroupsTab();
     }
     return;
@@ -2249,7 +2279,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   const genderSel = e.target.closest('[data-action="edit-gender"]');
   if(genderSel){
     const m = data.members.find(x=>x.id===genderSel.dataset.id);
-    if(m){ m.gender = genderSel.value || undefined; saveData(); renderGroupsTab(); }
+    if(m){ m.gender = genderSel.value || undefined; syncLinkedMember(m); saveData(); renderGroupsTab(); }
     return;
   }
   const groupSel = e.target.closest('[data-action="change-group"]');
@@ -2258,6 +2288,15 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     if(m && groupSel.value){
       const newGroup = data.groups.find(x=>x.id===groupSel.value);
       m.groupId = groupSel.value;
+      // Si cette fiche a une fiche liée en attente (voir prepareNextSeasonLicenses), on répercute
+      // le changement de cours sur son "cours visé" — pas sur son groupId à elle (qui doit rester
+      // dans "Licence à prendre" tant qu'elle n'est pas validée).
+      if(m.linkedMemberId){
+        const other = data.members.find(x=>x.id===m.linkedMemberId);
+        if(other && other.linkedMemberId===m.id && isLicensePendingGroup(data.groups.find(x=>x.id===other.groupId))){
+          other.pendingGroupId = groupSel.value;
+        }
+      }
       saveData();
       renderGroupsTab();
       showToast(newGroup ? `Déplacé(e) vers « ${newGroup.name} »` : 'Cours mis à jour');
@@ -2267,43 +2306,43 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   const phoneInput = e.target.closest('[data-action="edit-phone"]');
   if(phoneInput){
     const m = data.members.find(x=>x.id===phoneInput.dataset.id);
-    if(m){ m.phone = phoneInput.value.trim(); saveData(); }
+    if(m){ m.phone = phoneInput.value.trim(); syncLinkedMember(m); saveData(); }
     return;
   }
   const addressInput = e.target.closest('[data-action="edit-address"]');
   if(addressInput){
     const m = data.members.find(x=>x.id===addressInput.dataset.id);
-    if(m){ m.address = addressInput.value.trim(); saveData(); }
+    if(m){ m.address = addressInput.value.trim(); syncLinkedMember(m); saveData(); }
     return;
   }
   const postalInput = e.target.closest('[data-action="edit-postalcode"]');
   if(postalInput){
     const m = data.members.find(x=>x.id===postalInput.dataset.id);
-    if(m){ m.postalCode = postalInput.value.trim(); saveData(); }
+    if(m){ m.postalCode = postalInput.value.trim(); syncLinkedMember(m); saveData(); }
     return;
   }
   const cityInput = e.target.closest('[data-action="edit-city"]');
   if(cityInput){
     const m = data.members.find(x=>x.id===cityInput.dataset.id);
-    if(m){ m.city = cityInput.value.trim(); saveData(); }
+    if(m){ m.city = cityInput.value.trim(); syncLinkedMember(m); saveData(); }
     return;
   }
   const certInput = e.target.closest('[data-action="edit-medicalcert"]');
   if(certInput){
     const m = data.members.find(x=>x.id===certInput.dataset.id);
-    if(m){ m.medicalCertDate = certInput.value || null; saveData(); }
+    if(m){ m.medicalCertDate = certInput.value || null; syncLinkedMember(m); saveData(); }
     return;
   }
   const licenseInput = e.target.closest('[data-action="edit-license"]');
   if(licenseInput){
     const m = data.members.find(x=>x.id===licenseInput.dataset.id);
-    if(m){ m.licenseNumber = licenseInput.value.trim(); saveData(); }
+    if(m){ m.licenseNumber = licenseInput.value.trim(); syncLinkedMember(m); saveData(); }
     return;
   }
   const noteInput = e.target.closest('[data-action="edit-note"]');
   if(noteInput){
     const m = data.members.find(x=>x.id===noteInput.dataset.id);
-    if(m){ m.note = noteInput.value; saveData(); }
+    if(m){ m.note = noteInput.value; syncLinkedMember(m); saveData(); }
     return;
   }
   const input = e.target.closest('[data-action="edit-email"]');
@@ -2311,6 +2350,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   const m = data.members.find(x=>x.id===input.dataset.id);
   if(!m) return;
   m.email = input.value.trim();
+  syncLinkedMember(m);
   saveData();
 });
 
@@ -10270,31 +10310,51 @@ function refreshArchiveTabBody(archive){
 // prendre ») vers ce groupe d'attente. Chaque fiche mémorise son cours d'origine dans
 // pendingGroupId, pour pouvoir la faire revenir en un clic (voir le bouton "Valider" sur la fiche,
 // câblé dans le listener de clic de #groups-list) une fois la licence de la nouvelle saison prise.
+// Crée, pour un élève actif dans son cours réel, une fiche liée dans "Licence à prendre" qui
+// reste synchronisée en direct (voir syncLinkedMember) tant qu'elle n'est pas validée — la fiche
+// d'origine N'EST PAS déplacée : elle reste active dans son cours pour la saison en cours (appel,
+// présences...), pendant que la fiche liée sert de brouillon pour la saison suivante.
+function createPendingLicenseRecord(sourceMember, licenseGroupId){
+  if(sourceMember.linkedMemberId) return null; // déjà dupliqué
+  const noBelt = groupHasNoBelt(data.groups.find(x=>x.id===licenseGroupId));
+  const pending = {
+    id: uid(), groupId: licenseGroupId, name: sourceMember.name, birthDate: sourceMember.birthDate||'',
+    email: sourceMember.email||'', belt: noBelt ? undefined : sourceMember.belt,
+    gender: sourceMember.gender, beltHistory: cloneArr(sourceMember.beltHistory),
+    archived:false, phone: sourceMember.phone||'', address: sourceMember.address||'',
+    postalCode: sourceMember.postalCode||'', city: sourceMember.city||'',
+    medicalCertDate: sourceMember.medicalCertDate||null, licenseNumber: sourceMember.licenseNumber||'',
+    note: sourceMember.note||'', pendingGroupId: sourceMember.groupId, linkedMemberId: sourceMember.id
+  };
+  data.members.push(pending);
+  sourceMember.linkedMemberId = pending.id;
+  return pending;
+}
 function prepareNextSeasonLicenses(){
   const licenseGroup = data.groups.find(g=>isLicensePendingGroup(g));
   if(!licenseGroup){ showToast('Groupe « Licence à prendre » introuvable'); return; }
-  const eligible = data.members.filter(m=> !m.archived && m.groupId!==licenseGroup.id
+  const eligible = data.members.filter(m=> !m.archived && m.groupId!==licenseGroup.id && !m.linkedMemberId
     && !isCommitteeGroup(data.groups.find(g=>g.id===m.groupId)));
-  if(eligible.length===0){ showToast('Aucun élève à déplacer'); return; }
+  if(eligible.length===0){ showToast('Aucun élève à dupliquer'); return; }
   const nextYear = nextSeasonStartYear();
-  if(!confirm(`Déplacer ${eligible.length} élève(s) vers « Licence à prendre » pour préparer la saison ${schoolYearLabel(nextYear)} ?\n\nChaque fiche garde en mémoire son cours actuel, pour pouvoir y revenir en un clic (bouton "Valider" sur la fiche) une fois la licence prise. Le Comité directeur n'est pas concerné.\n\nCette action affecte tout de suite les données en ligne — assure-toi que c'est le bon moment.`)) return;
-  eligible.forEach(m=>{ m.pendingGroupId = m.groupId; m.groupId = licenseGroup.id; });
+  if(!confirm(`Créer ${eligible.length} fiche(s) liée(s) dans « Licence à prendre » pour préparer la saison ${schoolYearLabel(nextYear)} ?\n\nLes fiches d'origine restent inchangées et actives dans leur cours actuel (appel, présences...) — les fiches liées serviront de brouillon pour la nouvelle saison, et resteront synchronisées avec l'original (nom, ceinture, coordonnées...) jusqu'à validation. Le Comité directeur n'est pas concerné.`)) return;
+  eligible.forEach(m=> createPendingLicenseRecord(m, licenseGroup.id));
   saveData(); renderAll();
-  showToast(`${eligible.length} fiche(s) déplacée(s) vers « Licence à prendre »`);
+  showToast(`${eligible.length} fiche(s) liée(s) créée(s) dans « Licence à prendre »`);
 }
 function renderLicensePendingCard(){
   const wrap = document.getElementById('license-pending-card');
   if(!wrap) return;
   const nextYear = nextSeasonStartYear();
   const licenseGroup = data.groups.find(g=>isLicensePendingGroup(g));
-  const eligibleCount = data.members.filter(m=> !m.archived && (!licenseGroup || m.groupId!==licenseGroup.id)
+  const eligibleCount = data.members.filter(m=> !m.archived && (!licenseGroup || m.groupId!==licenseGroup.id) && !m.linkedMemberId
     && !isCommitteeGroup(data.groups.find(g=>g.id===m.groupId))).length;
   const pendingCount = licenseGroup ? data.members.filter(m=>!m.archived && m.groupId===licenseGroup.id).length : 0;
   wrap.innerHTML = `
     <h2>Préparer la saison ${schoolYearLabel(nextYear)}</h2>
-    <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">Déplace tous les élèves actifs (sauf le Comité directeur) vers le cours « Licence à prendre », en attendant leur réinscription pour la nouvelle saison. Chaque fiche garde en mémoire son cours d'origine — un bouton « Valider » sur la fiche permet ensuite de la faire revenir dans ce cours (ou un autre) une fois la licence prise. La recherche en haut à droite continue de retrouver les fiches même pendant qu'elles sont dans « Licence à prendre ».</p>
+    <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">Crée, pour chaque élève actif (sauf le Comité directeur), une fiche liée dans le cours « Licence à prendre » — sans toucher à sa fiche actuelle, qui reste active dans son cours pour la saison en cours. Tant que la fiche liée n'est pas validée, les deux fiches restent synchronisées en direct (nom, ceinture, téléphone, adresse, toutes les infos) : modifie l'une ou l'autre, l'autre se met à jour automatiquement. « Licence à prendre » est un cours normal, visible dans l'onglet Cours quelle que soit la saison affichée en haut — pas besoin de changer de saison pour y accéder. La recherche en haut à droite retrouve les fiches même là.</p>
     ${pendingCount>0 ? `<p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 10px;">${pendingCount} fiche${pendingCount===1?'':'s'} actuellement en attente dans « Licence à prendre ».</p>` : ''}
-    <button class="danger" id="prepareSeasonLicensesBtn" style="width:100%;" ${eligibleCount===0?'disabled':''}>${eligibleCount===0 ? 'Tous les élèves sont déjà en attente' : `Déplacer les ${eligibleCount} élève${eligibleCount===1?'':'s'} restant${eligibleCount===1?'':'s'} vers « Licence à prendre »`}</button>
+    <button class="danger" id="prepareSeasonLicensesBtn" style="width:100%;" ${eligibleCount===0?'disabled':''}>${eligibleCount===0 ? 'Tous les élèves ont déjà une fiche en attente' : `Créer ${eligibleCount} fiche${eligibleCount===1?'':'s'} liée${eligibleCount===1?'':'s'} dans « Licence à prendre »`}</button>
   `;
   const btn = document.getElementById('prepareSeasonLicensesBtn');
   if(btn) btn.addEventListener('click', prepareNextSeasonLicenses);
