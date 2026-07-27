@@ -583,6 +583,7 @@
             </select>
           </div>
         </div>
+        <button class="ghost icon-btn" id="suiviToggleAllBtn" style="width:100%; margin-top:4px;"></button>
       </div>
       <div id="suivi-content"></div>
       <div id="competitions-calendar"></div>
@@ -769,6 +770,7 @@
     <div id="attestation-settings"></div>
     <div class="card" id="imported-competitions-settings"></div>
     <div class="card" id="backend-settings"></div>
+    <div class="card" id="license-pending-card"></div>
     <div class="card" id="archive-card"></div>
     <div class="card" id="export-card"></div>
   </section>
@@ -930,7 +932,7 @@ function matchBeltRank(text){
 }
 
 let data = { clubName:'', groups:[], members:[], sessions:[], attendance:{}, settings:{} };
-let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, viewingSeasonId:null, groupNameEditing:{}, committeeSearchOpen:{}, addOtherGroupOpen:{} };
+let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, viewingSeasonId:null, committeeSearchOpen:{}, addOtherGroupOpen:{} };
 let ready = false;
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -1242,6 +1244,32 @@ function renameExportGroupToComiteDirecteurOnce(){
   return !!g;
 }
 
+// Groupe spécial "Licence à prendre" : sert de zone d'attente en début de saison — tous les élèves
+// (sauf le Comité directeur) y sont déplacés en attendant leur réinscription/relicenciement, avec
+// leur ancien cours mémorisé dans member.pendingGroupId pour pouvoir les "valider" d'un clic vers
+// ce même cours (ou un autre, si la fiche est modifiée entretemps).
+function isLicensePendingGroup(g){
+  if(!g) return false;
+  return normalizeCategoryKey(g.name) === 'licence a prendre';
+}
+// Crée le groupe une bonne fois (vide) s'il n'existe pas déjà, pour que le bouton de préparation de
+// saison (voir renderLicensePendingCard) ait toujours une destination disponible, sans avoir besoin
+// d'une UI de création manuelle de cours (qui n'existe pas dans l'appli).
+function ensureLicensePendingGroupOnce(){
+  const flag = 'licensePendingGroupCreated_v1';
+  if(data.settings[flag]) return false;
+  const exists = data.groups.some(g=>isLicensePendingGroup(g));
+  if(!exists) data.groups.push({ id: uid(), name: 'Licence à prendre', recurrence:[] });
+  data.settings[flag] = true;
+  return !exists;
+}
+// La saison "qui arrive" au sens du club : toujours celle qui suit la saison en cours (ex: en
+// 2025-2026, la prochaine est 2026-2027), recalculée à chaque appel — jamais figée en dur — pour que
+// le libellé du bouton de préparation de saison reste juste automatiquement d'une année sur l'autre.
+function nextSeasonStartYear(){
+  return (data.settings.seasonStartYear || autoSeasonStartYear()) + 1;
+}
+
 function getBackendConfig(){
   try{ return JSON.parse(localStorage.getItem('dojo-backend-config')||'null'); }catch(e){ return null; }
 }
@@ -1321,6 +1349,7 @@ async function loadData(){
   if(cleanupUnvalidatedSessions()){ saveData(); }
   if(seedVeteranCalendar2026Once()){ saveData(); }
   if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
+  if(ensureLicensePendingGroupOnce()){ saveData(); }
   document.documentElement.setAttribute('data-theme', data.settings.theme);
   document.getElementById('themeToggle').textContent = data.settings.theme==='light' ? '🌙' : '☀️';
   ready = true;
@@ -1602,6 +1631,7 @@ function renderAll(){
   renderAttestationSettings();
   renderImportedCompetitionsSettings();
   renderBackendSettings();
+  renderLicensePendingCard();
   renderArchiveCard();
   renderPresencesTab();
   renderSuiviTab();
@@ -1646,25 +1676,16 @@ function renderGroupsTab(){
     const members = data.members.filter(m=>m.groupId===g.id && !m.archived).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
     const draftId = 'draft-'+g.id;
     const expanded = !!ui.groupsExpanded[g.id];
-    const nameEditing = !!(ui.groupNameEditing && ui.groupNameEditing[g.id]);
     const committee = isCommitteeGroup(g);
     return `
     <div class="group-block" data-group="${g.id}">
-      <div class="group-title-row" ${nameEditing ? '' : `data-action="toggle-group" data-id="${g.id}"`} style="cursor:${nameEditing?'default':'pointer'};">
-        <div style="flex:1; min-width:0;">
-          ${nameEditing ? `
-          <div style="display:flex; align-items:center; gap:6px;" onclick="event.stopPropagation()">
-            <input type="text" data-action="edit-group-name-input" data-id="${g.id}" value="${escapeHtml(g.name)}" style="flex:1;">
-            <button class="ghost icon-btn" data-action="save-group-name-btn" data-id="${g.id}" style="padding:6px 9px; flex-shrink:0;" title="Enregistrer">✓</button>
-          </div>` : `
-          <div class="name" style="display:flex; align-items:center; gap:6px;">
-            <span>${escapeHtml(g.name)}</span>
-            <button class="ghost icon-btn" data-action="edit-group-name-btn" data-id="${g.id}" style="padding:3px 6px; font-size:12px; flex-shrink:0;" title="Renommer ce cours">✏️</button>
-          </div>
-          <div class="meta">${members.length} pratiquant${members.length===1?'':'s'}</div>`}
+      <div class="group-title-row" data-action="toggle-group" data-id="${g.id}" style="cursor:pointer;">
+        <div>
+          <div class="name">${escapeHtml(g.name)}</div>
+          <div class="meta">${members.length} pratiquant${members.length===1?'':'s'}</div>
         </div>
         <div style="display:flex; align-items:center; gap:10px;">
-          ${nameEditing ? '' : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" style="flex-shrink:0; color:var(--ink-dim); transform:rotate(${expanded?90:0}deg); transition:transform .15s;"><path d="M9 6l6 6-6 6"/></svg>`}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" style="flex-shrink:0; color:var(--ink-dim); transform:rotate(${expanded?90:0}deg); transition:transform .15s;"><path d="M9 6l6 6-6 6"/></svg>
         </div>
       </div>
       ${expanded ? `
@@ -1724,6 +1745,17 @@ function renderGroupsTab(){
                   </select>
                   <button class="ghost icon-btn" data-action="confirm-add-other-group" data-id="${m.id}" style="padding:7px 10px; flex-shrink:0;">Ajouter</button>
                   <button class="ghost icon-btn" data-action="toggle-add-other-group" data-id="${m.id}" style="padding:7px 10px; flex-shrink:0;">✕</button>
+                </div>`;
+              })() : ''}
+              ${isLicensePendingGroup(curGroup) ? (()=>{
+                const targetOptions = data.groups.filter(g2=>!isLicensePendingGroup(g2) && !isCommitteeGroup(g2));
+                return `
+                <div class="small" style="margin-top:10px; color:var(--ink-dim);">Licence prise ? Choisis le cours et valide :</div>
+                <div class="row" style="margin-top:4px; gap:8px;">
+                  <select data-action="license-target-select" data-id="${m.id}" style="flex:1;">
+                    ${targetOptions.map(g2=>`<option value="${g2.id}" ${g2.id===(m.pendingGroupId||'')?'selected':''}>${escapeHtml(g2.name)}</option>`).join('')}
+                  </select>
+                  <button class="ghost icon-btn" data-action="validate-license" data-id="${m.id}" style="padding:7px 10px; flex-shrink:0;">✓ Valider</button>
                 </div>`;
               })() : ''}
               <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px; flex-wrap:wrap;">
@@ -1931,25 +1963,6 @@ async function generateIncompleteFichesPdf(){
 }
 
 document.getElementById('groups-list').addEventListener('click', e=>{
-  const renameBtn = e.target.closest('[data-action="edit-group-name-btn"]');
-  if(renameBtn){
-    ui.groupNameEditing[renameBtn.dataset.id] = true;
-    renderGroupsTab();
-    return;
-  }
-  const saveNameBtn = e.target.closest('[data-action="save-group-name-btn"]');
-  if(saveNameBtn){
-    const gid = saveNameBtn.dataset.id;
-    const input = document.querySelector(`input[data-action="edit-group-name-input"][data-id="${gid}"]`);
-    const g = data.groups.find(x=>x.id===gid);
-    if(g && input){
-      const val = input.value.trim();
-      if(val) g.name = val;
-    }
-    ui.groupNameEditing[gid] = false;
-    saveData(); renderAll();
-    return;
-  }
   const committeeSuggestItem = e.target.closest('.committee-suggest-item');
   if(committeeSuggestItem){
     const source = data.members.find(x=>x.id===committeeSuggestItem.dataset.member);
@@ -2036,6 +2049,18 @@ document.getElementById('groups-list').addEventListener('click', e=>{
         saveData(); renderAll();
         showToast(`${source.name} ajouté(e) dans « ${targetGroup?targetGroup.name:''} » — fiche liée créée`);
       }
+    }
+  } else if(action==='validate-license'){
+    const mid = btn.dataset.id;
+    const m = data.members.find(x=>x.id===mid);
+    const select = document.querySelector(`select[data-action="license-target-select"][data-id="${mid}"]`);
+    const targetId = select ? select.value : (m && m.pendingGroupId);
+    const targetGroup = targetId ? data.groups.find(x=>x.id===targetId) : null;
+    if(m && targetGroup){
+      m.groupId = targetGroup.id;
+      m.pendingGroupId = null;
+      saveData(); renderAll();
+      showToast(`${m.name} inscrit(e) dans « ${targetGroup.name} »`);
     }
   }
 });
@@ -4983,6 +5008,14 @@ function renderSuiviTab(){
   yearSel.onchange = renderSuiviContent;
   groupSel.onchange = renderSuiviContent;
   sortSel.onchange = ()=>{ ui.suiviSort = sortSel.value; renderSuiviContent(); };
+
+  const toggleAllBtn = document.getElementById('suiviToggleAllBtn');
+  toggleAllBtn.onclick = ()=>{
+    const groups = groupSel.value==='all' ? data.groups : data.groups.filter(g=>g.id===groupSel.value);
+    const anyExpanded = groups.some(g=>ui.suiviExpanded[g.id]);
+    groups.forEach(g=>{ ui.suiviExpanded[g.id] = !anyExpanded; });
+    renderSuiviContent();
+  };
   renderSuiviContent();
 }
 
@@ -5043,11 +5076,18 @@ function renderSuiviContent(){
   const wrap = document.getElementById('suivi-content');
   const startYear = parseInt(document.getElementById('suiviYear').value, 10);
   const groupFilter = document.getElementById('suiviGroup').value;
+  const toggleAllBtn = document.getElementById('suiviToggleAllBtn');
   if(data.groups.length===0){
     wrap.innerHTML = `<div class="card"><div class="empty">Ajoutez un cours et faites l'appel à quelques séances pour voir apparaître le suivi ici.</div></div>`;
+    if(toggleAllBtn) toggleAllBtn.style.display = 'none';
     return;
   }
   const groups = groupFilter==='all' ? data.groups : data.groups.filter(g=>g.id===groupFilter);
+  if(toggleAllBtn){
+    toggleAllBtn.style.display = '';
+    const anyExpanded = groups.some(g=>ui.suiviExpanded[g.id]);
+    toggleAllBtn.textContent = anyExpanded ? '🙈 Tout masquer' : '👁️ Tout afficher';
+  }
   const disciplineCardHtml = groupFilter==='all' ? renderDisciplineStatsCard(startYear) : '';
 
   wrap.innerHTML = disciplineCardHtml + groups.map(g=>{
@@ -10225,6 +10265,41 @@ function refreshArchiveTabBody(archive){
   else if(activeTab==='grades'){ body.innerHTML = buildArchiveGradesShellHtml(archive, aid); mountArchiveGradesHandlers(archive, aid); }
 }
 
+/* ---------------- LICENCE À PRENDRE (préparation de saison) ---------------- */
+// Déplace TOUS les élèves actifs (sauf le Comité directeur, et sauf ceux déjà dans « Licence à
+// prendre ») vers ce groupe d'attente. Chaque fiche mémorise son cours d'origine dans
+// pendingGroupId, pour pouvoir la faire revenir en un clic (voir le bouton "Valider" sur la fiche,
+// câblé dans le listener de clic de #groups-list) une fois la licence de la nouvelle saison prise.
+function prepareNextSeasonLicenses(){
+  const licenseGroup = data.groups.find(g=>isLicensePendingGroup(g));
+  if(!licenseGroup){ showToast('Groupe « Licence à prendre » introuvable'); return; }
+  const eligible = data.members.filter(m=> !m.archived && m.groupId!==licenseGroup.id
+    && !isCommitteeGroup(data.groups.find(g=>g.id===m.groupId)));
+  if(eligible.length===0){ showToast('Aucun élève à déplacer'); return; }
+  const nextYear = nextSeasonStartYear();
+  if(!confirm(`Déplacer ${eligible.length} élève(s) vers « Licence à prendre » pour préparer la saison ${schoolYearLabel(nextYear)} ?\n\nChaque fiche garde en mémoire son cours actuel, pour pouvoir y revenir en un clic (bouton "Valider" sur la fiche) une fois la licence prise. Le Comité directeur n'est pas concerné.\n\nCette action affecte tout de suite les données en ligne — assure-toi que c'est le bon moment.`)) return;
+  eligible.forEach(m=>{ m.pendingGroupId = m.groupId; m.groupId = licenseGroup.id; });
+  saveData(); renderAll();
+  showToast(`${eligible.length} fiche(s) déplacée(s) vers « Licence à prendre »`);
+}
+function renderLicensePendingCard(){
+  const wrap = document.getElementById('license-pending-card');
+  if(!wrap) return;
+  const nextYear = nextSeasonStartYear();
+  const licenseGroup = data.groups.find(g=>isLicensePendingGroup(g));
+  const eligibleCount = data.members.filter(m=> !m.archived && (!licenseGroup || m.groupId!==licenseGroup.id)
+    && !isCommitteeGroup(data.groups.find(g=>g.id===m.groupId))).length;
+  const pendingCount = licenseGroup ? data.members.filter(m=>!m.archived && m.groupId===licenseGroup.id).length : 0;
+  wrap.innerHTML = `
+    <h2>Préparer la saison ${schoolYearLabel(nextYear)}</h2>
+    <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">Déplace tous les élèves actifs (sauf le Comité directeur) vers le cours « Licence à prendre », en attendant leur réinscription pour la nouvelle saison. Chaque fiche garde en mémoire son cours d'origine — un bouton « Valider » sur la fiche permet ensuite de la faire revenir dans ce cours (ou un autre) une fois la licence prise. La recherche en haut à droite continue de retrouver les fiches même pendant qu'elles sont dans « Licence à prendre ».</p>
+    ${pendingCount>0 ? `<p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 10px;">${pendingCount} fiche${pendingCount===1?'':'s'} actuellement en attente dans « Licence à prendre ».</p>` : ''}
+    <button class="danger" id="prepareSeasonLicensesBtn" style="width:100%;" ${eligibleCount===0?'disabled':''}>${eligibleCount===0 ? 'Tous les élèves sont déjà en attente' : `Déplacer les ${eligibleCount} élève${eligibleCount===1?'':'s'} restant${eligibleCount===1?'':'s'} vers « Licence à prendre »`}</button>
+  `;
+  const btn = document.getElementById('prepareSeasonLicensesBtn');
+  if(btn) btn.addEventListener('click', prepareNextSeasonLicenses);
+}
+
 function renderArchiveCard(){
   const wrap = document.getElementById('archive-card');
   if(!wrap) return;
@@ -10370,7 +10445,7 @@ footer.querySelector('#resetBtn').addEventListener('click', async ()=>{
     }
   };
   await saveData();
-  ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, groupNameEditing:{}, committeeSearchOpen:{}, addOtherGroupOpen:{} };
+  ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, committeeSearchOpen:{}, addOtherGroupOpen:{} };
   renderAll();
   showToast('Toutes les données ont été réinitialisées');
 });
