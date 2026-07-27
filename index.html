@@ -763,6 +763,7 @@
       <button class="ghost" id="importWorkbookBtn" style="width:100%;">Choisir un fichier (.xlsx, .xls)</button>
     </div>
     <div id="duplicate-groups-card"></div>
+    <div id="duplicate-members-card"></div>
     <div class="card" id="age-settings"></div>
     <div class="card" id="imported-competitions-settings"></div>
     <div class="card" id="backend-settings"></div>
@@ -1513,6 +1514,7 @@ function renderAll(){
   renderGroupsTab();
   renderIncompleteFichesSection();
   renderDuplicateGroupsCard();
+  renderDuplicateMembersCard();
   renderBeltPassageSection();
   renderBeltDiplomasSection();
   renderBeltValidatedSection();
@@ -1695,6 +1697,7 @@ function renderGroupsTab(){
 const INCOMPLETE_FICHE_FIELDS = [
   { key:'birthDate', label:'Date de naissance' },
   { key:'gender', label:'Sexe' },
+  { key:'belt', label:'Ceinture' },
   { key:'email', label:'Email' },
   { key:'phone', label:'Téléphone' },
   { key:'address', label:'Adresse' },
@@ -1702,7 +1705,13 @@ const INCOMPLETE_FICHE_FIELDS = [
   { key:'city', label:'Ville' }
 ];
 function memberIncompleteFieldLabels(m){
-  return INCOMPLETE_FICHE_FIELDS.filter(f=>!String(m[f.key]||'').trim()).map(f=>f.label);
+  // La ceinture n'existe pas en Taïso (pas de système de grade dans cette discipline) : elle ne
+  // doit jamais être comptée comme manquante pour les élèves de ce cours.
+  const noBelt = memberInNoBeltCourse(m);
+  return INCOMPLETE_FICHE_FIELDS
+    .filter(f=> f.key!=='belt' || !noBelt)
+    .filter(f=>!String(m[f.key]||'').trim())
+    .map(f=>f.label);
 }
 function renderIncompleteFichesSection(){
   const wrap = document.getElementById('incomplete-fiches-section');
@@ -3183,11 +3192,32 @@ function importSingleList(wb, groupId){
   showToast(msg);
 }
 
+// Clé de rapprochement globale (tous cours confondus) : nom de famille + date de naissance.
+// Permet de retrouver un élève même s'il a changé de cours d'un import à l'autre, au lieu de
+// ne comparer que dans le cours cible (ce qui créait un doublon : nouvelle fiche dans le nouveau
+// cours + ancienne fiche laissée dans l'ancien cours, proposée à l'archivage).
+function memberDobKey(surname, birthDate){
+  if(!surname || !birthDate) return null;
+  return surname.trim().toLowerCase() + '|' + birthDate;
+}
 function importWorkbookMultiSheet(wb){
   let groupsCreated = 0, totalAdded = 0, totalUpdated = 0, totalSkipped = 0, sheetsIgnored = 0, beltsMatched = 0, beltsUnmatched = 0, totalReactivated = 0;
-  const missingCandidates = []; // élèves actifs présents dans un cours traité par ce fichier, mais absents de ce fichier
   const missingInfoCandidates = []; // élèves traités par cet import (ajoutés ou déjà présents) avec au moins un champ vide
   const touchedGroupIds = new Set(); // cours pour lesquels un onglet correspondant a été trouvé dans ce fichier
+  const seenByGroup = new Map(); // groupId -> Set des noms (clé) vus dans l'onglet de ce cours
+  const conflictByMemberId = new Map(); // memberId -> { memberId, name, changes:[{field,label,oldVal,newVal,newGroupId?}] }
+
+  // Index global de tous les membres existants, construit une seule fois avant de parcourir les
+  // onglets, pour un rapprochement qui ne dépend pas du cours.
+  const globalByDob = new Map();
+  const globalByFullName = new Map();
+  data.members.forEach(m=>{
+    const k1 = memberDobKey(memberSurname(m.name), m.birthDate);
+    if(k1 && !globalByDob.has(k1)) globalByDob.set(k1, m);
+    const k2 = (m.name||'').trim().toLowerCase();
+    if(k2 && !globalByFullName.has(k2)) globalByFullName.set(k2, m);
+  });
+
   wb.SheetNames.forEach(sheetName=>{
     const sheet = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(sheet, { header:1, raw:true, defval:'' });
@@ -3221,10 +3251,8 @@ function importWorkbookMultiSheet(wb){
       groupsCreated++;
     }
     touchedGroupIds.add(group.id);
-    // On matche sur TOUS les membres du cours (actifs ET archivés) : si un nom déjà archivé
-    // réapparaît dans un nouvel import, on le réactive au lieu de créer un doublon.
-    const existingByName = new Map(data.members.filter(m=>m.groupId===group.id).map(m=>[m.name.toLowerCase(), m]));
     const seen = new Set();
+    seenByGroup.set(group.id, seen);
     for(let i=headerIdx+1;i<rows.length;i++){
       const row = rows[i];
       const nom = toTitleCase(row[colNom]);
@@ -3250,9 +3278,15 @@ function importWorkbookMultiSheet(wb){
       const postalCodeFinal = postalCodeRaw ? postalCodeRaw.padStart(5,'0') : '';
       const ville = colVille>-1 ? toTitleCase(cellOrEmpty(row[colVille])) : '';
 
-      const existingMember = existingByName.get(key);
+      // Rapprochement global : d'abord nom de famille + date de naissance (fiable même si l'élève
+      // a changé de cours), puis à défaut nom complet (repli pour les fiches sans date de naissance).
+      const rowDobKey = memberDobKey(nom, birthDate);
+      let existingMember = (rowDobKey && globalByDob.get(rowDobKey)) || globalByFullName.get(key) || null;
+
       if(existingMember){
-        // pratiquant déjà présent : on complète/actualise plutôt que d'ignorer
+        // pratiquant déjà présent : on complète les champs vides directement, mais toute valeur
+        // qui contredit une information déjà renseignée (mail, tel, adresse, cours...) est mise de
+        // côté et proposée à validation après l'import plutôt qu'écrasée silencieusement.
         let updated = false;
         let wasReactivated = false;
         if(existingMember.archived){ existingMember.archived = false; totalReactivated++; wasReactivated = true; }
@@ -3264,6 +3298,21 @@ function importWorkbookMultiSheet(wb){
         if(!existingMember.address && address){ existingMember.address = address; updated = true; }
         if(!existingMember.postalCode && postalCodeFinal){ existingMember.postalCode = postalCodeFinal; updated = true; }
         if(!existingMember.city && ville){ existingMember.city = ville; updated = true; }
+
+        const changes = [];
+        if(mail && existingMember.email && mail !== existingMember.email) changes.push({field:'email', label:'Email', oldVal:existingMember.email, newVal:mail});
+        if(phone && existingMember.phone && phone !== existingMember.phone) changes.push({field:'phone', label:'Téléphone', oldVal:existingMember.phone, newVal:phone});
+        if(address && existingMember.address && address !== existingMember.address) changes.push({field:'address', label:'Adresse', oldVal:existingMember.address, newVal:address});
+        if(postalCodeFinal && existingMember.postalCode && postalCodeFinal !== existingMember.postalCode) changes.push({field:'postalCode', label:'Code postal', oldVal:existingMember.postalCode, newVal:postalCodeFinal});
+        if(ville && existingMember.city && ville !== existingMember.city) changes.push({field:'city', label:'Ville', oldVal:existingMember.city, newVal:ville});
+        if(group.id !== existingMember.groupId){
+          const oldGroup = data.groups.find(g2=>g2.id===existingMember.groupId);
+          changes.push({field:'groupId', label:'Cours', oldVal: oldGroup?oldGroup.name:'—', newVal: group.name, newGroupId: group.id});
+        }
+        if(changes.length){
+          conflictByMemberId.set(existingMember.id, { memberId: existingMember.id, name: existingMember.name, changes });
+        }
+
         if(updated) totalUpdated++; else if(!wasReactivated) totalSkipped++;
         if(memberMissingFields(existingMember).length){
           missingInfoCandidates.push({ memberId: existingMember.id, groupName: group.name });
@@ -3280,17 +3329,28 @@ function importWorkbookMultiSheet(wb){
       if(postalCodeFinal) member.postalCode = postalCodeFinal;
       if(ville) member.city = ville;
       data.members.push(member);
+      // On enregistre aussitôt la nouvelle fiche dans l'index global : si ce même élève apparaît
+      // par erreur une seconde fois plus loin dans le fichier (autre onglet), on le retrouvera au
+      // lieu d'en recréer un troisième exemplaire.
+      if(rowDobKey) globalByDob.set(rowDobKey, member);
+      globalByFullName.set(key, member);
       totalAdded++;
       if(memberMissingFields(member).length){
         missingInfoCandidates.push({ memberId: member.id, groupName: group.name });
       }
     }
+  });
 
-    // Élèves actuellement actifs dans ce cours mais absents de cet onglet : candidats à l'archivage.
-    // On ne compare que les cours réellement traités par ce fichier (onglet avec en-tête NOM/PRENOM
-    // détecté) — un cours qui n'a pas d'onglet dans ce fichier n'est pas concerné.
-    data.members.filter(m=>m.groupId===group.id && !m.archived && !seen.has(m.name.toLowerCase())).forEach(m=>{
-      missingCandidates.push({ memberId: m.id, name: m.name, groupName: group.name });
+  // Élèves actuellement actifs dans un cours traité par ce fichier, mais absents de son onglet :
+  // candidats à l'archivage. On exclut les élèves dont le cours change (conflit ci-dessus, encore
+  // en attente de validation) : leur absence de l'ancien onglet s'explique par le changement de
+  // cours, ce n'est pas un départ du club — inutile de proposer aussi de les archiver.
+  const missingCandidates = [];
+  touchedGroupIds.forEach(gid=>{
+    const seen = seenByGroup.get(gid) || new Set();
+    const g = data.groups.find(x=>x.id===gid);
+    data.members.filter(m=>m.groupId===gid && !m.archived && !seen.has(m.name.toLowerCase()) && !conflictByMemberId.has(m.id)).forEach(m=>{
+      missingCandidates.push({ memberId: m.id, name: m.name, groupName: g?g.name:'' });
     });
   });
 
@@ -3300,13 +3360,15 @@ function importWorkbookMultiSheet(wb){
   const missingCourseCandidates = [];
   data.groups.forEach(g=>{
     if(touchedGroupIds.has(g.id)) return;
-    const activeMemberIds = data.members.filter(m=>m.groupId===g.id && !m.archived).map(m=>m.id);
+    const activeMemberIds = data.members.filter(m=>m.groupId===g.id && !m.archived && !conflictByMemberId.has(m.id)).map(m=>m.id);
     if(activeMemberIds.length===0) return;
     missingCourseCandidates.push({ groupId: g.id, groupName: g.name, memberIds: activeMemberIds });
   });
 
+  const conflicts = [...conflictByMemberId.values()];
+
   saveData(); renderAll();
-  if(groupsCreated===0 && totalAdded===0 && totalUpdated===0 && totalReactivated===0 && missingCandidates.length===0 && missingCourseCandidates.length===0){
+  if(groupsCreated===0 && totalAdded===0 && totalUpdated===0 && totalReactivated===0 && conflicts.length===0 && missingCandidates.length===0 && missingCourseCandidates.length===0){
     showToast(sheetsIgnored ? "Aucune colonne NOM/PRENOM détectée dans ce fichier" : 'Aucune donnée trouvée');
     return;
   }
@@ -3316,17 +3378,76 @@ function importWorkbookMultiSheet(wb){
   if(totalSkipped) msg += `, ${totalSkipped} inchangé${totalSkipped===1?'':'s'}`;
   if(beltsMatched) msg += `, ${beltsMatched} ceinture${beltsMatched===1?'':'s'} reconnue${beltsMatched===1?'':'s'}`;
   if(beltsUnmatched) msg += `, ${beltsUnmatched} ceinture${beltsUnmatched===1?'':'s'} non reconnue${beltsUnmatched===1?'':'s'}`;
+  if(conflicts.length) msg += `, ${conflicts.length} à valider`;
   showToast(msg);
-  // On enchaîne les deux fenêtres de suivi d'import l'une après l'autre (jamais en même temps) :
-  // d'abord les fiches incomplètes à compléter, puis, une fois celle-ci fermée, les élèves (et
-  // cours entiers) absents du fichier à archiver/supprimer éventuellement.
-  if(missingInfoCandidates.length){
-    openImportMissingInfoOverlay(missingInfoCandidates, ()=>{
-      if(missingCandidates.length || missingCourseCandidates.length) openImportArchivePreview(missingCandidates, missingCourseCandidates);
-    });
-  } else if(missingCandidates.length || missingCourseCandidates.length){
-    openImportArchivePreview(missingCandidates, missingCourseCandidates);
+  // On enchaîne les fenêtres de suivi d'import l'une après l'autre (jamais en même temps) : d'abord
+  // les changements détectés sur des fiches déjà existantes (mail/tel/cours différents) à valider ou
+  // non, puis les fiches incomplètes à compléter, puis enfin les élèves (et cours entiers) absents
+  // du fichier à archiver/supprimer éventuellement.
+  const runMissingInfoThenArchive = ()=>{
+    if(missingInfoCandidates.length){
+      openImportMissingInfoOverlay(missingInfoCandidates, ()=>{
+        if(missingCandidates.length || missingCourseCandidates.length) openImportArchivePreview(missingCandidates, missingCourseCandidates);
+      });
+    } else if(missingCandidates.length || missingCourseCandidates.length){
+      openImportArchivePreview(missingCandidates, missingCourseCandidates);
+    }
+  };
+  if(conflicts.length){
+    openImportConflictOverlay(conflicts, runMissingInfoThenArchive);
+  } else {
+    runMissingInfoThenArchive();
   }
+}
+
+// Fenêtre de validation des changements détectés sur des fiches déjà existantes (rapprochées par
+// nom + date de naissance) : une valeur déjà renseignée (mail, tel, adresse, cours...) diffère de
+// celle du fichier importé. Décocher une ligne revient à garder la fiche actuelle inchangée pour cet
+// élève ; les lignes cochées (par défaut) sont appliquées, y compris le changement de cours — dans
+// ce cas la fiche existante est simplement déplacée vers le nouveau cours, jamais dupliquée.
+function openImportConflictOverlay(conflicts, onDone){
+  const overlay = document.getElementById('import-archive-overlay');
+  if(!conflicts.length){ if(onDone) onDone(); return; }
+  const sorted = [...conflicts].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name),'fr'));
+  const rows = sorted.map(c=>`
+    <label class="iao-row">
+      <input type="checkbox" data-id="${c.memberId}" checked>
+      <span>
+        <div class="iao-name">${escapeHtml(c.name)}</div>
+        <div class="iao-group">${c.changes.map(ch=>`${escapeHtml(ch.label)} : ${escapeHtml(ch.oldVal||'—')} → ${escapeHtml(ch.newVal||'—')}`).join(' · ')}</div>
+      </span>
+    </label>`).join('');
+  overlay.innerHTML = `
+    <div class="iao-card">
+      <h2 style="margin-top:0;">Modifications détectées</h2>
+      <p style="font-size:13px; color:var(--ink-dim); line-height:1.5;">
+        ${sorted.length} fiche${sorted.length===1?'':'s'} déjà existante${sorted.length===1?'':'s'} ${sorted.length===1?'a':'ont'} des informations différentes dans le fichier importé.
+        Décoche celles à laisser inchangées : les autres seront mises à jour — si le cours change, l'élève est déplacé vers le nouveau cours, l'ancienne fiche n'est jamais dupliquée.
+      </p>
+      <div class="iao-list">${rows}</div>
+      <button class="primary" id="confirmConflictBtn" style="width:100%;">Valider les modifications cochées</button>
+      <button class="ghost" id="cancelConflictBtn" style="width:100%; margin-top:8px;">Ne rien changer</button>
+    </div>`;
+  overlay.classList.add('show');
+  const close = ()=>{ overlay.classList.remove('show'); overlay.innerHTML=''; if(onDone) onDone(); };
+  document.getElementById('cancelConflictBtn').onclick = ()=>{ close(); };
+  document.getElementById('confirmConflictBtn').onclick = ()=>{
+    const checkedIds = new Set([...overlay.querySelectorAll('input[type="checkbox"]:checked')].map(cb=>cb.dataset.id));
+    let count = 0;
+    conflicts.forEach(c=>{
+      if(!checkedIds.has(c.memberId)) return;
+      const m = data.members.find(x=>x.id===c.memberId);
+      if(!m) return;
+      c.changes.forEach(ch=>{
+        if(ch.field==='groupId') m.groupId = ch.newGroupId;
+        else m[ch.field] = ch.newVal;
+      });
+      count++;
+    });
+    saveData(); renderAll();
+    showToast(count ? `${count} fiche${count===1?'':'s'} mise${count===1?'':'s'} à jour` : 'Aucune modification appliquée');
+    close();
+  };
 }
 
 // Aperçu avant validation : montre les élèves absents du fichier importé et laisse le coach
@@ -3530,6 +3651,78 @@ function mergeDuplicateMembersWithinGroups(){
     });
   });
   return mergedCount;
+}
+
+// Détecte des élèves en double À TRAVERS DES COURS DIFFÉRENTS (même nom de famille + même date de
+// naissance). Peut arriver après un changement de cours importé avant la correction du rapprochement
+// global de importWorkbookMultiSheet : une fiche restait dans l'ancien cours (souvent archivée) et
+// une autre était créée dans le nouveau. Nécessite une date de naissance sur les deux fiches pour
+// être fiable (sans repli sur le seul nom, trop de faux positifs entre cours différents).
+function findDuplicateMemberSets(){
+  const byKey = new Map();
+  data.members.forEach(m=>{
+    const key = memberDobKey(memberSurname(m.name), m.birthDate);
+    if(!key) return;
+    if(!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(m);
+  });
+  return [...byKey.values()].filter(list=>list.length>1);
+}
+
+// Fusionne les élèves en double détectés par findDuplicateMemberSets : la fiche active la plus
+// complète est conservée (son cours fait foi), l'historique (passages de grade, stages,
+// convocations, présences) des doublons est reporté dessus, puis les doublons sont supprimés.
+function mergeDuplicateMembers(){
+  const sets = findDuplicateMemberSets();
+  if(sets.length===0){ showToast('Aucun élève en double détecté'); return; }
+  const details = sets.map(list=>list[0].name).join(', ');
+  if(!confirm(`Fusionner ${sets.length} élève${sets.length===1?'':'s'} en double (même nom + date de naissance) : ${details} ?\n\nLa fiche active la plus complète est conservée (son cours actuel fait foi), l'historique est reporté dessus, puis le doublon est supprimé.`)) return;
+
+  let mergedCount = 0;
+  sets.forEach(list=>{
+    const completeness = m => ['email','gender','phone','address','postalCode','city','belt'].filter(f=>m[f]).length + (m.archived?0:100);
+    const sorted = [...list].sort((a,b)=> completeness(b)-completeness(a));
+    const canonical = sorted[0];
+    const dups = sorted.slice(1);
+    dups.forEach(dup=>{
+      (data.beltPassages||[]).forEach(p=>{ if(p.memberId===dup.id) p.memberId = canonical.id; });
+      (data.stages||[]).forEach(s=>{ (s.participants||[]).forEach(part=>{ if(part.memberId===dup.id) part.memberId = canonical.id; }); });
+      (data.convocEvents||[]).forEach(ev=>{ (ev.recipients||[]).forEach(r=>{ if(r.memberId===dup.id) r.memberId = canonical.id; }); });
+      Object.keys(data.attendance||{}).forEach(sessionId=>{
+        const att = data.attendance[sessionId];
+        if(att && att[dup.id]!==undefined){
+          if(att[canonical.id]===undefined) att[canonical.id] = att[dup.id];
+          delete att[dup.id];
+        }
+      });
+      ['email','gender','phone','address','postalCode','city','belt'].forEach(f=>{ if(!canonical[f] && dup[f]) canonical[f] = dup[f]; });
+      markDeleted('members', dup.id);
+      data.members = data.members.filter(x=>x.id!==dup.id);
+      mergedCount++;
+    });
+  });
+
+  saveData(); renderAll();
+  showToast(`${mergedCount} fiche${mergedCount===1?'':'s'} en double fusionnée${mergedCount===1?'':'s'}`);
+}
+
+function renderDuplicateMembersCard(){
+  const wrap = document.getElementById('duplicate-members-card');
+  if(!wrap) return;
+  const sets = findDuplicateMemberSets();
+  if(sets.length===0){ wrap.innerHTML = ''; return; }
+  const totalCount = sets.reduce((sum,list)=>sum+list.length, 0);
+  wrap.innerHTML = `
+    <div class="card" style="border:1px solid #E08A3C; background:rgba(224,138,60,0.08);">
+      <h2 style="margin-top:0;">⚠️ Élèves en double détectés</h2>
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">
+        ${sets.length} élève${sets.length===1?'':'s'} (${totalCount} fiches) partagent le même nom et la même date de naissance dans des cours différents (souvent causé par un changement de cours lors d'un import précédent) :
+        ${sets.map(list=>escapeHtml(list[0].name)).join(', ')}.
+        La fusion garde la fiche active la plus complète et reporte l'historique dessus.
+      </p>
+      <button class="danger" id="mergeDuplicateMembersBtn" style="width:100%;">Fusionner les élèves en double</button>
+    </div>`;
+  document.getElementById('mergeDuplicateMembersBtn').addEventListener('click', mergeDuplicateMembers);
 }
 
 // Fusionne les cours en double détectés : les élèves (et séances déjà créées, s'il y en a) du/des
@@ -7905,6 +8098,67 @@ async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml,
   }
 }
 
+// Rend un document composé de blocs hétérogènes (titres de section, encadrés chiffres, tableaux...)
+// sur une ou plusieurs pages PDF, en garantissant qu'un bloc n'est jamais coupé entre deux pages :
+// chaque bloc (titre+chiffres, ou un tableau) est un élément indivisible, mesuré au préalable puis
+// réparti en pages entières avant capture — contrairement à un découpage brut au pixel qui coupe le
+// contenu n'importe où. headerHtml (logo + nom du club) n'apparaît que sur la première page.
+async function paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass, containerWidthPx, margin }){
+  const probe = document.createElement('div');
+  probe.style.position = 'absolute';
+  probe.style.left = '-9999px';
+  probe.style.top = '0';
+  probe.className = containerClass;
+  if(containerWidthPx) probe.style.width = containerWidthPx+'px';
+  probe.innerHTML = `
+    <div id="probe-header">${headerHtml||''}</div>
+    ${blocks.map((b,i)=>`<div data-bi="${i}">${b}</div>`).join('')}`;
+  document.body.appendChild(probe);
+  await waitForImages(probe);
+
+  const containerTop = probe.getBoundingClientRect().top;
+  const headerEl = probe.querySelector('#probe-header');
+  const headerHeight = headerEl.getBoundingClientRect().height;
+  const blockEls = Array.from(probe.querySelectorAll('[data-bi]'));
+  const blockHeights = blockEls.map(el=>el.getBoundingClientRect().height);
+  document.body.removeChild(probe);
+
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const imgWidthPt = pageWidth - margin*2;
+  const ptPerPx = imgWidthPt / containerWidthPx;
+  // Petite marge de sécurité : la mesure de sonde et le rendu final peuvent différer de
+  // quelques pixels (chargement des polices/images) — on ne colle jamais pile au bord de page.
+  const SAFETY_PX = 14;
+  const usableHeightPx = (pageHeight - margin*2) / ptPerPx - SAFETY_PX;
+
+  const pages = [];
+  let current = [];
+  let curHeight = headerHeight; // le logo/en-tête ne compte que sur la première page
+  for(let i=0;i<blockHeights.length;i++){
+    const h = blockHeights[i];
+    if(current.length>0 && curHeight+h > usableHeightPx){
+      pages.push(current);
+      current = [];
+      curHeight = 0;
+    }
+    current.push(i);
+    curHeight += h;
+  }
+  if(current.length) pages.push(current);
+  if(pages.length===0) pages.push([]);
+
+  for(let p=0;p<pages.length;p++){
+    if(p>0) pdf.addPage();
+    const indices = pages[p];
+    const html = (p===0 ? (headerHtml||'') : '') + indices.map(i=>blocks[i]).join('');
+    const canvas = await captureOffscreenSection(html, containerClass, containerWidthPx);
+    const imgHeightPt = canvas.height * imgWidthPt / canvas.width;
+    const imgData = canvas.toDataURL('image/jpeg', 0.92);
+    pdf.addImage(imgData, 'JPEG', margin, margin, imgWidthPt, imgHeightPt);
+  }
+}
+
 function rankOrderIndex(result){
   const idx = RESULT_PLACEMENT_OPTIONS.indexOf(String(result||''));
   return idx===-1 ? 999 : idx;
@@ -8268,6 +8522,18 @@ async function generateAnnualRecapPdf(){
 }
 
 /* ---------------- RAPPORT ANNUEL (ASSEMBLÉE GÉNÉRALE) ---------------- */
+// Âge précis (jour/mois/année) à une date de référence donnée — utilisé pour la majorité légale,
+// contrairement à memberAge() qui donne un âge "sportif" (différence d'années civiles uniquement,
+// utilisé pour les catégories d'âge FFJDA).
+function ageAtDate(birthDate, refDate){
+  if(!birthDate || !refDate) return null;
+  const b = new Date(birthDate+'T00:00:00');
+  const r = new Date(refDate+'T00:00:00');
+  if(isNaN(b.getTime()) || isNaN(r.getTime())) return null;
+  let age = r.getFullYear() - b.getFullYear();
+  if(r.getMonth() < b.getMonth() || (r.getMonth()===b.getMonth() && r.getDate() < b.getDate())) age--;
+  return age;
+}
 function computeAGReportData(){
   const seasonYear = data.settings.seasonStartYear || autoSeasonStartYear();
 
@@ -8287,6 +8553,19 @@ function computeAGReportData(){
   const byCategory = Object.keys(byCategoryMap)
     .sort((a,b)=> categoryBandSortIndex(a) - categoryBandSortIndex(b))
     .map(label=>({ label, count: byCategoryMap[label] }));
+
+  // Origine géographique × majorité, au 1er septembre de la saison en cours (majorité légale,
+  // calculée jour près — contrairement aux catégories d'âge sportives ci-dessus).
+  const sept1Ref = `${seasonYear}-09-01`;
+  let mennecyMajeurs=0, mennecyMineurs=0, exterieurMajeurs=0, exterieurMineurs=0;
+  activeMembers.forEach(m=>{
+    const age = ageAtDate(m.birthDate, sept1Ref);
+    if(age===null) return; // date de naissance manquante : non comptabilisé, faute de donnée fiable
+    const isMennecy = String(m.city||'').trim().toLowerCase()==='mennecy';
+    const isMajeur = age>=18;
+    if(isMennecy){ if(isMajeur) mennecyMajeurs++; else mennecyMineurs++; }
+    else { if(isMajeur) exterieurMajeurs++; else exterieurMineurs++; }
+  });
 
   // Présence
   let sumPresent = 0, sumSlots = 0, totalSessions = 0;
@@ -8325,47 +8604,71 @@ function computeAGReportData(){
 
   return {
     seasonYear, totalMembers, byGroup, genderF, genderM, genderNR, byCategory,
+    mennecyMajeurs, mennecyMineurs, exterieurMajeurs, exterieurMineurs,
     byGroupAttendance, avgAttendancePct, totalSessions,
     competitionsCount, totalParticipations, gold, silver, bronze,
     stagesCount, stagesParticipations
   };
 }
-function buildAGReportHtml(r, logoSrc){
+// Découpe le rapport annuel en blocs indivisibles (titre de section + chiffres ensemble, chaque
+// tableau à part) pour une pagination PDF qui ne coupe jamais un tableau ou un encadré en deux
+// pages — voir paginateBlocksIntoPdf. headerHtml (logo + nom du club) est séparé : il n'apparaît
+// que sur la première page.
+function buildAGReportBlocks(r, logoSrc){
   const sectionTitle = (label)=> `<div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:17px; border-left:5px solid #6F8248; padding-left:10px; margin:22px 0 10px;">${escapeHtml(label)}</div>`;
-  return `
+
+  const headerHtml = `
     <div class="recap-header">
       ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
       <div>
         <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
         <div class="rh-sub">Rapport annuel — Assemblée générale — Saison ${escapeHtml(schoolYearLabel(r.seasonYear))}</div>
       </div>
-    </div>
+    </div>`;
 
+  const blocks = [];
+
+  blocks.push(`
     ${sectionTitle('Effectifs')}
     <div class="recap-summary">
       <div class="box"><div class="n">${r.totalMembers}</div><div class="l">Licenciés</div></div>
       <div class="box"><div class="n">${data.groups.length}</div><div class="l">Cours</div></div>
       <div class="box"><div class="n">${r.genderF}F / ${r.genderM}G</div><div class="l">Répartition</div></div>
-    </div>
+    </div>`);
+
+  blocks.push(`
     <table class="recap-table">
       <tr><th>Cours</th><th>Licenciés</th></tr>
       ${r.byGroup.map(g=>`<tr><td>${escapeHtml(g.name)}</td><td>${g.count}</td></tr>`).join('')}
-    </table>
+    </table>`);
+
+  blocks.push(`
     <table class="recap-table" style="margin-top:14px;">
       <tr><th>Catégorie</th><th>Licenciés</th></tr>
       ${r.byCategory.map(c=>`<tr><td>${escapeHtml(bandYearRangeLabel(c.label))}</td><td>${c.count}</td></tr>`).join('')}
-    </table>
+    </table>`);
 
+  blocks.push(`
+    <table class="recap-table" style="margin-top:14px;">
+      <tr><th>Origine</th><th>Majeurs</th><th>Mineurs</th></tr>
+      <tr><td>Menneçois</td><td>${r.mennecyMajeurs}</td><td>${r.mennecyMineurs}</td></tr>
+      <tr><td>Extérieurs</td><td>${r.exterieurMajeurs}</td><td>${r.exterieurMineurs}</td></tr>
+    </table>`);
+
+  blocks.push(`
     ${sectionTitle('Présence aux entraînements')}
     <div class="recap-summary">
       <div class="box"><div class="n">${r.totalSessions}</div><div class="l">Séances</div></div>
       <div class="box"><div class="n">${r.avgAttendancePct}%</div><div class="l">Présence moyenne</div></div>
-    </div>
+    </div>`);
+
+  blocks.push(`
     <table class="recap-table">
       <tr><th>Cours</th><th>Séances</th><th>Taux moyen</th></tr>
       ${r.byGroupAttendance.map(g=>`<tr><td>${escapeHtml(g.name)}</td><td>${g.sessions}</td><td>${g.sessions?g.pct+'%':'—'}</td></tr>`).join('')}
-    </table>
+    </table>`);
 
+  blocks.push(`
     ${sectionTitle('Résultats sportifs')}
     <div class="recap-summary">
       <div class="box"><div class="n">${r.competitionsCount}</div><div class="l">Compétitions</div></div>
@@ -8376,14 +8679,16 @@ function buildAGReportHtml(r, logoSrc){
       <div class="chip" style="${medalStyle('1')}">🥇 ${r.gold}</div>
       <div class="chip" style="${medalStyle('2')}">🥈 ${r.silver}</div>
       <div class="chip" style="${medalStyle('3')}">🥉 ${r.bronze}</div>
-    </div>
+    </div>`);
 
+  blocks.push(`
     ${sectionTitle('Stages')}
     <div class="recap-summary">
       <div class="box"><div class="n">${r.stagesCount}</div><div class="l">Stages organisés</div></div>
       <div class="box"><div class="n">${r.stagesParticipations}</div><div class="l">Participations</div></div>
-    </div>
-  `;
+    </div>`);
+
+  return { headerHtml, blocks };
 }
 async function generateAGReportPdf(){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
@@ -8402,12 +8707,11 @@ async function generateAGReportPdf(){
     const r = computeAGReportData();
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
-    const html = buildAGReportHtml(r, logoSrc);
+    const { headerHtml, blocks } = buildAGReportBlocks(r, logoSrc);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
     const margin = 24;
-    const canvas = await captureOffscreenSection(html, 'recap-doc', 700);
-    addCanvasSliced(pdf, canvas, margin);
+    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass:'recap-doc', containerWidthPx:700, margin });
     pdf.save(`rapport-annuel-ag-${schoolYearLabel(r.seasonYear).replace(/[^\w-]+/g,'-')}.pdf`);
     showToast('Rapport annuel généré');
   } catch(err){
