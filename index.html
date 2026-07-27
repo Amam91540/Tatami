@@ -1588,8 +1588,17 @@ function syncSeasonStartYearFromDate(){
   }
 }
 function getViewingArchive(){
-  if(!ui.viewingSeasonId) return null;
+  if(!ui.viewingSeasonId || ui.viewingSeasonId==='next') return null;
   return (data.archivedSeasons||[]).find(a=>a.id===ui.viewingSeasonId) || null;
+}
+// Vue "saison à venir" : PAS une archive figée (contrairement aux saisons passées) — une vue live,
+// filtrée sur les mêmes data.groups/data.members, qui ne montre que les fiches déjà préparées pour
+// la prochaine saison (member.forNextSeason) : "Licence à prendre" contient les fiches en attente,
+// les autres cours ne montrent que celles déjà validées (donc vides au départ). Reste éditable —
+// contrairement à une archive — puisque la synchro en direct avec la fiche de la saison en cours
+// (voir syncLinkedMember) doit continuer de fonctionner pendant qu'on la consulte.
+function isViewingNextSeason(){
+  return ui.viewingSeasonId === 'next';
 }
 function archiveBannerHtml(archive){
   return `<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#FFF6DA; border:1px solid #E8C547; border-radius:8px; padding:9px 12px; font-size:13px; color:#6B5300;">
@@ -1605,12 +1614,14 @@ function renderHeaderSeasonSwitch(){
   const el = document.getElementById('headerSeasonSwitch');
   if(!el) return;
   const seasonYear = data.settings.seasonStartYear || autoSeasonStartYear();
+  const nextYear = nextSeasonStartYear();
   const archives = [...(data.archivedSeasons||[])].sort((a,b)=>{
     const ay = (a.settings&&a.settings.seasonStartYear) || 0, by = (b.settings&&b.settings.seasonStartYear) || 0;
     return by - ay;
   });
   const prevValue = ui.viewingSeasonId || '';
   el.innerHTML = `<option value="">Saison ${schoolYearLabel(seasonYear)} (en cours)</option>`
+    + `<option value="next">Saison ${schoolYearLabel(nextYear)} (à venir)</option>`
     + archives.map(a=>`<option value="${a.id}">Saison ${escapeHtml(a.name)}</option>`).join('');
   if([...el.options].some(o=>o.value===prevValue)){ el.value = prevValue; } else { el.value=''; ui.viewingSeasonId = null; }
   el.onchange = ()=>{ ui.viewingSeasonId = el.value || null; renderAll(); };
@@ -1659,21 +1670,34 @@ function renderArchiveViewGroupes(archive){
     mountArchiveGroupHandlers(archive, archive.id);
   }
 }
+function nextSeasonBannerHtml(){
+  return `<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#E9F3FF; border:1px solid #8FB8E8; border-radius:8px; padding:9px 12px; margin-bottom:12px; font-size:13px; color:#1F4E85;">
+    <div>🗓️ Tu prépares la saison <strong>${escapeHtml(schoolYearLabel(nextSeasonStartYear()))}</strong> — ces fiches n'existent pas encore pour la saison en cours, qui reste inchangée. Les autres onglets (Présences, Convocations, Param.) restent sur la saison en cours.</div>
+    <button class="ghost icon-btn" data-action="back-to-current-season" style="flex-shrink:0; background:#fff;">← Saison actuelle</button>
+  </div>`;
+}
 function renderGroupsTab(){
   const archive = getViewingArchive();
+  const nextSeasonView = isViewingNextSeason();
   const liveEl = document.getElementById('groupes-live');
   const archiveEl = document.getElementById('groupes-archive-view');
   if(liveEl) liveEl.style.display = archive ? 'none' : '';
   if(archiveEl) archiveEl.style.display = archive ? '' : 'none';
   if(archive){ renderArchiveViewGroupes(archive); return; }
+  // Les cartes annexes (fiches incomplètes, passages de grade...) ne concernent que la saison en
+  // cours — masquées le temps de consulter/préparer la saison à venir, comme en mode archive.
+  ['incomplete-fiches-section','belt-passage-section','belt-diplomas-section','belt-validated-section'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.style.display = nextSeasonView ? 'none' : '';
+  });
   stripBeltForNoBeltCourses();
   const wrap = document.getElementById('groups-list');
   if(data.groups.length===0){
     wrap.innerHTML = `<div class="empty">Aucun cours pour l'instant. Ajoutez votre premier cours ci-dessus — par exemple « Judo débutants » ou « Karaté ados ».</div>`;
     return;
   }
-  wrap.innerHTML = data.groups.map(g=>{
-    const members = data.members.filter(m=>m.groupId===g.id && !m.archived).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+  wrap.innerHTML = (nextSeasonView ? nextSeasonBannerHtml() : '') + data.groups.map(g=>{
+    const members = data.members.filter(m=>m.groupId===g.id && !m.archived && !!m.forNextSeason===nextSeasonView).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
     const draftId = 'draft-'+g.id;
     const expanded = !!ui.groupsExpanded[g.id];
     const committee = isCommitteeGroup(g);
@@ -1964,6 +1988,12 @@ async function generateIncompleteFichesPdf(){
 }
 
 document.getElementById('groups-list').addEventListener('click', e=>{
+  const backToCurrentBtn = e.target.closest('[data-action="back-to-current-season"]');
+  if(backToCurrentBtn){
+    ui.viewingSeasonId = null;
+    renderAll();
+    return;
+  }
   const committeeSuggestItem = e.target.closest('.committee-suggest-item');
   if(committeeSuggestItem){
     const source = data.members.find(x=>x.id===committeeSuggestItem.dataset.member);
@@ -10324,7 +10354,8 @@ function createPendingLicenseRecord(sourceMember, licenseGroupId){
     archived:false, phone: sourceMember.phone||'', address: sourceMember.address||'',
     postalCode: sourceMember.postalCode||'', city: sourceMember.city||'',
     medicalCertDate: sourceMember.medicalCertDate||null, licenseNumber: sourceMember.licenseNumber||'',
-    note: sourceMember.note||'', pendingGroupId: sourceMember.groupId, linkedMemberId: sourceMember.id
+    note: sourceMember.note||'', pendingGroupId: sourceMember.groupId, linkedMemberId: sourceMember.id,
+    forNextSeason: true
   };
   data.members.push(pending);
   sourceMember.linkedMemberId = pending.id;
@@ -10333,13 +10364,15 @@ function createPendingLicenseRecord(sourceMember, licenseGroupId){
 function prepareNextSeasonLicenses(){
   const licenseGroup = data.groups.find(g=>isLicensePendingGroup(g));
   if(!licenseGroup){ showToast('Groupe « Licence à prendre » introuvable'); return; }
-  const eligible = data.members.filter(m=> !m.archived && m.groupId!==licenseGroup.id && !m.linkedMemberId
+  const eligible = data.members.filter(m=> !m.archived && !m.forNextSeason && m.groupId!==licenseGroup.id && !m.linkedMemberId
     && !isCommitteeGroup(data.groups.find(g=>g.id===m.groupId)));
   if(eligible.length===0){ showToast('Aucun élève à dupliquer'); return; }
   const nextYear = nextSeasonStartYear();
   if(!confirm(`Créer ${eligible.length} fiche(s) liée(s) dans « Licence à prendre » pour préparer la saison ${schoolYearLabel(nextYear)} ?\n\nLes fiches d'origine restent inchangées et actives dans leur cours actuel (appel, présences...) — les fiches liées serviront de brouillon pour la nouvelle saison, et resteront synchronisées avec l'original (nom, ceinture, coordonnées...) jusqu'à validation. Le Comité directeur n'est pas concerné.`)) return;
   eligible.forEach(m=> createPendingLicenseRecord(m, licenseGroup.id));
-  saveData(); renderAll();
+  saveData();
+  ui.viewingSeasonId = 'next';
+  switchTab('groupes');
   showToast(`${eligible.length} fiche(s) liée(s) créée(s) dans « Licence à prendre »`);
 }
 function renderLicensePendingCard(){
@@ -10347,12 +10380,12 @@ function renderLicensePendingCard(){
   if(!wrap) return;
   const nextYear = nextSeasonStartYear();
   const licenseGroup = data.groups.find(g=>isLicensePendingGroup(g));
-  const eligibleCount = data.members.filter(m=> !m.archived && (!licenseGroup || m.groupId!==licenseGroup.id) && !m.linkedMemberId
+  const eligibleCount = data.members.filter(m=> !m.archived && !m.forNextSeason && (!licenseGroup || m.groupId!==licenseGroup.id) && !m.linkedMemberId
     && !isCommitteeGroup(data.groups.find(g=>g.id===m.groupId))).length;
   const pendingCount = licenseGroup ? data.members.filter(m=>!m.archived && m.groupId===licenseGroup.id).length : 0;
   wrap.innerHTML = `
     <h2>Préparer la saison ${schoolYearLabel(nextYear)}</h2>
-    <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">Crée, pour chaque élève actif (sauf le Comité directeur), une fiche liée dans le cours « Licence à prendre » — sans toucher à sa fiche actuelle, qui reste active dans son cours pour la saison en cours. Tant que la fiche liée n'est pas validée, les deux fiches restent synchronisées en direct (nom, ceinture, téléphone, adresse, toutes les infos) : modifie l'une ou l'autre, l'autre se met à jour automatiquement. « Licence à prendre » est un cours normal, visible dans l'onglet Cours quelle que soit la saison affichée en haut — pas besoin de changer de saison pour y accéder. La recherche en haut à droite retrouve les fiches même là.</p>
+    <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">Crée, pour chaque élève actif (sauf le Comité directeur), une fiche liée dans le cours « Licence à prendre » — sans toucher à sa fiche actuelle, qui reste active dans son cours pour la saison en cours. Bascule automatiquement l'affichage sur la saison ${schoolYearLabel(nextYear)} (sélecteur en haut à gauche) : dans cette vue, « Licence à prendre » contient les fiches en attente et tous les autres cours démarrent vides, en attendant que tu valides chaque fiche. Les onglets Présences, Convocations et Param. restent toujours sur la saison en cours. Tant qu'une fiche liée n'est pas validée, elle reste synchronisée en direct avec sa fiche d'origine (nom, ceinture, téléphone, adresse, toutes les infos) dans les deux sens. La recherche en haut à droite retrouve les fiches quelle que soit la saison affichée.</p>
     ${pendingCount>0 ? `<p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 10px;">${pendingCount} fiche${pendingCount===1?'':'s'} actuellement en attente dans « Licence à prendre ».</p>` : ''}
     <button class="danger" id="prepareSeasonLicensesBtn" style="width:100%;" ${eligibleCount===0?'disabled':''}>${eligibleCount===0 ? 'Tous les élèves ont déjà une fiche en attente' : `Créer ${eligibleCount} fiche${eligibleCount===1?'':'s'} liée${eligibleCount===1?'':'s'} dans « Licence à prendre »`}</button>
   `;
@@ -10527,7 +10560,7 @@ function initGlobalSearch(){
         return `
         <div class="convoc-row" data-action="goto-member" data-id="${m.id}" data-group="${m.groupId||''}" style="cursor:pointer;">
           <div class="info">
-            <div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(cat)}</span>` : ''}</div>
+            <div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(cat)}</span>` : ''}${m.forNextSeason ? `<span class="tag" style="background:#E9F3FF; color:#1F4E85;">saison ${escapeHtml(schoolYearLabel(nextSeasonStartYear()))}</span>` : ''}</div>
             <div class="e">${g ? escapeHtml(g.name) : 'Sans cours'}${m.email ? ' · '+escapeHtml(m.email) : ''}</div>
           </div>
         </div>`;
@@ -10578,6 +10611,11 @@ function goToMemberFiche(memberId, groupId){
   ui.memberFicheExpanded[memberId] = true;
   document.getElementById('globalSearchResults').classList.remove('show');
   document.getElementById('globalSearchInput').value = '';
+  // Une fiche "saison à venir" (voir prepareNextSeasonLicenses) n'est visible que dans la vue
+  // Cours filtrée sur cette saison — on bascule le sélecteur en haut à gauche en conséquence pour
+  // que la fiche trouvée soit effectivement affichée, quelle que soit la saison consultée avant.
+  const targetMember = data.members.find(x=>x.id===memberId);
+  ui.viewingSeasonId = (targetMember && targetMember.forNextSeason) ? 'next' : null;
   // La recherche est accessible depuis n'importe quel onglet — on bascule vers Cours pour
   // afficher la fiche trouvée, même si on cherchait depuis Présences, Convoc., etc.
   switchTab('groupes');
