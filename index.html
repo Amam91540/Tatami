@@ -765,6 +765,7 @@
     <div id="duplicate-groups-card"></div>
     <div id="duplicate-members-card"></div>
     <div class="card" id="age-settings"></div>
+    <div id="membership-fees-settings"></div>
     <div class="card" id="imported-competitions-settings"></div>
     <div class="card" id="backend-settings"></div>
     <div class="card" id="archive-card"></div>
@@ -987,6 +988,12 @@ function defaultAgeBands(){
     { label:'Seniors', minAge:20, maxAge:99 }
   ];
 }
+// Grille tarifaire 2026-2027 fournie par le club (TARIFS.xlsx) : deux barèmes (Menneçois /
+// Extérieurs), par discipline, tranche d'âge et rang dans la famille, plus licence et adhésion
+// seules. Ne sert que de valeur initiale (voir ensureSettings) — modifiable ensuite depuis Réglages.
+function defaultMembershipFees(){
+  return {"disciplines": ["JUDO", "KARATE", "AIKIBUDO", "AIKIBUDO SOFT", "KOBUDO", "TAISO", "AIKI ENFANTS"], "applicableTiers": {"JUDO": ["BABY", "- 15 ANS", "+ 15 ANS"], "KARATE": ["BABY", "- 15 ANS", "+ 15 ANS"], "AIKIBUDO": ["+ 15 ANS"], "AIKIBUDO SOFT": ["+ 15 ANS"], "KOBUDO": ["+ 15 ANS"], "TAISO": ["+ 15 ANS"], "AIKI ENFANTS": ["- 15 ANS"]}, "familyRanks": [["p1", "1ère personne"], ["p2", "2ème personne de la même famille"], ["p3", "3ème personne de la même famille"], ["p4", "À partir de la 4ème personne de la même famille"]], "ageTiers": ["BABY", "- 15 ANS", "+ 15 ANS"], "locations": {"mennecois": {"grid": {"p1": {"BABY": {"JUDO": 145, "KARATE": 142}, "- 15 ANS": {"JUDO": 200, "KARATE": 197, "AIKI ENFANTS": 189}, "+ 15 ANS": {"JUDO": 225, "KARATE": 222, "AIKIBUDO": 227, "AIKIBUDO SOFT": 165, "KOBUDO": 203, "TAISO": 200}}, "p2": {"BABY": {"JUDO": 127, "KARATE": 124}, "- 15 ANS": {"JUDO": 174, "KARATE": 171, "AIKI ENFANTS": 164}, "+ 15 ANS": {"JUDO": 196, "KARATE": 193, "AIKIBUDO": 198, "AIKIBUDO SOFT": 143, "KOBUDO": 176, "TAISO": 174}}, "p3": {"BABY": {"JUDO": 96, "KARATE": 93}, "- 15 ANS": {"JUDO": 132, "KARATE": 129, "AIKI ENFANTS": 125}, "+ 15 ANS": {"JUDO": 149, "KARATE": 146, "AIKIBUDO": 151, "AIKIBUDO SOFT": 108, "KOBUDO": 133, "TAISO": 132}}, "p4": {"BABY": {"JUDO": 56, "KARATE": 49}, "- 15 ANS": {"JUDO": 56, "KARATE": 49, "AIKI ENFANTS": 40}, "+ 15 ANS": {"JUDO": 56, "KARATE": 49, "AIKIBUDO": 55, "AIKIBUDO SOFT": 48, "KOBUDO": 33, "TAISO": 56}}}, "licenseOnly": {"JUDO": 46, "KARATE": 39, "AIKIBUDO": 45, "AIKIBUDO SOFT": 38, "KOBUDO": 23, "TAISO": 46, "AIKI ENFANTS": 30}, "adhesionOnly": {"JUDO": 10, "KARATE": 10, "AIKIBUDO": 10, "AIKIBUDO SOFT": 10, "KOBUDO": 10, "TAISO": 10, "AIKI ENFANTS": 10}}, "exterieurs": {"grid": {"p1": {"BABY": {"JUDO": 160, "KARATE": 157}, "- 15 ANS": {"JUDO": 225, "KARATE": 222, "AIKI ENFANTS": 214}, "+ 15 ANS": {"JUDO": 255, "KARATE": 252, "AIKIBUDO": 257, "AIKIBUDO SOFT": 185, "KOBUDO": 238, "TAISO": 225}}, "p2": {"BABY": {"JUDO": 139, "KARATE": 136}, "- 15 ANS": {"JUDO": 196, "KARATE": 193, "AIKI ENFANTS": 186}, "+ 15 ANS": {"JUDO": 222, "KARATE": 219, "AIKIBUDO": 224, "AIKIBUDO SOFT": 160, "KOBUDO": 207, "TAISO": 196}}, "p3": {"BABY": {"JUDO": 106, "KARATE": 103}, "- 15 ANS": {"JUDO": 149, "KARATE": 146, "AIKI ENFANTS": 141}, "+ 15 ANS": {"JUDO": 168, "KARATE": 165, "AIKIBUDO": 175, "AIKIBUDO SOFT": 121, "KOBUDO": 156, "TAISO": 150}}, "p4": {"BABY": {"JUDO": 56, "KARATE": 49}, "- 15 ANS": {"JUDO": 56, "KARATE": 49, "AIKI ENFANTS": 40}, "+ 15 ANS": {"JUDO": 56, "KARATE": 49, "AIKIBUDO": 55, "AIKIBUDO SOFT": 48, "KOBUDO": 33, "TAISO": 56}}}, "licenseOnly": {"JUDO": 46, "KARATE": 39, "AIKIBUDO": 45, "AIKIBUDO SOFT": 38, "KOBUDO": 23, "TAISO": 46, "AIKI ENFANTS": 30}, "adhesionOnly": {"JUDO": 10, "KARATE": 10, "AIKIBUDO": 10, "AIKIBUDO SOFT": 10, "KOBUDO": 10, "TAISO": 10, "AIKI ENFANTS": 10}}}, "footnote": "* Licence Aikibudo et Aikibudo Soft : 45€ pour les adultes et 30€ pour les enfants de moins de 18 ans nés après le 01-09-2008 et pour les étudiants sur justificatif de la carte étudiante."};
+}
 function autoSeasonStartYear(){
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth()+1; // 1-12
@@ -996,6 +1003,7 @@ function autoSeasonStartYear(){
 function ensureSettings(){
   data.settings ||= {};
   if(!data.settings.ageBands || !data.settings.ageBands.length) data.settings.ageBands = defaultAgeBands();
+  if(!data.settings.membershipFees) data.settings.membershipFees = defaultMembershipFees();
   if(!data.settings.seasonStartYear) data.settings.seasonStartYear = autoSeasonStartYear();
   if(data.settings.seasonAutoFollow===undefined) data.settings.seasonAutoFollow = true;
   if(!data.settings.theme) data.settings.theme = 'light';
@@ -1320,6 +1328,23 @@ function captureSyncedSnapshot(){
   // rechargement de page : voir mergeLocalPendingArray plus bas pour pourquoi c'est nécessaire.
   try{ localStorage.setItem('dojo-synced-snapshot', JSON.stringify(syncedSnapshot)); }catch(e){}
 }
+function mergeSnapshotArrayById(prevArr, sentArr){
+  const map = new Map((prevArr||[]).map(x=>[x.id, x]));
+  (sentArr||[]).forEach(item=>{ if(item && item.id!==undefined) map.set(item.id, item); });
+  return Array.from(map.values());
+}
+// Fait avancer la référence de synchro UNIQUEMENT jusqu'à ce qui vient d'être réellement transmis
+// avec succès (fusionné par-dessus l'ancienne référence), au lieu de la recalculer depuis l'état
+// courant de `data` — voir le commentaire dans saveData() pour la raison précise (course entre deux
+// sauvegardes enchaînées rapidement, ex: valider un passage de grade puis imprimer aussitôt).
+function advanceSyncedSnapshot(sent){
+  const base = syncedSnapshot || {};
+  const next = {};
+  SYNCED_SNAPSHOT_COLLECTIONS.forEach(k=>{ next[k] = mergeSnapshotArrayById(base[k], sent[k]); });
+  next.attendance = { ...(base.attendance||{}), ...(sent.attendance||{}) };
+  syncedSnapshot = next;
+  try{ localStorage.setItem('dojo-synced-snapshot', JSON.stringify(syncedSnapshot)); }catch(e){}
+}
 // Ne garde que les éléments d'un tableau (identifiés par leur id) absents du dernier instantané
 // connu ou dont le contenu a changé depuis. Si on n'a encore aucun instantané (tout premier envoi,
 // avant tout chargement), on envoie tout — comportement identique à avant dans ce cas précis.
@@ -1393,8 +1418,7 @@ async function saveData(){
   saveInFlight = true;
   try{
     const snap = syncedSnapshot || {};
-    const payload = {
-      ...data,
+    const changed = {
       groups: pickChangedById(data.groups, snap.groups),
       members: pickChangedById(data.members, snap.members),
       sessions: pickChangedById(data.sessions, snap.sessions),
@@ -1405,19 +1429,31 @@ async function saveData(){
       archivedSeasons: pickChangedById(data.archivedSeasons, snap.archivedSeasons),
       attendance: pickChangedAttendance(data.attendance, snap.attendance)
     };
+    // Copies figées de ce qui est RÉELLEMENT envoyé, prises maintenant (avant l'attente réseau).
+    // Si l'utilisateur modifie encore des données PENDANT cet envoi (ex : valider un passage de
+    // grade puis imprimer aussitôt les diplômes, avant que cette sauvegarde-ci ait fini), ce
+    // nouveau changement ne doit surtout pas être considéré comme déjà synchronisé une fois la
+    // réponse arrivée — sans quoi il ne serait jamais renvoyé et disparaîtrait au chargement
+    // suivant (c'est exactement le bug des passages de grade qui repartaient en arrière).
+    const sentChanged = JSON.parse(JSON.stringify(changed));
+    const sentDeletedIds = JSON.parse(JSON.stringify(data.deletedIds || {}));
+    const payload = { ...data, ...changed };
     await fetch(`${cfg.url}?key=${encodeURIComponent(cfg.key)}`, {
       method:'POST',
       headers:{ 'Content-Type':'text/plain;charset=utf-8' },
       body: JSON.stringify(payload)
     });
-    // Les suppressions en attente viennent d'être envoyées et appliquées côté classeur : on vide
-    // la liste pour ne pas la renvoyer indéfiniment. Si l'envoi échoue (catch ci-dessous), on la
-    // garde pour réessayer à la prochaine sauvegarde.
-    data.deletedIds = { groups:[], members:[], sessions:[], beltPassages:[], calendarEvents:[], convocEvents:[], archivedSeasons:[], stages:[] };
+    // Les suppressions qu'on vient d'envoyer ont été appliquées côté classeur : on ne retire QUE
+    // celles-là de la liste en attente (pas toute la liste, qui peut déjà contenir une suppression
+    // plus récente demandée pendant cet envoi et jamais encore transmise).
+    Object.keys(data.deletedIds||{}).forEach(coll=>{
+      const sentIds = new Set(sentDeletedIds[coll]||[]);
+      data.deletedIds[coll] = (data.deletedIds[coll]||[]).filter(id=>!sentIds.has(id));
+    });
     try{ localStorage.setItem('dojo-data', JSON.stringify(data)); }catch(e){}
-    // Notre état local vient d'être envoyé avec succès : il devient la nouvelle référence connue
-    // pour savoir, à la prochaine sauvegarde, ce qui a (ou n'a pas) changé depuis.
-    captureSyncedSnapshot();
+    // La référence de synchro n'avance que jusqu'à ce qu'on vient réellement de transmettre avec
+    // succès — jamais recalculée depuis l'état courant de `data`, qui peut déjà être en avance.
+    advanceSyncedSnapshot(sentChanged);
   }catch(e){
     showToast('Sauvegarde en ligne impossible — gardée en local seulement');
   } finally {
@@ -1519,6 +1555,7 @@ function renderAll(){
   renderBeltDiplomasSection();
   renderBeltValidatedSection();
   renderAgeSettings();
+  renderMembershipFeesSettings();
   renderImportedCompetitionsSettings();
   renderBackendSettings();
   renderArchiveCard();
@@ -2515,6 +2552,133 @@ function renderAgeSettings(){
   document.getElementById('addBandBtn').addEventListener('click', ()=>{
     bands.push({ label:'Nouvelle catégorie', minAge:0, maxAge:0 });
     saveData(); renderAll();
+  });
+}
+
+/* ---------------- TARIFS D'ADHÉSION ---------------- */
+function loadFeesHidden(){
+  try{ const v = localStorage.getItem('dojo-fees-hidden'); return v===null ? false : v==='1'; }catch(e){ return false; }
+}
+function saveFeesHidden(val){
+  try{ localStorage.setItem('dojo-fees-hidden', val?'1':'0'); }catch(e){}
+}
+function loadFeesLocked(){
+  try{ const v = localStorage.getItem('dojo-fees-locked'); return v===null ? true : v==='1'; }catch(e){ return true; }
+}
+function saveFeesLocked(val){
+  try{ localStorage.setItem('dojo-fees-locked', val?'1':'0'); }catch(e){}
+}
+function renderMembershipFeesSettings(){
+  const wrap = document.getElementById('membership-fees-settings');
+  if(!wrap) return;
+  const fees = data.settings.membershipFees;
+  if(!fees){ wrap.innerHTML = ''; return; }
+  const hidden = loadFeesHidden();
+  const locked = loadFeesLocked();
+  if(!ui.feesLocationFilter || !fees.locations[ui.feesLocationFilter]) ui.feesLocationFilter = 'mennecois';
+  const loc = fees.locations[ui.feesLocationFilter];
+  const colCount = fees.disciplines.length + 1;
+
+  const gridRowsHtml = fees.familyRanks.map(([rankKey, rankLabel])=>{
+    const header = `<tr><td colspan="${colCount}" style="background:#EDEEE7; font-weight:800; font-size:11px; text-transform:uppercase; letter-spacing:.03em; padding:6px 10px;">${escapeHtml(rankLabel)}</td></tr>`;
+    const tierRows = fees.ageTiers.map(tier=>{
+      const anyApplicable = fees.disciplines.some(d=> (fees.applicableTiers[d]||[]).includes(tier));
+      if(!anyApplicable) return '';
+      const cells = fees.disciplines.map(d=>{
+        const applicable = (fees.applicableTiers[d]||[]).includes(tier);
+        if(!applicable) return `<td style="color:var(--ink-dim);">—</td>`;
+        const val = (loc.grid[rankKey][tier]||{})[d];
+        if(locked) return `<td>${val!==undefined && val!=='' ? val+' €' : '—'}</td>`;
+        return `<td><input type="number" data-action="edit-fee" data-rank="${rankKey}" data-tier="${escapeHtml(tier)}" data-disc="${escapeHtml(d)}" value="${val!==undefined?val:''}" style="width:60px; padding:5px 6px;"></td>`;
+      }).join('');
+      return `<tr><td>${escapeHtml(tier)}</td>${cells}</tr>`;
+    }).join('');
+    return header + tierRows;
+  }).join('');
+
+  const licAdhRow = (label, key, action)=>{
+    const cells = fees.disciplines.map(d=>{
+      const val = loc[key][d];
+      if(locked) return `<td>${val!==undefined && val!=='' ? val+' €' : '—'}</td>`;
+      return `<td><input type="number" data-action="${action}" data-disc="${escapeHtml(d)}" value="${val!==undefined?val:''}" style="width:60px; padding:5px 6px;"></td>`;
+    }).join('');
+    return `<tr><td>${escapeHtml(label)}</td>${cells}</tr>`;
+  };
+
+  wrap.innerHTML = `
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+        <h2 style="margin:0;">💶 Tarifs d'adhésion</h2>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <button class="ghost icon-btn" id="toggleFeesHidden" title="${hidden?'Afficher':'Masquer'}" style="padding:8px 9px; font-size:13px;">${hidden?'👁️ Afficher':'🙈 Masquer'}</button>
+          ${!hidden ? (locked
+            ? `<button class="ghost icon-btn" id="unlockFeesBtn" title="Modifier les tarifs" style="padding:8px 9px;">✏️</button>`
+            : `<button class="ghost icon-btn" id="lockFeesBtn" title="Terminer la modification" style="padding:8px 9px; font-size:12.5px;">✓ Terminé</button>`) : ''}
+        </div>
+      </div>
+      ${!hidden ? `
+      <div class="row" style="margin-top:10px;">
+        <div style="flex:1;">
+          <label class="small">Tarifs</label>
+          <select id="feesLocationSelect">
+            <option value="mennecois" ${ui.feesLocationFilter==='mennecois'?'selected':''}>Menneçois</option>
+            <option value="exterieurs" ${ui.feesLocationFilter==='exterieurs'?'selected':''}>Extérieurs</option>
+          </select>
+        </div>
+      </div>
+      <p style="font-size:11.5px; color:var(--ink-dim); margin:10px 0 0; line-height:1.5;">Licence fédérale et adhésion AMAM comprises. Le tarif diminue à partir de la 2ème personne d'une même famille inscrite.</p>
+      <div style="overflow-x:auto; margin-top:10px;">
+        <table class="recap-table" style="min-width:620px;">
+          <tr><th></th>${fees.disciplines.map(d=>`<th>${escapeHtml(d)}</th>`).join('')}</tr>
+          ${gridRowsHtml}
+        </table>
+      </div>
+      <div style="overflow-x:auto; margin-top:14px;">
+        <table class="recap-table" style="min-width:620px;">
+          <tr><th>Licence / adhésion seules</th>${fees.disciplines.map(d=>`<th>${escapeHtml(d)}</th>`).join('')}</tr>
+          ${licAdhRow('* Licence', 'licenseOnly', 'edit-fee-lic')}
+          ${licAdhRow('Adhésion AMAM', 'adhesionOnly', 'edit-fee-adh')}
+        </table>
+      </div>
+      <p style="font-size:11px; color:var(--ink-dim); margin-top:10px; line-height:1.5;">${escapeHtml(fees.footnote)}</p>
+      ` : ''}
+    </div>
+  `;
+
+  const toggleBtn = document.getElementById('toggleFeesHidden');
+  if(toggleBtn) toggleBtn.addEventListener('click', ()=>{ saveFeesHidden(!hidden); renderMembershipFeesSettings(); });
+  const unlockBtn = document.getElementById('unlockFeesBtn');
+  if(unlockBtn) unlockBtn.addEventListener('click', ()=>{ saveFeesLocked(false); renderMembershipFeesSettings(); });
+  const lockBtn = document.getElementById('lockFeesBtn');
+  if(lockBtn) lockBtn.addEventListener('click', ()=>{ saveFeesLocked(true); renderMembershipFeesSettings(); });
+  const locSelect = document.getElementById('feesLocationSelect');
+  if(locSelect) locSelect.addEventListener('change', ()=>{ ui.feesLocationFilter = locSelect.value; renderMembershipFeesSettings(); });
+
+  wrap.querySelectorAll('[data-action="edit-fee"]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const v = inp.value==='' ? undefined : parseFloat(inp.value);
+      const rank = inp.dataset.rank, tier = inp.dataset.tier, disc = inp.dataset.disc;
+      const tiers = loc.grid[rank];
+      if(!tiers[tier]) tiers[tier] = {};
+      if(v===undefined || isNaN(v)) delete tiers[tier][disc]; else tiers[tier][disc] = v;
+      saveData(); renderMembershipFeesSettings();
+    });
+  });
+  wrap.querySelectorAll('[data-action="edit-fee-lic"]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const v = inp.value==='' ? undefined : parseFloat(inp.value);
+      const disc = inp.dataset.disc;
+      if(v===undefined || isNaN(v)) delete loc.licenseOnly[disc]; else loc.licenseOnly[disc] = v;
+      saveData(); renderMembershipFeesSettings();
+    });
+  });
+  wrap.querySelectorAll('[data-action="edit-fee-adh"]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const v = inp.value==='' ? undefined : parseFloat(inp.value);
+      const disc = inp.dataset.disc;
+      if(v===undefined || isNaN(v)) delete loc.adhesionOnly[disc]; else loc.adhesionOnly[disc] = v;
+      saveData(); renderMembershipFeesSettings();
+    });
   });
 }
 
