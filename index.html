@@ -766,6 +766,7 @@
     <div id="duplicate-members-card"></div>
     <div class="card" id="age-settings"></div>
     <div id="membership-fees-settings"></div>
+    <div id="attestation-settings"></div>
     <div class="card" id="imported-competitions-settings"></div>
     <div class="card" id="backend-settings"></div>
     <div class="card" id="archive-card"></div>
@@ -1556,6 +1557,7 @@ function renderAll(){
   renderBeltValidatedSection();
   renderAgeSettings();
   renderMembershipFeesSettings();
+  renderAttestationSettings();
   renderImportedCompetitionsSettings();
   renderBackendSettings();
   renderArchiveCard();
@@ -2680,6 +2682,218 @@ function renderMembershipFeesSettings(){
       saveData(); renderMembershipFeesSettings();
     });
   });
+}
+
+/* ---------------- ATTESTATION DE PAIEMENT ---------------- */
+// Déduit la discipline (au sens de la grille tarifaire) à partir du nom du cours. Les 6 cours
+// actuels de l'AMAM sont tous du Judo (Baby Judo, Judo 1 à 4) ou du Taïso, mais on couvre aussi les
+// autres disciplines de la grille au cas où d'autres cours seraient créés plus tard.
+function courseDisciplineKey(groupName){
+  const n = String(groupName||'').toLowerCase();
+  if(/aikibudo\s*soft/.test(n)) return 'AIKIBUDO SOFT';
+  if(/aikibudo/.test(n)) return 'AIKIBUDO';
+  if(/aiki.*enfant/.test(n)) return 'AIKI ENFANTS';
+  if(/kobudo/.test(n)) return 'KOBUDO';
+  if(/ta[iï][sz]o/.test(n)) return 'TAISO';
+  if(/karat/.test(n)) return 'KARATE';
+  if(/judo/.test(n)) return 'JUDO';
+  return null;
+}
+function fmtDateLong(s){
+  if(!s) return '';
+  const d = s.includes('T') ? new Date(s) : new Date(s+'T00:00:00');
+  if(isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' });
+}
+// Calcule discipline, tranche d'âge et tarifs (Menneçois/Extérieur) pour un élève, au jour de la
+// génération de l'attestation. Le tarif "cotisation seule" n'existe pas tel quel dans la grille (qui
+// ne donne que le total licence+adhésion+cours compris) : on le déduit par soustraction, exactement
+// comme le détail de l'attestation elle-même (total = adhésion + licence + cours).
+function memberFeeDetails(m){
+  const fees = data.settings.membershipFees;
+  if(!fees) return { error: "Grille tarifaire introuvable dans Réglages" };
+  if(!m.birthDate) return { error: 'Date de naissance manquante sur la fiche' };
+  if(!m.city) return { error: 'Ville manquante sur la fiche' };
+  const group = data.groups.find(g=>g.id===m.groupId);
+  if(!group) return { error: 'Cours introuvable pour cet élève' };
+  const disc = courseDisciplineKey(group.name);
+  if(!disc || !fees.disciplines.includes(disc)) return { error: `Discipline non reconnue pour le cours « ${group.name} »` };
+  const applicable = fees.applicableTiers[disc] || [];
+  let tier = null;
+  if(applicable.length===1){
+    tier = applicable[0];
+  } else {
+    const age = ageAtDate(m.birthDate, todayStr());
+    if(age===null) return { error: 'Date de naissance invalide' };
+    if(applicable.includes('BABY') && age<6) tier = 'BABY';
+    else if(applicable.includes('- 15 ANS') && age<15) tier = '- 15 ANS';
+    else tier = applicable.includes('+ 15 ANS') ? '+ 15 ANS' : applicable[applicable.length-1];
+  }
+  const isMennecy = String(m.city||'').trim().toLowerCase()==='mennecy';
+  const locKey = isMennecy ? 'mennecois' : 'exterieurs';
+  const loc = fees.locations[locKey];
+  const total = (loc.grid.p1[tier]||{})[disc];
+  if(total===undefined) return { error: `Aucun tarif trouvé pour ${disc} / ${tier} (${locKey})` };
+  const license = loc.licenseOnly[disc];
+  const adhesion = loc.adhesionOnly[disc];
+  const course = (license!==undefined && adhesion!==undefined) ? Math.round((total - license - adhesion)*100)/100 : undefined;
+  return {
+    disciplineLabel: toTitleCase(disc), tier, locKey,
+    locLabel: isMennecy ? 'Menneçois' : 'Extérieur',
+    total, license, adhesion, course, groupName: group.name
+  };
+}
+function loadAttestationHidden(){
+  try{ const v = localStorage.getItem('dojo-attestation-hidden'); return v===null ? false : v==='1'; }catch(e){ return false; }
+}
+function saveAttestationHidden(val){
+  try{ localStorage.setItem('dojo-attestation-hidden', val?'1':'0'); }catch(e){}
+}
+function renderAttestationSettings(){
+  const wrap = document.getElementById('attestation-settings');
+  if(!wrap) return;
+  const hidden = loadAttestationHidden();
+  const m = ui.attestationMemberId ? data.members.find(x=>x.id===ui.attestationMemberId) : null;
+
+  wrap.innerHTML = `
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;">🧾 Attestation de paiement</h2>
+        <button class="ghost icon-btn" id="toggleAttestationHidden" title="${hidden?'Afficher':'Masquer'}" style="padding:8px 9px; font-size:13px; flex-shrink:0;">${hidden?'👁️ Afficher':'🙈 Masquer'}</button>
+      </div>
+      ${!hidden ? `
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:8px 0 12px; line-height:1.5;">Cherche un élève pour générer son attestation de paiement, complétée automatiquement (cours, tarif, ville).</p>
+      <div style="position:relative;">
+        <input type="text" id="attestationSearchInput" placeholder="🔍 Nom de l'élève..." autocomplete="off">
+        <div id="attestationSearchResults" class="global-search-results"></div>
+      </div>
+      ${m ? `
+      <div class="member-chip" style="margin-top:12px;">
+        <div>
+          <div>${nameWithBoldSurname(m.name)}</div>
+          <div style="font-size:11.5px; color:var(--ink-dim); margin-top:2px;">${escapeHtml((data.groups.find(g=>g.id===m.groupId)||{}).name||'Sans cours')}${m.city?' · '+escapeHtml(m.city):''}</div>
+        </div>
+        <button class="ghost icon-btn" id="clearAttestationMember" style="padding:6px 8px; font-size:11px; flex-shrink:0;">✕</button>
+      </div>
+      <button class="primary" id="generateAttestationBtn" style="width:100%; margin-top:10px;">📄 Générer une attestation de paiement</button>
+      ` : ''}
+      ` : ''}
+    </div>
+  `;
+
+  const toggleBtn = document.getElementById('toggleAttestationHidden');
+  if(toggleBtn) toggleBtn.addEventListener('click', ()=>{ saveAttestationHidden(!hidden); renderAttestationSettings(); });
+
+  const input = document.getElementById('attestationSearchInput');
+  const results = document.getElementById('attestationSearchResults');
+  if(input && results){
+    input.addEventListener('input', ()=>{
+      const q = input.value.trim().toLowerCase();
+      if(!q){ results.innerHTML=''; results.classList.remove('show'); return; }
+      const matches = data.members.filter(x=>!x.archived && x.name.toLowerCase().includes(q)).slice(0,10);
+      results.innerHTML = matches.length===0 ? '<div class="empty" style="padding:12px;">Aucun élève trouvé.</div>' : matches.map(x=>{
+        const g = data.groups.find(gg=>gg.id===x.groupId);
+        return `
+        <div class="convoc-row" data-action="pick-attestation-member" data-id="${x.id}" style="cursor:pointer;">
+          <div class="info">
+            <div class="n">${nameWithBoldSurname(x.name)}</div>
+            <div class="e">${g ? escapeHtml(g.name) : 'Sans cours'}</div>
+          </div>
+        </div>`;
+      }).join('');
+      results.classList.add('show');
+    });
+    input.addEventListener('focus', ()=>{ if(input.value.trim()) results.classList.add('show'); });
+    results.addEventListener('click', e=>{
+      const row = e.target.closest('[data-action="pick-attestation-member"]');
+      if(!row) return;
+      ui.attestationMemberId = row.dataset.id;
+      renderAttestationSettings();
+    });
+  }
+  const clearBtn = document.getElementById('clearAttestationMember');
+  if(clearBtn) clearBtn.addEventListener('click', ()=>{ ui.attestationMemberId = null; renderAttestationSettings(); });
+  const genBtn = document.getElementById('generateAttestationBtn');
+  if(genBtn) genBtn.addEventListener('click', generatePaymentAttestationPdf);
+}
+document.addEventListener('click', e=>{
+  const input = document.getElementById('attestationSearchInput');
+  const results = document.getElementById('attestationSearchResults');
+  if(!input || !results) return;
+  if(!input.contains(e.target) && !results.contains(e.target)) results.classList.remove('show');
+});
+function buildAttestationHtml(m, fee){
+  const minor = (()=>{ const age = ageAtDate(m.birthDate, todayStr()); return age!==null && age<18; })();
+  const nameParts = String(m.name||'').trim().split(/\s+/);
+  const prenom = nameParts[0]||'';
+  const nom = nameParts.slice(1).join(' ').toUpperCase();
+  const namePrefix = minor ? "L'enfant" : 'Mr';
+  const seasonLabel = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
+  const F = v => (v!==undefined && v!==null) ? String(v).replace('.',',') : '—';
+  const feeLine = (label, num)=> `<div style="margin-top:3px;"><span style="display:inline-block; width:230px;">${label}</span><span>${num}</span></div>`;
+  return `
+    <div style="width:700px; padding:34px 46px; background:#fff; box-sizing:border-box; font-family:'Inter',sans-serif; color:#1a1a1a; font-size:13px; line-height:1.5;">
+      <div style="font-weight:700; font-size:13px;">ACADEMIE MENNECOISE D'ARTS MARTIAUX</div>
+      <div style="font-size:12px; margin-top:2px;">Dojo Gérard Pizzonéro – Parc des sports de Villeroy</div>
+      <div style="font-size:12px;">91540 MENNECY – Tel : 01.64.57.32.49</div>
+      <div style="font-size:12px;">Email : mennecydojo@free.fr &nbsp;&nbsp; Site internet : mennecy-dojo.com</div>
+
+      <div style="text-align:center; font-weight:700; font-size:16px; letter-spacing:5px; margin:20px 0 18px;">A T T E S T A T I O N D'A D H E S I O N</div>
+
+      <div>Je soussignée <strong>Sandrine BARREZ,</strong> Trésorière de « l'Académie Menneçoise d'Arts Martiaux » certifie que :</div>
+
+      <div style="margin-top:14px;">
+        <div>Déclaration en sous-préfecture N° W091000432</div>
+        <div>Siret : 389 705 542 000 14</div>
+        <div>Agrément DDCS : 91 S 930</div>
+        ${feeLine('Club affilié à la F.F.J.D.A', 'N° IE 91911680')}
+        ${feeLine('Club affilié à la F.F.K.A.M.A', 'N° 910062')}
+        ${feeLine('Club affilié à la F.F.A.A.A', 'N° 91910443')}
+        ${feeLine('Club Affilié à la FKSR', 'N° 21091006')}
+      </div>
+
+      <div style="margin-top:18px;">${namePrefix} <strong>${escapeHtml(prenom)} ${escapeHtml(nom)}</strong> né le <strong>${fmtDateLong(m.birthDate)}</strong> fait partie de l'Académie Menneçoise d'Arts Martiaux et pratique régulièrement le <strong>${escapeHtml(fee.disciplineLabel)}</strong>.</div>
+
+      <div style="margin-top:14px;">Un règlement de <strong>${F(fee.total)} €</strong> a été effectué pour la saison ${escapeHtml(seasonLabel)}</div>
+
+      <div style="margin-top:14px;">Se décomposant comme suit : </div>
+      <div style="margin-top:4px;">Adhésion au club : ${F(fee.adhesion)} €</div>
+      <div>Licence-Assurance : ${F(fee.license)} € </div>
+      <div>Cours saison ${escapeHtml(seasonLabel)} : ${F(fee.course)} €</div>
+
+      <div style="margin-top:16px;">Attestation faite à la demande de l'intéressé pour servir et valoir ce que de droit.</div>
+
+      <div style="margin-top:22px;">Fait à MENNECY, le ${fmtDateLong(todayStr())}</div>
+      <div style="margin-top:6px;">Trésorière de « l'AMAM »</div>
+      <div style="margin-top:18px; text-align:right; padding-right:40px;">Christel BARREZ</div>
+    </div>`;
+}
+async function generatePaymentAttestationPdf(){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const m = data.members.find(x=>x.id===ui.attestationMemberId);
+  if(!m){ showToast('Sélectionne un élève'); return; }
+  const fee = memberFeeDetails(m);
+  if(fee.error){ showToast(fee.error); return; }
+  const btn = document.getElementById('generateAttestationBtn');
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
+  try{
+    const html = buildAttestationHtml(m, fee);
+    const canvas = await captureOffscreenSection(html, '', 700);
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    addCanvasFitPage(pdf, canvas, 24);
+    const safeName = m.name.replace(/[^\w-]+/g,'-');
+    pdf.save(`attestation-paiement-${safeName}.pdf`);
+    showToast('Attestation générée');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
 }
 
 /* ---------------- AJOUTER UN PRATIQUANT (n'importe quel cours) ---------------- */
