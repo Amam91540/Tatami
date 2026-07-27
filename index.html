@@ -3967,7 +3967,29 @@ function openImportConflictOverlay(fieldConflicts, groupChangeConflicts, onDone)
       if(action==='ignore') return;
       if(action==='move'){
         const m = data.members.find(x=>x.id===c.fromMemberId);
-        if(m){ m.groupId = c.toGroupId; count++; }
+        if(m){
+          m.groupId = c.toGroupId;
+          // La ceinture (et le certificat/n° de licence) peuvent légitimement différer d'une
+          // discipline à l'autre : on les resynchronise sur la ligne importée, comme pour une mise
+          // à jour normale — sinon un élève qui change de cours garderait la ceinture de son
+          // ancienne discipline.
+          const rd = c.rowData;
+          if(rd.belt && rd.belt !== m.belt){
+            if(!m.beltHistory) m.beltHistory = [];
+            m.beltHistory.push({ belt: rd.belt, date: todayStr() });
+            m.belt = rd.belt;
+          }
+          if(!m.email && rd.email) m.email = rd.email;
+          if(!m.gender && rd.gender) m.gender = rd.gender;
+          if(!m.phone && rd.phone) m.phone = rd.phone;
+          if(!m.address && rd.address) m.address = rd.address;
+          if(!m.postalCode && rd.postalCode) m.postalCode = rd.postalCode;
+          if(!m.city && rd.city) m.city = rd.city;
+          if(rd.medicalCertDate && rd.medicalCertDate !== m.medicalCertDate) m.medicalCertDate = rd.medicalCertDate;
+          if(rd.licenseNumber && rd.licenseNumber !== m.licenseNumber) m.licenseNumber = rd.licenseNumber;
+          if(!m.note && rd.note) m.note = rd.note;
+          count++;
+        }
       } else if(action==='add'){
         const rd = c.rowData;
         const newMember = { id: uid(), groupId: c.toGroupId, name: rd.name, birthDate: rd.birthDate };
