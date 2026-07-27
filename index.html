@@ -2709,7 +2709,8 @@ function fmtDateLong(s){
 // génération de l'attestation. Le tarif "cotisation seule" n'existe pas tel quel dans la grille (qui
 // ne donne que le total licence+adhésion+cours compris) : on le déduit par soustraction, exactement
 // comme le détail de l'attestation elle-même (total = adhésion + licence + cours).
-function memberFeeDetails(m){
+const FAMILY_RANK_LABELS = { p1: '1ère personne de la famille', p2: '2ème personne de la même famille', p3: '3ème personne de la même famille', p4: 'À partir de la 4ème personne de la même famille' };
+function memberFeeDetails(m, familyRank){
   const fees = data.settings.membershipFees;
   if(!fees) return { error: "Grille tarifaire introuvable dans Réglages" };
   if(!m.birthDate) return { error: 'Date de naissance manquante sur la fiche' };
@@ -2732,13 +2733,14 @@ function memberFeeDetails(m){
   const isMennecy = String(m.city||'').trim().toLowerCase()==='mennecy';
   const locKey = isMennecy ? 'mennecois' : 'exterieurs';
   const loc = fees.locations[locKey];
-  const total = (loc.grid.p1[tier]||{})[disc];
+  const rank = (familyRank && loc.grid[familyRank]) ? familyRank : 'p1';
+  const total = (loc.grid[rank][tier]||{})[disc];
   if(total===undefined) return { error: `Aucun tarif trouvé pour ${disc} / ${tier} (${locKey})` };
   const license = loc.licenseOnly[disc];
   const adhesion = loc.adhesionOnly[disc];
   const course = (license!==undefined && adhesion!==undefined) ? Math.round((total - license - adhesion)*100)/100 : undefined;
   return {
-    disciplineLabel: toTitleCase(disc), tier, locKey,
+    disciplineLabel: toTitleCase(disc), tier, locKey, familyRank: rank,
     locLabel: isMennecy ? 'Menneçois' : 'Extérieur',
     total, license, adhesion, course, groupName: group.name
   };
@@ -2754,6 +2756,7 @@ function renderAttestationSettings(){
   if(!wrap) return;
   const hidden = loadAttestationHidden();
   const m = ui.attestationMemberId ? data.members.find(x=>x.id===ui.attestationMemberId) : null;
+  const familyRank = ui.attestationFamilyRank || 'p1';
 
   wrap.innerHTML = `
     <div class="card">
@@ -2774,6 +2777,12 @@ function renderAttestationSettings(){
           <div style="font-size:11.5px; color:var(--ink-dim); margin-top:2px;">${escapeHtml((data.groups.find(g=>g.id===m.groupId)||{}).name||'Sans cours')}${m.city?' · '+escapeHtml(m.city):''}</div>
         </div>
         <button class="ghost icon-btn" id="clearAttestationMember" style="padding:6px 8px; font-size:11px; flex-shrink:0;">✕</button>
+      </div>
+      <div style="margin-top:10px;">
+        <span class="field-label">Rang dans la famille (tarif applicable)</span>
+        <select id="attestationFamilyRank">
+          ${Object.entries(FAMILY_RANK_LABELS).map(([k,l])=>`<option value="${k}" ${familyRank===k?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+        </select>
       </div>
       <button class="primary" id="generateAttestationBtn" style="width:100%; margin-top:10px;">📄 Générer une attestation de paiement</button>
       ` : ''}
@@ -2813,6 +2822,8 @@ function renderAttestationSettings(){
   }
   const clearBtn = document.getElementById('clearAttestationMember');
   if(clearBtn) clearBtn.addEventListener('click', ()=>{ ui.attestationMemberId = null; renderAttestationSettings(); });
+  const rankSelect = document.getElementById('attestationFamilyRank');
+  if(rankSelect) rankSelect.addEventListener('change', ()=>{ ui.attestationFamilyRank = rankSelect.value; });
   const genBtn = document.getElementById('generateAttestationBtn');
   if(genBtn) genBtn.addEventListener('click', generatePaymentAttestationPdf);
 }
@@ -2822,7 +2833,7 @@ document.addEventListener('click', e=>{
   if(!input || !results) return;
   if(!input.contains(e.target) && !results.contains(e.target)) results.classList.remove('show');
 });
-function buildAttestationHtml(m, fee){
+function buildAttestationHtml(m, fee, logoSrc){
   const minor = (()=>{ const age = ageAtDate(m.birthDate, todayStr()); return age!==null && age<18; })();
   const nameParts = String(m.name||'').trim().split(/\s+/);
   const prenom = nameParts[0]||'';
@@ -2830,15 +2841,20 @@ function buildAttestationHtml(m, fee){
   const namePrefix = minor ? "L'enfant" : 'Mr';
   const seasonLabel = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
   const F = v => (v!==undefined && v!==null) ? String(v).replace('.',',') : '—';
-  const feeLine = (label, num)=> `<div style="margin-top:3px;"><span style="display:inline-block; width:230px;">${label}</span><span>${num}</span></div>`;
+  const feeLine = (label, num)=> `<tr><td style="width:190px; padding:2px 0;">${label}</td><td style="padding:2px 0;">${num}</td></tr>`;
   return `
     <div style="width:700px; padding:34px 46px; background:#fff; box-sizing:border-box; font-family:'Inter',sans-serif; color:#1a1a1a; font-size:13px; line-height:1.5;">
-      <div style="font-weight:700; font-size:13px;">ACADEMIE MENNECOISE D'ARTS MARTIAUX</div>
-      <div style="font-size:12px; margin-top:2px;">Dojo Gérard Pizzonéro – Parc des sports de Villeroy</div>
-      <div style="font-size:12px;">91540 MENNECY – Tel : 01.64.57.32.49</div>
-      <div style="font-size:12px;">Email : mennecydojo@free.fr &nbsp;&nbsp; Site internet : mennecy-dojo.com</div>
+      <table style="width:100%; border-collapse:collapse; margin-bottom:20px;"><tr>
+        <td style="width:140px; vertical-align:middle; padding:0;">${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="width:130px; height:auto; display:block;">` : ''}</td>
+        <td style="vertical-align:middle; padding:0;">
+          <div style="font-weight:700; font-size:14px;">ACADEMIE MENNECOISE D'ARTS MARTIAUX</div>
+          <div style="font-size:12px; margin-top:3px;">Dojo Gérard Pizzonéro – Parc des sports de Villeroy</div>
+          <div style="font-size:12px;">91540 MENNECY – Tel : 01.64.57.32.49</div>
+          <div style="font-size:12px;">Email : mennecydojo@free.fr &nbsp;&nbsp; Site internet : mennecy-dojo.com</div>
+        </td>
+      </tr></table>
 
-      <div style="text-align:center; font-weight:700; font-size:16px; letter-spacing:5px; margin:20px 0 18px;">A T T E S T A T I O N D'A D H E S I O N</div>
+      <div style="text-align:center; font-weight:700; font-size:15px; letter-spacing:4px; border:1.4px solid #1a1a1a; padding:9px 0; margin:0 0 20px;">A T T E S T A T I O N D'A D H E S I O N</div>
 
       <div>Je soussignée <strong>Sandrine BARREZ,</strong> Trésorière de « l'Académie Menneçoise d'Arts Martiaux » certifie que :</div>
 
@@ -2846,10 +2862,12 @@ function buildAttestationHtml(m, fee){
         <div>Déclaration en sous-préfecture N° W091000432</div>
         <div>Siret : 389 705 542 000 14</div>
         <div>Agrément DDCS : 91 S 930</div>
-        ${feeLine('Club affilié à la F.F.J.D.A', 'N° IE 91911680')}
-        ${feeLine('Club affilié à la F.F.K.A.M.A', 'N° 910062')}
-        ${feeLine('Club affilié à la F.F.A.A.A', 'N° 91910443')}
-        ${feeLine('Club Affilié à la FKSR', 'N° 21091006')}
+        <table style="border-collapse:collapse; margin-top:2px;"><tbody>
+          ${feeLine('Club affilié à la F.F.J.D.A', 'N° IE 91911680')}
+          ${feeLine('Club affilié à la F.F.K.A.M.A', 'N° 910062')}
+          ${feeLine('Club affilié à la F.F.A.A.A', 'N° 91910443')}
+          ${feeLine('Club Affilié à la FKSR', 'N° 21091006')}
+        </tbody></table>
       </div>
 
       <div style="margin-top:18px;">${namePrefix} <strong>${escapeHtml(prenom)} ${escapeHtml(nom)}</strong> né le <strong>${fmtDateLong(m.birthDate)}</strong> fait partie de l'Académie Menneçoise d'Arts Martiaux et pratique régulièrement le <strong>${escapeHtml(fee.disciplineLabel)}</strong>.</div>
@@ -2863,9 +2881,11 @@ function buildAttestationHtml(m, fee){
 
       <div style="margin-top:16px;">Attestation faite à la demande de l'intéressé pour servir et valoir ce que de droit.</div>
 
-      <div style="margin-top:22px;">Fait à MENNECY, le ${fmtDateLong(todayStr())}</div>
-      <div style="margin-top:6px;">Trésorière de « l'AMAM »</div>
-      <div style="margin-top:18px; text-align:right; padding-right:40px;">Christel BARREZ</div>
+      <div style="margin-top:24px; text-align:right;">
+        <div>Fait à MENNECY, le ${fmtDateLong(todayStr())}</div>
+        <div style="margin-top:4px;">Trésorière de « l'AMAM »</div>
+        <div style="margin-top:16px;">Christel BARREZ</div>
+      </div>
     </div>`;
 }
 async function generatePaymentAttestationPdf(){
@@ -2875,13 +2895,15 @@ async function generatePaymentAttestationPdf(){
   }
   const m = data.members.find(x=>x.id===ui.attestationMemberId);
   if(!m){ showToast('Sélectionne un élève'); return; }
-  const fee = memberFeeDetails(m);
+  const fee = memberFeeDetails(m, ui.attestationFamilyRank || 'p1');
   if(fee.error){ showToast(fee.error); return; }
   const btn = document.getElementById('generateAttestationBtn');
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
   try{
-    const html = buildAttestationHtml(m, fee);
+    const logoImg = document.querySelector('header.topbar .club-logo-light');
+    const logoSrc = logoImg ? logoImg.src : '';
+    const html = buildAttestationHtml(m, fee, logoSrc);
     const canvas = await captureOffscreenSection(html, '', 700);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
