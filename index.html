@@ -1269,6 +1269,16 @@ function ensureLicensePendingGroupOnce(){
 function nextSeasonStartYear(){
   return (data.settings.seasonStartYear || autoSeasonStartYear()) + 1;
 }
+// Année "à venir" affichée partout dans l'UI (sélecteur de saison, bandeau, carte Réglages, badge
+// de recherche). Une fois qu'une préparation de saison a commencé (voir prepareNextSeasonLicenses),
+// on se fige sur l'année ALORS calculée (data.settings.preparedSeasonYear) plutôt que de la
+// recalculer à chaque affichage — sinon, si le vrai calendrier franchit le 1er septembre avant que
+// la saison n'ait été réellement archivée/basculée, seasonStartYear avancerait tout seul (suivi
+// automatique de la date, voir syncSeasonStartYearFromDate) et "l'année à venir" glisserait d'un an
+// de plus alors que les fiches déjà préparées sont toujours pour l'année visée au départ.
+function activeNextSeasonYear(){
+  return data.settings.preparedSeasonYear || nextSeasonStartYear();
+}
 
 function getBackendConfig(){
   try{ return JSON.parse(localStorage.getItem('dojo-backend-config')||'null'); }catch(e){ return null; }
@@ -1614,7 +1624,7 @@ function renderHeaderSeasonSwitch(){
   const el = document.getElementById('headerSeasonSwitch');
   if(!el) return;
   const seasonYear = data.settings.seasonStartYear || autoSeasonStartYear();
-  const nextYear = nextSeasonStartYear();
+  const nextYear = activeNextSeasonYear();
   const archives = [...(data.archivedSeasons||[])].sort((a,b)=>{
     const ay = (a.settings&&a.settings.seasonStartYear) || 0, by = (b.settings&&b.settings.seasonStartYear) || 0;
     return by - ay;
@@ -1672,7 +1682,7 @@ function renderArchiveViewGroupes(archive){
 }
 function nextSeasonBannerHtml(){
   return `<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#E9F3FF; border:1px solid #8FB8E8; border-radius:8px; padding:9px 12px; margin-bottom:12px; font-size:13px; color:#1F4E85;">
-    <div>🗓️ Tu prépares la saison <strong>${escapeHtml(schoolYearLabel(nextSeasonStartYear()))}</strong> — ces fiches n'existent pas encore pour la saison en cours, qui reste inchangée. Les autres onglets (Présences, Convocations, Param.) restent sur la saison en cours.</div>
+    <div>🗓️ Tu prépares la saison <strong>${escapeHtml(schoolYearLabel(activeNextSeasonYear()))}</strong> — ces fiches n'existent pas encore pour la saison en cours, qui reste inchangée. Les autres onglets (Présences, Convocations, Param.) restent sur la saison en cours.</div>
     <button class="ghost icon-btn" data-action="back-to-current-season" style="flex-shrink:0; background:#fff;">← Saison actuelle</button>
   </div>`;
 }
@@ -9885,7 +9895,8 @@ function archiveCurrentSeason(){
   const defaultName = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
   const name = prompt('Nom de cette saison (ex. 2025-2026) :', defaultName);
   if(!name || !name.trim()) return;
-  if(!confirm(`Archiver la saison « ${name.trim()} » puis vider les présences, convocations, résultats, stages et passages de grade validés pour repartir sur une nouvelle saison ?\n\nLes cours (groupes) ET les élèves resteront intacts et visibles dans l'onglet « Cours » — cette saison reste aussi consultable dans l'onglet Archives.\n\nAssure-toi d'avoir fait un export Excel si besoin avant de continuer.`)) return;
+  const hasNextSeasonPrep = data.members.some(m=>m.forNextSeason);
+  if(!confirm(`Archiver la saison « ${name.trim()} » puis vider les présences, convocations, résultats, stages et passages de grade validés pour repartir sur une nouvelle saison ?\n\nLes cours (groupes) ET les élèves resteront intacts et visibles dans l'onglet « Cours » — cette saison reste aussi consultable dans l'onglet Archives.${hasNextSeasonPrep ? `\n\nDes fiches « saison à venir » (${schoolYearLabel(activeNextSeasonYear())}) existent déjà : elles deviendront les fiches actives, et leurs anciennes fiches liées de la saison écoulée seront archivées automatiquement.` : ''}\n\nAssure-toi d'avoir fait un export Excel si besoin avant de continuer.`)) return;
 
   const validatedPassages = (data.beltPassages||[]).filter(p=>p.printed);
   const snapshot = {
@@ -9894,7 +9905,10 @@ function archiveCurrentSeason(){
     archivedAt: todayStr(),
     clubName: data.clubName || '',
     groups: JSON.parse(JSON.stringify(data.groups)),
-    members: JSON.parse(JSON.stringify(data.members)),
+    // Les fiches "saison à venir" (voir prepareNextSeasonLicenses) ne font pas partie de la saison
+    // qu'on archive ici — elles n'existaient pas encore pour elle. On les exclut du snapshot pour
+    // que l'archive reflète fidèlement la saison écoulée.
+    members: JSON.parse(JSON.stringify(data.members.filter(m=>!m.forNextSeason))),
     sessions: JSON.parse(JSON.stringify(data.sessions)),
     attendance: JSON.parse(JSON.stringify(data.attendance)),
     convocEvents: JSON.parse(JSON.stringify(data.convocEvents||[])),
@@ -9925,6 +9939,31 @@ function archiveCurrentSeason(){
   data.stages = [];
   data.beltPassages = (data.beltPassages||[]).filter(p=>!p.printed);
 
+  // Bascule "saison à venir" -> "saison en cours" (voir prepareNextSeasonLicenses / syncLinkedMember) :
+  // - toute fiche encore liée à une fiche "à venir" est désormais obsolète, elle est archivée et le
+  //   lien coupé — sa remplaçante devient la seule fiche active pour cette personne ;
+  // - toute fiche "à venir" restante (déjà validée dans un cours réel, ou encore en attente dans
+  //   "Licence à prendre") perd son statut "à venir" pour devenir une fiche normale de la saison.
+  // Un élève jamais passé par "Préparer la saison" n'est pas touché : il reste tel quel, comme
+  // aujourd'hui, dans son cours.
+  let rolledOverCount = 0;
+  data.members.forEach(m=>{
+    if(!m.forNextSeason && m.linkedMemberId){
+      const other = data.members.find(x=>x.id===m.linkedMemberId);
+      if(other && other.linkedMemberId===m.id){
+        m.archived = true;
+        m.linkedMemberId = null;
+        other.linkedMemberId = null;
+      }
+    }
+  });
+  data.members.forEach(m=>{
+    if(m.forNextSeason){ m.forNextSeason = false; rolledOverCount++; }
+  });
+  const newSeasonYear = activeNextSeasonYear();
+  data.settings.seasonStartYear = newSeasonYear;
+  data.settings.preparedSeasonYear = null;
+
   saveData();
   ui.groupsExpanded = {};
   ui.memberFicheExpanded = {};
@@ -9934,8 +9973,9 @@ function archiveCurrentSeason(){
   ui.convocChecked = {};
   ui.resultsEventId = null;
   ui.resultsSelectedMemberId = null;
+  ui.viewingSeasonId = null;
   renderAll();
-  showToast(`Saison « ${snapshot.name} » archivée et données remises à zéro`);
+  showToast(`Saison « ${snapshot.name} » archivée — saison ${schoolYearLabel(newSeasonYear)} maintenant en cours${rolledOverCount ? ` (${rolledOverCount} fiche${rolledOverCount===1?'':'s'} « à venir » basculée${rolledOverCount===1?'':'s'})` : ''}`);
 }
 
 /* ---- Onglet Groupe ---- */
@@ -10367,7 +10407,10 @@ function prepareNextSeasonLicenses(){
   const eligible = data.members.filter(m=> !m.archived && !m.forNextSeason && m.groupId!==licenseGroup.id && !m.linkedMemberId
     && !isCommitteeGroup(data.groups.find(g=>g.id===m.groupId)));
   if(eligible.length===0){ showToast('Aucun élève à dupliquer'); return; }
-  const nextYear = nextSeasonStartYear();
+  // On fige l'année visée dès le premier clic (voir activeNextSeasonYear) — les clics suivants,
+  // pour ajouter au fur et à mesure les nouveaux élèves, viseront la même saison déjà en préparation.
+  if(!data.settings.preparedSeasonYear) data.settings.preparedSeasonYear = nextSeasonStartYear();
+  const nextYear = activeNextSeasonYear();
   if(!confirm(`Créer ${eligible.length} fiche(s) liée(s) dans « Licence à prendre » pour préparer la saison ${schoolYearLabel(nextYear)} ?\n\nLes fiches d'origine restent inchangées et actives dans leur cours actuel (appel, présences...) — les fiches liées serviront de brouillon pour la nouvelle saison, et resteront synchronisées avec l'original (nom, ceinture, coordonnées...) jusqu'à validation. Le Comité directeur n'est pas concerné.`)) return;
   eligible.forEach(m=> createPendingLicenseRecord(m, licenseGroup.id));
   saveData();
@@ -10378,7 +10421,7 @@ function prepareNextSeasonLicenses(){
 function renderLicensePendingCard(){
   const wrap = document.getElementById('license-pending-card');
   if(!wrap) return;
-  const nextYear = nextSeasonStartYear();
+  const nextYear = activeNextSeasonYear();
   const licenseGroup = data.groups.find(g=>isLicensePendingGroup(g));
   const eligibleCount = data.members.filter(m=> !m.archived && !m.forNextSeason && (!licenseGroup || m.groupId!==licenseGroup.id) && !m.linkedMemberId
     && !isCommitteeGroup(data.groups.find(g=>g.id===m.groupId))).length;
@@ -10400,7 +10443,7 @@ function renderArchiveCard(){
   if(!ui.archiveExpanded) ui.archiveExpanded = {};
   wrap.innerHTML = `
     <h2>Archives de saison</h2>
-    <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">Archiver la saison en cours enregistre une photo de toutes les données actuelles (groupes, élèves, présences, convocations, résultats, stages, passages de grade validés), consultable ensuite dans l'onglet Archives, puis vide les présences, convocations, résultats, stages et passages de grade validés pour repartir sur une nouvelle saison. Les cours (groupes) et les élèves restent inchangés dans l'onglet « Cours » ; les passages de grade pas encore validés restent aussi en attente. Les archives restent uniquement sur cet appareil — pense à les exporter si tu changes d'ordinateur.</p>
+    <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">Archiver la saison en cours enregistre une photo de toutes les données actuelles (groupes, élèves, présences, convocations, résultats, stages, passages de grade validés), consultable ensuite dans l'onglet Archives, puis vide les présences, convocations, résultats, stages et passages de grade validés pour repartir sur une nouvelle saison. Les cours (groupes) et les élèves restent inchangés dans l'onglet « Cours » ; les passages de grade pas encore validés restent aussi en attente. Si des fiches « saison à venir » ont été préparées (voir plus haut), elles basculent automatiquement en fiches actives de la nouvelle saison, et leurs anciennes fiches liées sont archivées. Les archives restent uniquement sur cet appareil — pense à les exporter si tu changes d'ordinateur.</p>
     <button class="danger" id="archiveSeasonBtn" style="width:100%;">Archiver la saison en cours et tout vider</button>
     <button class="ghost" id="importArchiveBtn" style="width:100%; margin-top:8px;">Importer une archive (.json)</button>
     <input type="file" id="importArchiveInput" accept=".json" style="display:none">
@@ -10560,7 +10603,7 @@ function initGlobalSearch(){
         return `
         <div class="convoc-row" data-action="goto-member" data-id="${m.id}" data-group="${m.groupId||''}" style="cursor:pointer;">
           <div class="info">
-            <div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(cat)}</span>` : ''}${m.forNextSeason ? `<span class="tag" style="background:#E9F3FF; color:#1F4E85;">saison ${escapeHtml(schoolYearLabel(nextSeasonStartYear()))}</span>` : ''}</div>
+            <div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(cat)}</span>` : ''}${m.forNextSeason ? `<span class="tag" style="background:#E9F3FF; color:#1F4E85;">saison ${escapeHtml(schoolYearLabel(activeNextSeasonYear()))}</span>` : ''}</div>
             <div class="e">${g ? escapeHtml(g.name) : 'Sans cours'}${m.email ? ' · '+escapeHtml(m.email) : ''}</div>
           </div>
         </div>`;
