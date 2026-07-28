@@ -427,6 +427,15 @@
   #duplicate-members-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
   #duplicate-members-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:560px; width:100%; margin-top:5vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
 
+  #convoc-whatsapp-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:120; padding:16px; overflow:auto; }
+  #convoc-whatsapp-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
+  #convoc-whatsapp-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:520px; width:100%; margin-top:5vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
+  .cwa-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
+  .cwa-row:last-child{ border-bottom:none; }
+  .cwa-row .cwa-name{ font-size:13.5px; }
+  .cwa-row .cwa-note{ font-size:11px; color:var(--ink-dim); margin-top:1px; }
+  .cwa-row.sent .cwa-name{ color:var(--ink-dim); }
+
   #birthday-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:130; padding:16px; overflow:auto; }
   #birthday-overlay.show{ display:flex; align-items:center; justify-content:center; }
   #birthday-overlay .bday-card{ background:var(--surface); border:2px solid var(--tatami); border-radius:16px; padding:26px 24px; max-width:420px; width:100%; box-shadow:0 14px 50px rgba(0,0,0,.35); text-align:center; }
@@ -826,6 +835,7 @@
 <div id="quick-add-overlay"></div>
 <div id="report-issue-overlay"></div>
 <div id="duplicate-members-overlay"></div>
+<div id="convoc-whatsapp-overlay"></div>
 <div id="birthday-overlay"></div>
 <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" style="display:none">
 
@@ -6871,6 +6881,109 @@ function buildConvocTextMessage(){
   return { subject: 'Convocation — '+event, body, emails, selectedCount: selected.length };
 }
 
+// Nettoie un numéro de téléphone français (06 12 34 56 78 / 06.12.34.56.78 / +33 6 12 34 56 78 /
+// 0033612345678...) au format attendu par wa.me : indicatif pays + numéro, chiffres uniquement, sans
+// le "+". Renvoie une chaîne vide si le champ est vide — l'appelant doit alors désactiver le bouton
+// d'envoi pour ce destinataire plutôt que d'ouvrir un lien wa.me cassé.
+function phoneToWhatsappNumber(phone){
+  if(!phone) return '';
+  let d = String(phone).replace(/[^\d+]/g,'');
+  if(!d) return '';
+  if(d.startsWith('+')) d = d.slice(1);
+  else if(d.startsWith('0')) d = '33'+d.slice(1);
+  return d;
+}
+// Construit le message WhatsApp pour UN destinataire, avec son propre lien de réponse individuel
+// Présent/Absent — contrairement à buildConvocTextMessage (qui ne l'inclut que si un seul
+// destinataire est sélectionné au total), on peut toujours le fournir ici puisque chaque envoi
+// WhatsApp cible une personne à la fois de toute façon (un numéro = une conversation ouverte).
+function buildConvocPersonalMessage(ctx, ev, member){
+  let body = `Bonjour,\n\nVotre enfant est convoqué(e) à : ${ctx.event}\n`;
+  if(ctx.dateLabel) body += `Date : ${ctx.dateLabel}\n`;
+  if(ctx.lieu) body += `Lieu : ${ctx.lieu}\n`;
+  if(ctx.ville) body += `Ville : ${ctx.ville}\n`;
+  const scheduleRows = ui.convocSchedule.filter(r=>r.heureDebut || r.categorie);
+  if(scheduleRows.length){
+    body += `\nHoraires :\n`;
+    scheduleRows.forEach(r=>{ const w = scheduleWeightDisplay(r); body += `- ${r.heureDebut||''}${r.heureFin?' – '+r.heureFin:''} ${r.categorie||''}${w?' — '+w:''}\n`; });
+  }
+  if(ctx.consignes) body += `\nImportant : ${ctx.consignes}\n`;
+  if(ctx.deadlineLabel) body += `\nRéponse à remettre avant le ${ctx.deadlineLabel}\n`;
+  const recipient = ev ? ev.recipients.find(r=>r.memberId===member.id) : null;
+  const link = recipient ? convocResponseLink(recipient.token) : '';
+  // WhatsApp ne comprend pas les liens hypertextes façonnés (markdown/HTML) dans un message texte :
+  // seule une URL brute est automatiquement transformée en lien cliquable, quel que soit le texte
+  // écrit autour. On rapproche donc au maximum la formule d'appel du lien pour que la lecture reste
+  // naturelle ("Cliquez ici pour répondre" juste au-dessus de l'URL cliquable), sans pouvoir masquer
+  // l'URL elle-même derrière ce texte.
+  if(link) body += `\n👉 Cliquez ici pour répondre (Présent(e) ou Absent(e)) :\n${link}\n\nCe lien vous a également été envoyé par mail.\n`;
+  body += `\nSportivement,\n${data.clubName || 'Le club'}`;
+  return body;
+}
+// Ouvre un panneau listant chaque destinataire sélectionné avec un bouton dédié qui ouvre
+// directement sa conversation WhatsApp (via le numéro renseigné sur sa fiche), message déjà rempli
+// — contrairement à l'ancien bouton unique qui ouvrait wa.me/?text=... sans numéro et obligeait à
+// choisir le contact à la main à chaque fois, ce qui rendait l'envoi à plusieurs destinataires
+// fastidieux. wa.me ne permet pas d'envoyer en un seul clic à plusieurs numéros à la fois : on garde
+// donc un bouton par personne (chaque clic reste un vrai geste utilisateur, ce qu'exigent les
+// navigateurs pour ouvrir un nouvel onglet sans être bloqué comme pop-up).
+function openConvocWhatsappOverlay(){
+  const selected = convocSelectedMembers();
+  if(selected.length===0){ showToast('Sélectionne au moins un pratiquant à convoquer'); return; }
+  const ev = ensureConvocEvent(selected);
+  if(!ev) return;
+  const ctx = buildConvocContext();
+  ui.convocWaSent = ui.convocWaSent || {};
+  renderConvocWhatsappOverlay(selected, ev, ctx);
+  document.getElementById('convoc-whatsapp-overlay').classList.add('show');
+}
+function closeConvocWhatsappOverlay(){
+  const overlay = document.getElementById('convoc-whatsapp-overlay');
+  if(overlay){ overlay.classList.remove('show'); overlay.innerHTML = ''; }
+  resetConvocFormAfterGeneration();
+}
+function renderConvocWhatsappOverlay(members, ev, ctx){
+  const overlay = document.getElementById('convoc-whatsapp-overlay');
+  if(!overlay) return;
+  const rows = members.map(m=>{
+    const waNumber = phoneToWhatsappNumber(m.phone);
+    const sent = !!(ui.convocWaSent && ui.convocWaSent[m.id]);
+    return `
+    <div class="cwa-row${sent?' sent':''}">
+      <div>
+        <div class="cwa-name">${nameWithBoldSurname(m.name)}${sent?' ✓':''}</div>
+        <div class="cwa-note">${waNumber ? escapeHtml(m.phone||'') : 'Pas de téléphone renseigné'}</div>
+      </div>
+      ${waNumber
+        ? `<button class="ghost" data-action="send-convoc-wa" data-id="${m.id}" style="flex-shrink:0;">${sent?'Renvoyer':'📱 WhatsApp'}</button>`
+        : `<span style="font-size:11px; color:var(--ink-dim); flex-shrink:0;">—</span>`}
+    </div>`;
+  }).join('');
+  overlay.innerHTML = `
+    <div class="rio-card">
+      <h3 style="margin:0 0 4px;">Envoyer par WhatsApp</h3>
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 12px; line-height:1.5;">Un bouton ouvre directement la conversation WhatsApp du numéro renseigné sur la fiche, message déjà prêt — il ne reste qu'à appuyer sur Envoyer dans WhatsApp.</p>
+      ${rows || '<div class="empty">Aucun destinataire.</div>'}
+      <button class="ghost" id="closeConvocWaOverlayBtn" style="width:100%; margin-top:14px;">Fermer</button>
+    </div>`;
+  overlay.querySelectorAll('[data-action="send-convoc-wa"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.id;
+      const m = members.find(x=>x.id===id);
+      if(!m) return;
+      const waNumber = phoneToWhatsappNumber(m.phone);
+      if(!waNumber) return;
+      const text = buildConvocPersonalMessage(ctx, ev, m);
+      window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(text)}`, '_blank');
+      ui.convocWaSent = ui.convocWaSent || {};
+      ui.convocWaSent[m.id] = true;
+      renderConvocWhatsappOverlay(members, ev, ctx);
+    });
+  });
+  const closeBtn = document.getElementById('closeConvocWaOverlayBtn');
+  if(closeBtn) closeBtn.addEventListener('click', closeConvocWhatsappOverlay);
+}
+
 function updateConvocLinks(){
   const mailBtn = document.getElementById('convocMailBtn');
   const waBtn = document.getElementById('convocWaBtn');
@@ -7088,14 +7201,7 @@ function renderConvocTab(){
     window.location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     resetConvocFormAfterGeneration();
   });
-  document.getElementById('convocWaBtn').addEventListener('click', ()=>{
-    const { body, selectedCount } = buildConvocTextMessage();
-    if(selectedCount===0){ showToast('Sélectionne au moins un pratiquant à convoquer'); return; }
-    const ev = ensureConvocEvent(convocSelectedMembers());
-    if(!ev) return;
-    window.open(`https://wa.me/?text=${encodeURIComponent(body)}`, '_blank');
-    resetConvocFormAfterGeneration();
-  });
+  document.getElementById('convocWaBtn').addEventListener('click', openConvocWhatsappOverlay);
 
   document.getElementById('addScheduleRowBtn').onclick = ()=>{
     ui.convocSchedule.push({ heureDebut:'', heureFin:'', categorie:'' });
@@ -7161,6 +7267,7 @@ function resetConvocFormAfterGeneration(){
   ui.convocSchedule = [];
   ui.convocChecked = {};
   ui.convocVeteranFlag = {};
+  ui.convocWaSent = {};
   document.getElementById('convocEvent').value = '';
   document.getElementById('convocDate').value = '';
   document.getElementById('convocLieu').value = '';
@@ -7762,6 +7869,17 @@ function pickCalendarCompetition(idx){
   showToast(`« ${fullEventName} » — infos pré-remplies`);
 }
 function pickCalendarEntryOther(entry){
+  // Une fois une compétition/stage choisi dans les résultats de recherche, on referme la recherche
+  // (champ + liste de résultats + bloc "Autre…", et on remet le menu déroulant sur son placeholder)
+  // pour laisser toute la place à la suite du formulaire, déjà pré-rempli à ce stade.
+  const otherBox = document.getElementById('calendarCompetitionOtherBox');
+  const otherInput = document.getElementById('calendarCompetitionOtherInput');
+  const otherResults = document.getElementById('calendarCompetitionOtherResults');
+  if(otherBox) otherBox.style.display = 'none';
+  if(otherInput) otherInput.value = '';
+  if(otherResults) otherResults.innerHTML = '';
+  const select = document.getElementById('calendarCompetitionSelect');
+  if(select) select.value = '';
   if(entry.kind==='imported'){
     const idx = COMPETITION_CALENDAR.findIndex(c=>competitionKey(c)===entry.key);
     if(idx>=0){ pickCalendarCompetition(idx); return; }
@@ -10317,8 +10435,10 @@ function openConvocPrint(){
   if(members.length===0){ showToast('Sélectionne au moins un pratiquant à convoquer'); return; }
 const ev = ensureConvocEvent(members);
   if(!ev) return;
-  resetConvocFormAfterGeneration();
-
+  // On NE réinitialise plus la sélection ici : générer le PDF à imprimer n'est pas forcément la
+  // dernière étape — il faut pouvoir ensuite partager la même sélection par WhatsApp ou par email
+  // sans devoir tout re-cocher. Le formulaire ne se réinitialise qu'une fois l'envoi (email/WhatsApp)
+  // réellement effectué, dans leurs propres handlers.
   const overlay = document.getElementById('convoc-print-overlay');
   const cardsHtml = members.map(m=>{
     const recipient = ev.recipients.find(r=>r.memberId===m.id);
