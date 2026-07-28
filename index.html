@@ -3860,7 +3860,10 @@ function buildAttestationHtml(m, fee, logoSrc, refDate){
   const prenom = nameParts[0]||'';
   const nom = nameParts.slice(1).join(' ').toUpperCase();
   const namePrefix = minor ? "L'enfant" : 'Mr';
-  const seasonLabel = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
+  // Toujours la saison réelle du jour (1er septembre -> 31 août), indépendamment d'un éventuel
+  // réglage de saison manuel ailleurs dans l'app (voir seasonAutoFollow) : l'attestation de
+  // paiement ne doit jamais rester bloquée sur l'ancienne année scolaire après le 1er septembre.
+  const seasonLabel = schoolYearLabel(autoSeasonStartYear());
   const F = v => (v!==undefined && v!==null) ? String(v).replace('.',',') : '—';
   const feeLine = (label, num)=> `<tr><td style="width:190px; padding:2px 0;">${label}</td><td style="padding:2px 0;">${num}</td></tr>`;
   return `
@@ -4047,7 +4050,10 @@ async function generateChequeSportAttestationPdf(){
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
   try{
-    const seasonLabel = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
+    // Toujours la saison réelle du jour (1er septembre -> 31 août), indépendamment d'un éventuel
+    // réglage de saison manuel ailleurs dans l'app (voir seasonAutoFollow) : l'attestation Chèque
+    // Sport ne doit jamais rester bloquée sur l'ancienne année scolaire après le 1er septembre.
+    const seasonLabel = schoolYearLabel(autoSeasonStartYear());
     const inscriptionDate = ui.attestationInscriptionDate || todayStr();
     const html = buildChequeSportHtml(m, ui.attestationCotisationAmount, ui.attestationCafAmount, ui.attestationPassSportAmount, inscriptionDate, seasonLabel);
     const canvas = await captureOffscreenSection(html, '', 700);
