@@ -780,7 +780,7 @@
         </div>
       </div>
 
-      <button class="ghost icon-btn" id="resetConvocBtn" style="width:100%; margin-top:14px; color:var(--clay);">Réinitialiser ce formulaire</button>
+      <button class="ghost icon-btn" id="resetConvocBtn" style="width:100%; margin-top:14px; color:var(--clay);">🆕 Nouvelle convocation</button>
       </div>
     </div>
 
@@ -7263,7 +7263,9 @@ async function openConvocWhatsappOverlay(){
 function closeConvocWhatsappOverlay(){
   const overlay = document.getElementById('convoc-whatsapp-overlay');
   if(overlay){ overlay.classList.remove('show'); overlay.innerHTML = ''; }
-  resetConvocFormAfterGeneration();
+  // Ne vide plus le formulaire automatiquement : la remise à zéro est un choix explicite de
+  // l'utilisateur (bouton "Nouvelle convocation"), pas un effet de bord de la fermeture de cette
+  // fenêtre — même si l'envoi n'est pas terminé pour tout le monde.
 }
 function renderConvocWhatsappOverlay(members, ev, ctx){
   const overlay = document.getElementById('convoc-whatsapp-overlay');
@@ -7522,7 +7524,8 @@ function renderConvocTab(){
     ev.emailSent = true;
     saveData();
     window.location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    resetConvocFormAfterGeneration();
+    // Ne vide plus le formulaire automatiquement : ouvrir le client mail ne garantit pas que
+    // l'envoi a réellement eu lieu (l'utilisateur peut annuler côté client mail).
   });
   document.getElementById('convocWaBtn').addEventListener('click', openConvocWhatsappOverlay);
 
@@ -7586,21 +7589,6 @@ async function resetConvocForm(){
   renderConvocTab();
   showToast('Formulaire réinitialisé');
 }
-function resetConvocFormAfterGeneration(){
-  ui.convocSchedule = [];
-  ui.convocChecked = {};
-  ui.convocVeteranFlag = {};
-  ui.convocWaSent = {};
-  document.getElementById('convocEvent').value = '';
-  document.getElementById('convocDate').value = '';
-  document.getElementById('convocLieu').value = '';
-  document.getElementById('convocVille').value = '';
-  document.getElementById('convocConsignes').value = "NE PAS OUBLIER : Le PASSEPORT SPORTIF en règle OBLIGATOIRE avec au moins 2 timbres de licences (dont saison en cours) pour les benjamins et minimes.";
-  document.getElementById('convocReplyDeadline').value = '';
-  try{ localStorage.removeItem('dojo-convoc-draft'); }catch(e){}
-  renderConvocTab();
-}
-
 /* ---------------- RÉSULTATS ---------------- */
 const RESULT_PLACEMENT_OPTIONS = ['1','2','3','4','5','7','NC','ABS'];
 
@@ -10852,7 +10840,9 @@ async function sendConvocationsWithPdf(){
   const ev = await ensureConvocEvent(members);
   if(!ev) return;
   const ctx = buildConvocContext(ev);
-  resetConvocFormAfterGeneration();
+  // Ne vide plus le formulaire ici : à ce stade, aucun email n'est encore parti (la boucle
+  // d'envoi et ses éventuelles erreurs arrivent plus bas) — le vider maintenant ferait perdre
+  // titre/date/lieu/sélection en cas d'échec de génération de PDF pour un ou plusieurs élèves.
   let baseTextBody = `Bonjour,\n\nVotre enfant est convoqué(e) à : ${ctx.event}\n`;
   if(ctx.dateLabel) baseTextBody += `Date : ${ctx.dateLabel}\n`;
   if(ctx.lieu) baseTextBody += `Lieu : ${ctx.lieu}\n`;
