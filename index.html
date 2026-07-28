@@ -100,6 +100,23 @@
     margin-bottom:14px;
   }
   .card h2{ font-size:15px; margin:0 0 12px; color:var(--ink); }
+
+  /* Sections dépliables réutilisées sur tous les onglets — regroupe les cartes secondaires
+     (historique, réglages, thèmes annexes) sous un même bandeau cliquable, au lieu de tout empiler
+     à plat dans un seul scroll. Le contenu jugé "primaire" (ce qu'on vient consulter/faire en
+     premier sur l'onglet) reste toujours affiché en dehors de ces sections. */
+  .section-group{ margin-bottom:14px; }
+  .section-group-header{
+    width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px;
+    background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius);
+    padding:13px 16px; margin-bottom:10px;
+    font-family:'Rajdhani',sans-serif; font-weight:700; font-size:14.5px;
+    text-transform:uppercase; letter-spacing:0.03em; color:var(--ink); text-align:left;
+  }
+  .section-group-header .section-group-chevron{ stroke:var(--ink-dim); flex-shrink:0; transition:transform .15s ease; }
+  .section-group.collapsed .section-group-header{ margin-bottom:0; }
+  .section-group.collapsed .section-group-header .section-group-chevron{ transform:rotate(-90deg); }
+  .section-group.collapsed .section-group-body{ display:none; }
   .row{ display:flex; gap:8px; align-items:center; }
   .row + .row{ margin-top:10px; }
   label.small{ font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-dim); display:block; margin-bottom:6px; }
@@ -219,11 +236,12 @@
   .belt-legend{ display:flex; justify-content:space-between; margin-top:4px; }
   .belt-legend span{ font-size:10px; color: var(--ink-dim); }
 
-  .stat-line{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:2px; }
+  .stat-line{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:1px; }
   .stat-line .who{ font-size:14px; font-weight:600; }
   .stat-line .pct{ font-family:'Big Shoulders Display', system-ui; font-size:18px; font-weight:700; color:var(--tatami); }
-  .member-stat{ padding:12px 2px; border-bottom:1px solid var(--line); }
+  .member-stat{ padding:9px 6px; border-bottom:1px solid var(--line); border-radius:8px; transition:background-color .12s; }
   .member-stat:last-child{ border-bottom:none; }
+  .member-stat:hover{ background:var(--surface-2); }
   .frac{ font-size:12px; color:var(--ink-dim); }
 
   .summary-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:6px; }
@@ -571,11 +589,27 @@
 
   <section id="tab-groupes">
     <div id="groupes-live">
-      <div class="card" id="incomplete-fiches-section"></div>
-      <div class="card" id="groups-list"></div>
-      <div id="belt-passage-section"></div>
-      <div id="belt-diplomas-section"></div>
-      <div id="belt-validated-section"></div>
+      <div class="section-group" data-group="groupes-cours" data-default-open>
+        <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="groupes-cours">
+          <span>👥 Groupes</span>
+          <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="section-group-body">
+          <div class="card" id="incomplete-fiches-section"></div>
+          <div class="card" id="groups-list"></div>
+        </div>
+      </div>
+      <div class="section-group" data-group="groupes-beltpassage">
+        <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="groupes-beltpassage">
+          <span>🥋 Passage de grade</span>
+          <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="section-group-body">
+          <div id="belt-passage-section"></div>
+          <div id="belt-diplomas-section"></div>
+          <div id="belt-validated-section"></div>
+        </div>
+      </div>
     </div>
     <div id="groupes-archive-view" style="display:none;">
       <div class="card" id="archive-view-groupes-banner"></div>
@@ -588,10 +622,6 @@
       <div id="suivi-alerts"></div>
       <div class="card">
         <div class="row">
-          <div style="flex:1">
-            <label class="small">Année scolaire</label>
-            <select id="suiviYear"></select>
-          </div>
           <div style="flex:1">
             <label class="small">Cours</label>
             <select id="suiviGroup"></select>
@@ -688,8 +718,17 @@
 
     <div class="card" id="convoc-members"></div>
     <div class="card" id="convoc-actions"></div>
-    <div class="card" id="convoc-current"></div>
-    <div class="card" id="convoc-archive"></div>
+
+    <div class="section-group" data-group="convoc-historique">
+      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="convoc-historique">
+        <span>🗂️ Historique des convocations</span>
+        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="section-group-body">
+        <div class="card" id="convoc-current"></div>
+        <div class="card" id="convoc-archive"></div>
+      </div>
+    </div>
   </section>
 
   <section id="tab-resultats">
@@ -745,9 +784,6 @@
       <div id="results-list" style="margin-top:10px;"></div>
       <button class="ghost icon-btn" id="archiveResultsEventBtn" style="width:100%; margin-top:10px; display:none;">🗄️ Archiver cette compétition</button>
     </div>
-    <div class="card" id="results-history-card"></div>
-    <div class="card" id="stage-form-card"></div>
-    <div class="card" id="stage-history-card"></div>
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <h2 style="margin:0;">Palmarès d'un élève</h2>
@@ -761,13 +797,35 @@
       <div id="results-search-list"></div>
       <div id="results-palmares"></div>
     </div>
-    <div class="card">
-      <h2>Tableau de bord</h2>
-      <div id="results-dashboard"></div>
-      <div id="recap-category-filter" style="margin-top:14px;"></div>
-      <button class="primary" id="generateRecapPdfBtn" style="width:100%; margin-top:10px;">📄 Générer le récap PDF du mois</button>
-<button class="ghost" id="generateAnnualRecapBtn" style="width:100%; margin-top:8px;">📄 Générer le récap PDF de la saison (sept.–août)</button>
-<button class="ghost" id="generateAGReportBtn" style="width:100%; margin-top:8px;">📋 Générer le rapport annuel (Assemblée générale)</button>    </div>
+
+    <div class="section-group" data-group="resultats-stages">
+      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="resultats-stages">
+        <span>🥋 Stages</span>
+        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="section-group-body">
+        <div class="card" id="stage-form-card"></div>
+        <div class="card" id="stage-history-card"></div>
+      </div>
+    </div>
+
+    <div class="section-group" data-group="resultats-bilans">
+      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="resultats-bilans">
+        <span>📊 Historique &amp; bilans</span>
+        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="section-group-body">
+        <div class="card" id="results-history-card"></div>
+        <div class="card">
+          <h2>Tableau de bord</h2>
+          <div id="results-dashboard"></div>
+          <div id="recap-category-filter" style="margin-top:14px;"></div>
+          <button class="primary" id="generateRecapPdfBtn" style="width:100%; margin-top:10px;">📄 Générer le récap PDF du mois</button>
+          <button class="ghost" id="generateAnnualRecapBtn" style="width:100%; margin-top:8px;">📄 Générer le récap PDF de la saison (sept.–août)</button>
+          <button class="ghost" id="generateAGReportBtn" style="width:100%; margin-top:8px;">📋 Générer le rapport annuel (Assemblée générale)</button>
+        </div>
+      </div>
+    </div>
    </div>
    <div id="resultats-archive-view" style="display:none;">
      <div class="card" id="archive-view-resultats-banner"></div>
@@ -777,26 +835,62 @@
   </section>
 
   <section id="tab-param">
-    <div class="card">
-      <h2>Coordonnées du club</h2>
-      <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">Affichées en en-tête des convocations imprimées.</p>
-      <textarea id="clubContact" style="width:100%; min-height:60px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:11px 12px; color:var(--ink); font-family:'Inter',sans-serif; font-size:15px; resize:vertical;" placeholder="Téléphone, email, contact..."></textarea>
-    </div>
-    <div class="card">
-      <h2>Importer un classeur à plusieurs cours</h2>
-      <p style="font-size:13px; color:var(--ink-dim); margin:0 0 12px; line-height:1.5;">Un fichier Excel avec plusieurs onglets (un onglet = un cours). Chaque onglet doit contenir des colonnes NOM, PRENOM et une colonne de date de naissance.</p>
-      <button class="ghost" id="importWorkbookBtn" style="width:100%;">Choisir un fichier (.xlsx, .xls)</button>
-    </div>
     <div id="duplicate-groups-card"></div>
     <div id="duplicate-members-card"></div>
-    <div class="card" id="age-settings"></div>
-    <div id="membership-fees-settings"></div>
-    <div id="attestation-settings"></div>
-    <div class="card" id="imported-competitions-settings"></div>
-    <div class="card" id="backend-settings"></div>
-    <div class="card" id="license-pending-card"></div>
-    <div class="card" id="archive-card"></div>
-    <div class="card" id="export-card"></div>
+
+    <div class="section-group" data-group="param-club">
+      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="param-club">
+        <span>🏛️ Club &amp; connexion</span>
+        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="section-group-body">
+        <div class="card">
+          <h2>Coordonnées du club</h2>
+          <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">Affichées en en-tête des convocations imprimées.</p>
+          <textarea id="clubContact" style="width:100%; min-height:60px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:11px 12px; color:var(--ink); font-family:'Inter',sans-serif; font-size:15px; resize:vertical;" placeholder="Téléphone, email, contact..."></textarea>
+        </div>
+        <div class="card" id="backend-settings"></div>
+      </div>
+    </div>
+
+    <div class="section-group" data-group="param-saison">
+      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="param-saison">
+        <span>📅 Saison &amp; calendrier</span>
+        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="section-group-body">
+        <div class="card" id="age-settings"></div>
+        <div class="card" id="license-pending-card"></div>
+        <div class="card" id="archive-card"></div>
+        <div class="card" id="imported-competitions-settings"></div>
+      </div>
+    </div>
+
+    <div class="section-group" data-group="param-documents">
+      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="param-documents">
+        <span>🧾 Documents &amp; tarifs</span>
+        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="section-group-body">
+        <div id="membership-fees-settings"></div>
+        <div id="attestation-settings"></div>
+      </div>
+    </div>
+
+    <div class="section-group" data-group="param-importexport">
+      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="param-importexport">
+        <span>📂 Import &amp; export</span>
+        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="section-group-body">
+        <div class="card">
+          <h2>Importer un classeur à plusieurs cours</h2>
+          <p style="font-size:13px; color:var(--ink-dim); margin:0 0 12px; line-height:1.5;">Un fichier Excel avec plusieurs onglets (un onglet = un cours). Chaque onglet doit contenir des colonnes NOM, PRENOM et une colonne de date de naissance.</p>
+          <button class="ghost" id="importWorkbookBtn" style="width:100%;">Choisir un fichier (.xlsx, .xls)</button>
+        </div>
+        <div class="card" id="export-card"></div>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -5674,6 +5768,12 @@ function schoolYearsAvailable(){
   starts.add(data.settings.seasonStartYear || autoSeasonStartYear());
   return Array.from(starts).sort((a,b)=>b-a);
 }
+// Le Suivi annuel ne propose plus de choisir l'année scolaire (voir renderSuiviTab) : il affiche
+// toujours la saison en cours, pour éviter d'y consulter des archives — c'est le rôle du sélecteur
+// de saison dans l'en-tête / des onglets Archives.
+function suiviActiveYear(){
+  return data.settings.seasonStartYear || autoSeasonStartYear();
+}
 
 function renderArchiveViewSuivi(archive){
   const bannerEl = document.getElementById('archive-view-suivi-banner');
@@ -5691,12 +5791,7 @@ function renderSuiviTab(){
   if(liveEl) liveEl.style.display = archive ? 'none' : '';
   if(archiveEl) archiveEl.style.display = archive ? '' : 'none';
   if(archive){ renderArchiveViewSuivi(archive); return; }
-  const yearSel = document.getElementById('suiviYear');
   const groupSel = document.getElementById('suiviGroup');
-  const years = schoolYearsAvailable();
-  const prevYear = yearSel.value;
-  yearSel.innerHTML = years.map(y=>`<option value="${y}">${schoolYearLabel(y)}</option>`).join('');
-  if(years.map(String).includes(prevYear)) yearSel.value = prevYear;
 
   const prevGroup = groupSel.value;
   groupSel.innerHTML = `<option value="all">Tous les cours</option>` + data.groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
@@ -5705,7 +5800,6 @@ function renderSuiviTab(){
   const sortSel = document.getElementById('suiviSort');
   sortSel.value = ui.suiviSort;
 
-  yearSel.onchange = renderSuiviContent;
   groupSel.onchange = renderSuiviContent;
   sortSel.onchange = ()=>{ ui.suiviSort = sortSel.value; renderSuiviContent(); };
 
@@ -5782,7 +5876,7 @@ function renderDisciplineStatsCard(startYear){
 }
 function renderSuiviContent(){
   const wrap = document.getElementById('suivi-content');
-  const startYear = parseInt(document.getElementById('suiviYear').value, 10);
+  const startYear = suiviActiveYear();
   const groupFilter = document.getElementById('suiviGroup').value;
   const toggleAllBtn = document.getElementById('suiviToggleAllBtn');
   if(data.groups.length===0){
@@ -5833,7 +5927,6 @@ function renderSuiviContent(){
             <span class="pct">${pct}%</span>
           </div>
           <div class="frac">${present}/${totalForMember} séance${totalForMember===1?'':'s'}${guestSessions.length? ` <span style="color:var(--ink-dim);">(dont ${guestSessions.length} en invité(e) dans un autre cours)</span>` : ''}</div>
-          <button class="ghost icon-btn" data-action="cert" data-id="${m.id}" data-group="${g.id}" style="margin-top:8px; width:100%; font-size:12.5px;">🏅 Générer un certificat</button>
         </div>`;
     }).join('') || '<div class="empty">Aucun pratiquant dans ce cours.</div>';
 
@@ -5870,7 +5963,7 @@ async function generateCourseAttendancePdf(groupId){
   }
   const g = data.groups.find(x=>x.id===groupId);
   if(!g) return;
-  const startYear = parseInt(document.getElementById('suiviYear').value, 10);
+  const startYear = suiviActiveYear();
   const sessions = data.sessions.filter(s=>s.groupId===groupId && inSchoolYear(s.date, startYear) && sessionHasRollCall(s.id))
     .sort((a,b)=> a.date.localeCompare(b.date));
   const members = [...data.members.filter(m=>m.groupId===groupId && isMemberVisibleInSessions(m, sessions))].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
@@ -5943,16 +6036,13 @@ document.getElementById('suivi-content').addEventListener('click', e=>{
     renderSuiviContent();
     return;
   }
-  const btn = e.target.closest('[data-action="cert"]');
-  if(!btn) return;
-  openCertificate(btn.dataset.id, btn.dataset.group);
 });
 
 function openCertificate(memberId, groupId){
   const m = data.members.find(x=>x.id===memberId);
   const g = data.groups.find(x=>x.id===groupId);
   if(!m || !g) return;
-  const startYear = parseInt(document.getElementById('suiviYear').value, 10);
+  const startYear = suiviActiveYear();
   const sessions = data.sessions.filter(s=>s.groupId===g.id && inSchoolYear(s.date, startYear) && sessionHasRollCall(s.id));
   const present = sessions.filter(s=>isPresent((data.attendance[s.id]||{})[m.id])).length;
   const pct = sessions.length ? Math.round((present/sessions.length)*100) : 0;
@@ -11495,6 +11585,40 @@ function goToMemberFiche(memberId, groupId){
     }
   }, 60);
 }
+
+// Sections dépliables (voir commentaire CSS .section-group) — utilisées sur Param., Cours,
+// Convoc. et Résultats pour regrouper les cartes secondaires (historique, thèmes annexes, réglages)
+// sans les faire disparaître : juste repliées par défaut, un clic les ouvre, et l'app se souvient du
+// choix par section sur cet appareil (chaque data-group doit être une clé unique dans toute l'app).
+function loadSectionGroupOpen(key, defaultOpen){
+  try{
+    const v = localStorage.getItem('dojo-section-group-'+key);
+    if(v===null) return !!defaultOpen;
+    return v === 'open';
+  }catch(e){ return !!defaultOpen; }
+}
+function saveSectionGroupOpen(key, open){
+  try{ localStorage.setItem('dojo-section-group-'+key, open ? 'open' : 'closed'); }catch(e){}
+}
+// Repliées par défaut sauf celles marquées data-default-open (le contenu principal d'un onglet,
+// pas un simple à-côté secondaire) — sans ça, un onglet entier peut sembler vide au premier coup
+// d'œil si son seul contenu utile se trouve caché derrière une section repliée.
+function applySectionGroupsState(){
+  document.querySelectorAll('.section-group[data-group]').forEach(group=>{
+    const open = loadSectionGroupOpen(group.dataset.group, group.hasAttribute('data-default-open'));
+    group.classList.toggle('collapsed', !open);
+  });
+}
+document.addEventListener('click', e=>{
+  const btn = e.target.closest('[data-action="toggle-section-group"]');
+  if(!btn) return;
+  const group = btn.closest('.section-group');
+  if(!group) return;
+  const nowOpen = group.classList.contains('collapsed');
+  group.classList.toggle('collapsed', !nowOpen);
+  saveSectionGroupOpen(btn.dataset.group, nowOpen);
+});
+applySectionGroupsState();
 
 loadData();
 </script>
