@@ -1168,6 +1168,50 @@ function showToast(msg, duration){
   t._h = setTimeout(()=>t.classList.remove('show'), duration || 1800);
 }
 
+// Fabrique générique pour mémoriser l'affichage/masquage d'une carte dans localStorage.
+// Remplace la quinzaine de paires loadXHidden()/saveXHidden() quasi identiques qui existaient
+// avant (une par carte : passage de grade, tranches d'âge, tarifs, anniversaires, calendrier...),
+// qui ne différaient que par la clé localStorage et la valeur par défaut. `key` est le suffixe de
+// la clé ('dojo-<key>-hidden'), `defaultHidden` la valeur tant que l'utilisateur n'a jamais
+// touché au bouton masquer/afficher de cette carte.
+function cardVisibility(key, defaultHidden){
+  const storageKey = `dojo-${key}-hidden`;
+  return {
+    get(){
+      try{
+        const v = localStorage.getItem(storageKey);
+        return v===null ? !!defaultHidden : v==='1';
+      }catch(e){ return !!defaultHidden; }
+    },
+    set(val){
+      try{ localStorage.setItem(storageKey, val ? '1' : '0'); }catch(e){}
+    }
+  };
+}
+
+// Câblage générique commun à toute recherche avec liste déroulante de résultats : ferme la liste
+// au clic en dehors du champ de saisie et de la liste, et — si `opts.onFocus` est fourni — la
+// réaffiche au focus. Remplace une demi-douzaine de blocs `document.addEventListener('click', ...)`
+// quasi identiques qui existaient avant, un par recherche (calendrier, invité de séance,
+// attestation, autocomplete stage, autocomplete résultat, recherche globale). Appelée une seule
+// fois par recherche (pas à chaque rendu) : les éléments sont recherchés par id à chaque
+// évènement plutôt que capturés une fois, ce qui reste correct même quand la carte contenant le
+// champ est recréée par un innerHTML ultérieur.
+function attachSearchDropdown(inputId, wrapId, opts){
+  opts = opts || {};
+  document.addEventListener('click', e=>{
+    const input = document.getElementById(inputId);
+    const wrap = document.getElementById(wrapId);
+    if(!input || !wrap) return;
+    if(!input.contains(e.target) && !wrap.contains(e.target)) wrap.classList.remove('show');
+  });
+  if(opts.onFocus){
+    document.addEventListener('focus', e=>{
+      if(e.target && e.target.id===inputId) opts.onFocus();
+    }, true);
+  }
+}
+
 // Petit point vert en en-tête qui s'allume brièvement après une sauvegarde RÉUSSIE vers le
 // classeur en ligne (voir saveData, juste après advanceSyncedSnapshot), puis s'éteint tout seul.
 // Seul signal de succès de synchro : avant, seul un échec déclenchait un toast, le succès restait
@@ -2898,12 +2942,9 @@ function memberMissingFields(m){
   if(!m.email) missing.push('email');
   return missing;
 }
-function loadBeltPassageHidden(){
-  try{ const v = localStorage.getItem('dojo-belt-passage-hidden'); return v===null ? true : v==='1'; }catch(e){ return true; }
-}
-function saveBeltPassageHidden(val){
-  try{ localStorage.setItem('dojo-belt-passage-hidden', val?'1':'0'); }catch(e){}
-}
+const beltPassageVisibility = cardVisibility('belt-passage', true);
+function loadBeltPassageHidden(){ return beltPassageVisibility.get(); }
+function saveBeltPassageHidden(val){ beltPassageVisibility.set(val); }
 function renderBeltPassageSection(){
   const wrap = document.getElementById('belt-passage-section');
   if(!wrap) return;
@@ -2984,12 +3025,9 @@ function renderBeltPassageSection(){
     });
   });
 }
-function loadBeltDiplomasHidden(){
-  try{ const v = localStorage.getItem('dojo-belt-diplomas-hidden'); return v===null ? true : v==='1'; }catch(e){ return true; }
-}
-function saveBeltDiplomasHidden(val){
-  try{ localStorage.setItem('dojo-belt-diplomas-hidden', val?'1':'0'); }catch(e){}
-}
+const beltDiplomasVisibility = cardVisibility('belt-diplomas', true);
+function loadBeltDiplomasHidden(){ return beltDiplomasVisibility.get(); }
+function saveBeltDiplomasHidden(val){ beltDiplomasVisibility.set(val); }
 function renderBeltDiplomasSection(){
   const wrap = document.getElementById('belt-diplomas-section');
   if(!wrap) return;
@@ -3050,12 +3088,9 @@ function renderBeltDiplomasSection(){
   const genBtn = document.getElementById('generateBeltDiplomasBtn');
   if(genBtn) genBtn.addEventListener('click', generateBeltDiplomasPdf);
 }
-function loadBeltValidatedHidden(){
-  try{ const v = localStorage.getItem('dojo-belt-validated-hidden'); return v===null ? true : v==='1'; }catch(e){ return true; }
-}
-function saveBeltValidatedHidden(val){
-  try{ localStorage.setItem('dojo-belt-validated-hidden', val?'1':'0'); }catch(e){}
-}
+const beltValidatedVisibility = cardVisibility('belt-validated', true);
+function loadBeltValidatedHidden(){ return beltValidatedVisibility.get(); }
+function saveBeltValidatedHidden(val){ beltValidatedVisibility.set(val); }
 function renderBeltValidatedSection(){
   const wrap = document.getElementById('belt-validated-section');
   if(!wrap) return;
@@ -3251,12 +3286,9 @@ function loadAgeSettingsLocked(){
 function saveAgeSettingsLocked(val){
   try{ localStorage.setItem('dojo-agesettings-locked', val?'1':'0'); }catch(e){}
 }
-function loadAgeBandsHidden(){
-  try{ return localStorage.getItem('dojo-agebands-hidden')==='1'; }catch(e){ return false; }
-}
-function saveAgeBandsHidden(val){
-  try{ localStorage.setItem('dojo-agebands-hidden', val?'1':'0'); }catch(e){}
-}
+const ageBandsVisibility = cardVisibility('agebands', false);
+function loadAgeBandsHidden(){ return ageBandsVisibility.get(); }
+function saveAgeBandsHidden(val){ ageBandsVisibility.set(val); }
 function renderAgeSettings(){
   const wrap = document.getElementById('age-settings');
   const bands = data.settings.ageBands;
@@ -3389,12 +3421,9 @@ function renderAgeSettings(){
 }
 
 /* ---------------- TARIFS D'ADHÉSION ---------------- */
-function loadFeesHidden(){
-  try{ const v = localStorage.getItem('dojo-fees-hidden'); return v===null ? false : v==='1'; }catch(e){ return false; }
-}
-function saveFeesHidden(val){
-  try{ localStorage.setItem('dojo-fees-hidden', val?'1':'0'); }catch(e){}
-}
+const feesVisibility = cardVisibility('fees', false);
+function loadFeesHidden(){ return feesVisibility.get(); }
+function saveFeesHidden(val){ feesVisibility.set(val); }
 function loadFeesLocked(){
   try{ const v = localStorage.getItem('dojo-fees-locked'); return v===null ? true : v==='1'; }catch(e){ return true; }
 }
@@ -3596,12 +3625,9 @@ function memberFeeDetails(m, familyRank){
     total, license, adhesion, course, groupName: group.name
   };
 }
-function loadAttestationHidden(){
-  try{ const v = localStorage.getItem('dojo-attestation-hidden'); return v===null ? false : v==='1'; }catch(e){ return false; }
-}
-function saveAttestationHidden(val){
-  try{ localStorage.setItem('dojo-attestation-hidden', val?'1':'0'); }catch(e){}
-}
+const attestationVisibility = cardVisibility('attestation', false);
+function loadAttestationHidden(){ return attestationVisibility.get(); }
+function saveAttestationHidden(val){ attestationVisibility.set(val); }
 function renderAttestationSettings(){
   const wrap = document.getElementById('attestation-settings');
   if(!wrap) return;
@@ -3744,7 +3770,6 @@ function renderAttestationSettings(){
       }).join('');
       results.classList.add('show');
     });
-    input.addEventListener('focus', ()=>{ if(input.value.trim()) results.classList.add('show'); });
     results.addEventListener('click', e=>{
       const row = e.target.closest('[data-action="pick-attestation-member"]');
       if(!row) return;
@@ -3789,11 +3814,12 @@ function renderAttestationSettings(){
     generateChequeSportRecapPdf(from, to);
   });
 }
-document.addEventListener('click', e=>{
-  const input = document.getElementById('attestationSearchInput');
-  const results = document.getElementById('attestationSearchResults');
-  if(!input || !results) return;
-  if(!input.contains(e.target) && !results.contains(e.target)) results.classList.remove('show');
+attachSearchDropdown('attestationSearchInput', 'attestationSearchResults', {
+  onFocus: ()=>{
+    const el = document.getElementById('attestationSearchInput');
+    const wrap = document.getElementById('attestationSearchResults');
+    if(el && wrap && el.value.trim()) wrap.classList.add('show');
+  }
 });
 function buildAttestationHtml(m, fee, logoSrc, refDate){
   refDate = refDate || todayStr();
@@ -6300,12 +6326,9 @@ function openCertificate(memberId, groupId){
 
 /* ---------------- ANNIVERSAIRES & ALERTES DÉCROCHAGE ---------------- */
 const DAY_ABBR_FR = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
-function loadBirthdaysHidden(){
-  try{ return localStorage.getItem('dojo-birthdays-hidden')==='1'; }catch(e){ return false; }
-}
-function saveBirthdaysHidden(val){
-  try{ localStorage.setItem('dojo-birthdays-hidden', val?'1':'0'); }catch(e){}
-}
+const birthdaysVisibility = cardVisibility('birthdays', false);
+function loadBirthdaysHidden(){ return birthdaysVisibility.get(); }
+function saveBirthdaysHidden(val){ birthdaysVisibility.set(val); }
 // Alerte "Absences répétées" du Suivi annuel. La carte Anniversaires vit désormais dans
 // Param > Saison & calendrier (voir renderBirthdaysCard) — les deux étaient rendues ensemble
 // avant, mais n'ont rien à voir fonctionnellement (l'une suit l'assiduité, l'autre l'état civil).
@@ -6502,18 +6525,12 @@ async function generateBirthdaysPdf(){
 }
 
 /* ---------------- CALENDRIER : carte Suivi annuel ---------------- */
-function loadCalendarCardHidden(){
-  try{ const v = localStorage.getItem('dojo-calendar-hidden'); return v===null ? true : v==='1'; }catch(e){ return true; }
-}
-function saveCalendarCardHidden(val){
-  try{ localStorage.setItem('dojo-calendar-hidden', val?'1':'0'); }catch(e){}
-}
-function loadCalendarListHidden(){
-  try{ return localStorage.getItem('dojo-calendar-list-hidden')==='1'; }catch(e){ return false; }
-}
-function saveCalendarListHidden(val){
-  try{ localStorage.setItem('dojo-calendar-list-hidden', val?'1':'0'); }catch(e){}
-}
+const calendarCardVisibility = cardVisibility('calendar', true);
+function loadCalendarCardHidden(){ return calendarCardVisibility.get(); }
+function saveCalendarCardHidden(val){ calendarCardVisibility.set(val); }
+const calendarListVisibility = cardVisibility('calendar-list', false);
+function loadCalendarListHidden(){ return calendarListVisibility.get(); }
+function saveCalendarListHidden(val){ calendarListVisibility.set(val); }
 function todayDateStr(){
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -8109,18 +8126,12 @@ function renderCalendarCompetitionSuggestions(list, wrap){
     </div>`).join('') || '<div class="empty" style="padding:10px;">Aucune compétition dans le mois à venir pour ce mot-clé.</div>';
   wrap.classList.add('show');
 }
-  function loadExistingCompetitionHidden(){
-  try{ return localStorage.getItem('dojo-existing-competition-hidden')==='1'; }catch(e){ return false; }
-}
-function saveExistingCompetitionHidden(val){
-  try{ localStorage.setItem('dojo-existing-competition-hidden', val?'1':'0'); }catch(e){}
-}
-function loadNewConvocFormHidden(){
-  try{ return localStorage.getItem('dojo-new-convoc-form-hidden')==='1'; }catch(e){ return false; }
-}
-function saveNewConvocFormHidden(val){
-  try{ localStorage.setItem('dojo-new-convoc-form-hidden', val?'1':'0'); }catch(e){}
-}
+const existingCompetitionVisibility = cardVisibility('existing-competition', false);
+function loadExistingCompetitionHidden(){ return existingCompetitionVisibility.get(); }
+function saveExistingCompetitionHidden(val){ existingCompetitionVisibility.set(val); }
+const newConvocFormVisibility = cardVisibility('new-convoc-form', false);
+function loadNewConvocFormHidden(){ return newConvocFormVisibility.get(); }
+function saveNewConvocFormHidden(val){ newConvocFormVisibility.set(val); }
 function applyConvocSectionsVisibility(){
   const existingHidden = loadExistingCompetitionHidden();
   const existingBody = document.getElementById('existing-competition-body');
@@ -8504,12 +8515,9 @@ function renderArchivedEventResultsHtml(ev){
   const { rows } = buildResultRowsHtml(presents, birthDateOf, shiai);
   return `<table class="recap-table" style="margin-top:8px;"><tr><th>Élève</th><th>Catégorie</th><th>Poids</th><th>Résultat</th></tr>${rows.map(r=>`<tr>${r.html}</tr>`).join('')}</table>`;
 }
-function loadResultsHistoryHidden(){
-  try{ return localStorage.getItem('dojo-results-history-hidden')==='1'; }catch(e){ return false; }
-}
-function saveResultsHistoryHidden(val){
-  try{ localStorage.setItem('dojo-results-history-hidden', val?'1':'0'); }catch(e){}
-}
+const resultsHistoryVisibility = cardVisibility('results-history', false);
+function loadResultsHistoryHidden(){ return resultsHistoryVisibility.get(); }
+function saveResultsHistoryHidden(val){ resultsHistoryVisibility.set(val); }
 function renderResultsHistoryCard(){
   const wrap = document.getElementById('results-history-card');
   if(!wrap) return;
@@ -8657,12 +8665,9 @@ function findOrCreateStage(name, dateStart, dateEnd){
   return stage;
 }
 
-function loadStageFormHidden(){
-  try{ return localStorage.getItem('dojo-stage-form-hidden')==='1'; }catch(e){ return false; }
-}
-function saveStageFormHidden(val){
-  try{ localStorage.setItem('dojo-stage-form-hidden', val?'1':'0'); }catch(e){}
-}
+const stageFormVisibility = cardVisibility('stage-form', false);
+function loadStageFormHidden(){ return stageFormVisibility.get(); }
+function saveStageFormHidden(val){ stageFormVisibility.set(val); }
 
 function renderStageForm(){
   const card = document.getElementById('stage-form-card');
@@ -8735,9 +8740,6 @@ function renderStageForm(){
     wrap.classList.remove('show');
     input.focus();
   });
-  document.addEventListener('click', e=>{
-    if(!input.contains(e.target) && !wrap.contains(e.target)) wrap.classList.remove('show');
-  });
   document.getElementById('newStageBtn').onclick = ()=>{
     ui.currentStageId = null;
     renderStageForm();
@@ -8762,6 +8764,7 @@ function renderStageForm(){
 function initStageForm(){
   renderStageForm();
   renderStageHistory();
+  attachSearchDropdown('stageMemberInput', 'stageMemberSuggestions');
 }
 
 function addMemberToStage(memberId){
@@ -8801,12 +8804,9 @@ function renderStageParticipantsList(stageId){
   });
 }
 
-function loadStageHistoryHidden(){
-  try{ return localStorage.getItem('dojo-stage-history-hidden')==='1'; }catch(e){ return false; }
-}
-function saveStageHistoryHidden(val){
-  try{ localStorage.setItem('dojo-stage-history-hidden', val?'1':'0'); }catch(e){}
-}
+const stageHistoryVisibility = cardVisibility('stage-history', false);
+function loadStageHistoryHidden(){ return stageHistoryVisibility.get(); }
+function saveStageHistoryHidden(val){ stageHistoryVisibility.set(val); }
 function renderStageHistory(){
   const card = document.getElementById('stage-history-card');
   if(!card) return;
@@ -9015,12 +9015,6 @@ function initAddResultMemberAutocomplete(){
     wrap.classList.remove('show');
     refreshAddResultWeightField();
     refreshAddResultQualification();
-  });
-  document.addEventListener('click', e=>{
-    if(!input.contains(e.target) && !wrap.contains(e.target)) wrap.classList.remove('show');
-  });
-  input.addEventListener('focus', ()=>{
-    if(input.value.trim() && wrap.innerHTML) wrap.classList.add('show');
   });
 }
 
@@ -11509,12 +11503,9 @@ async function prepareNextSeasonLicenses(){
   switchTab('groupes');
   showToast(`${eligible.length} fiche(s) liée(s) créée(s) dans « Licence à prendre »`);
 }
-function loadLicensePendingHidden(){
-  try{ return localStorage.getItem('dojo-license-pending-hidden')==='1'; }catch(e){ return false; }
-}
-function saveLicensePendingHidden(val){
-  try{ localStorage.setItem('dojo-license-pending-hidden', val?'1':'0'); }catch(e){}
-}
+const licensePendingVisibility = cardVisibility('license-pending', false);
+function loadLicensePendingHidden(){ return licensePendingVisibility.get(); }
+function saveLicensePendingHidden(val){ licensePendingVisibility.set(val); }
 function renderLicensePendingCard(){
   const wrap = document.getElementById('license-pending-card');
   if(!wrap) return;
@@ -11548,12 +11539,9 @@ function renderLicensePendingCard(){
   document.getElementById('toggleLicensePendingHiddenBtn').addEventListener('click', ()=>{ saveLicensePendingHidden(true); renderLicensePendingCard(); });
 }
 
-function loadArchiveCardHidden(){
-  try{ return localStorage.getItem('dojo-archivecard-hidden')==='1'; }catch(e){ return false; }
-}
-function saveArchiveCardHidden(val){
-  try{ localStorage.setItem('dojo-archivecard-hidden', val?'1':'0'); }catch(e){}
-}
+const archiveCardVisibility = cardVisibility('archivecard', false);
+function loadArchiveCardHidden(){ return archiveCardVisibility.get(); }
+function saveArchiveCardHidden(val){ archiveCardVisibility.set(val); }
 function renderArchiveCard(){
   const wrap = document.getElementById('archive-card');
   if(!wrap) return;
@@ -11752,36 +11740,31 @@ function initGlobalSearch(){
     if(!row) return;
     goToMemberFiche(row.dataset.id, row.dataset.group);
   });
-  document.addEventListener('click', e=>{
-    if(!input.contains(e.target) && !wrap.contains(e.target)){
-      wrap.classList.remove('show');
-    }
-  });
-  input.addEventListener('focus', ()=>{
-    if(input.value.trim()) wrap.classList.add('show');
-  });
 }
 initGlobalSearch();
-// Ferme la liste déroulante de recherche du calendrier (Réglages) au clic extérieur — un seul
-// écouteur global posé une fois pour toutes (les éléments visés n'existent que quand ce bloc de
-// réglages est déplié, d'où la vérification de présence à chaque clic plutôt qu'un ré-attachement).
-document.addEventListener('click', e=>{
-  const input = document.getElementById('calendarSettingsSearch');
-  const wrap = document.getElementById('calendarSettingsSearchResults');
-  if(!input || !wrap) return;
-  if(!input.contains(e.target) && !wrap.contains(e.target)){
-    wrap.classList.remove('show');
+attachSearchDropdown('globalSearchInput', 'globalSearchResults', {
+  onFocus: ()=>{
+    const el = document.getElementById('globalSearchInput');
+    const wrap = document.getElementById('globalSearchResults');
+    if(el && wrap && el.value.trim()) wrap.classList.add('show');
   }
 });
-// Même chose pour la recherche d'un pratiquant d'un autre cours à ajouter à l'appel d'une séance.
-document.addEventListener('click', e=>{
-  const input = document.getElementById('sessionGuestInput');
-  const wrap = document.getElementById('sessionGuestSuggestions');
-  if(!input || !wrap) return;
-  if(!input.contains(e.target) && !wrap.contains(e.target)){
-    wrap.classList.remove('show');
+// Autocomplete élève de l'ajout de résultat (Résultats > Saisir un résultat) — initAddResultMemberAutocomplete
+// est appelée à chaque rendu du formulaire, mais la fermeture au clic extérieur / réaffichage au
+// focus n'a besoin d'être posée qu'une seule fois ici.
+attachSearchDropdown('addResultMemberInput', 'addResultMemberSuggestions', {
+  onFocus: ()=>{
+    const el = document.getElementById('addResultMemberInput');
+    const wrap = document.getElementById('addResultMemberSuggestions');
+    if(el && wrap && el.value.trim() && wrap.innerHTML) wrap.classList.add('show');
   }
 });
+// Recherche du calendrier (Réglages) — la réouverture au focus relance la requête (voir
+// renderSearchResults, définie dans le rendu de cette carte), donc gardée telle quelle ; seule la
+// fermeture au clic extérieur est déléguée à attachSearchDropdown.
+attachSearchDropdown('calendarSettingsSearch', 'calendarSettingsSearchResults');
+// Recherche d'un pratiquant d'un autre cours à ajouter à l'appel d'une séance.
+attachSearchDropdown('sessionGuestInput', 'sessionGuestSuggestions');
 initCalendarCompetitionPicker();
 
 function goToMemberFiche(memberId, groupId){
