@@ -960,6 +960,12 @@ function fmtDate(s){
   if(isNaN(d.getTime())) return '';
   return d.toLocaleDateString('fr-FR', { day:'2-digit', month:'short', year:'numeric' });
 }
+function fmtDateShort(s){
+  if(!s) return '';
+  const d = s.includes('T') ? new Date(s) : new Date(s+'T00:00:00');
+  if(isNaN(d.getTime())) return '';
+  return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + d.getFullYear();
+}
 // Affiche une plage de dates pour une compétition/stage qui dure plusieurs jours (ex. "du 12 au
 // 13 juin 2027"). Si aucune date de fin n'est renseignée, ou qu'elle est identique à la date de
 // début, on retombe simplement sur une date unique — comportement inchangé pour tout ce qui
@@ -3253,14 +3259,36 @@ function renderAttestationSettings(){
   const m = ui.attestationMemberId ? data.members.find(x=>x.id===ui.attestationMemberId) : null;
   const familyRank = ui.attestationFamilyRank || 'p1';
 
+  const type = ui.attestationType || 'paiement';
+  const isChequeSport = type==='chequesport';
+  // Pré-remplissage du montant cotisation/adhésion/licence pour le Chèque Sport : recalculé à
+  // chaque re-rendu (changement d'élève ou de rang familial) à partir de la même grille tarifaire
+  // que l'attestation de paiement — mais reste un champ éditable, l'utilisateur peut l'ajuster.
+  let chequeSportFee = null;
+  if(isChequeSport && m){
+    chequeSportFee = memberFeeDetails(m, familyRank);
+    if(!chequeSportFee.error && ui.attestationCotisationMemberId!==m.id){
+      ui.attestationCotisationAmount = String(chequeSportFee.total);
+      ui.attestationCotisationMemberId = m.id;
+    }
+  }
+  if(!ui.attestationInscriptionDate) ui.attestationInscriptionDate = todayStr();
+
   wrap.innerHTML = `
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h2 style="margin:0;">🧾 Attestation de paiement</h2>
+        <h2 style="margin:0;">🧾 Attestations</h2>
         <button class="ghost icon-btn" id="toggleAttestationHidden" title="${hidden?'Afficher':'Masquer'}" style="padding:8px 9px; font-size:13px; flex-shrink:0;">${hidden?'👁️ Afficher':'🙈 Masquer'}</button>
       </div>
       ${!hidden ? `
-      <p style="font-size:12.5px; color:var(--ink-dim); margin:8px 0 12px; line-height:1.5;">Cherche un élève pour générer son attestation de paiement, complétée automatiquement (cours, tarif, ville).</p>
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:8px 0 12px; line-height:1.5;">Cherche un élève pour générer son attestation, complétée automatiquement (cours, tarif, ville, âge, catégorie).</p>
+      <div style="margin-bottom:10px;">
+        <span class="field-label">Type d'attestation</span>
+        <select id="attestationType">
+          <option value="paiement" ${!isChequeSport?'selected':''}>Attestation de paiement</option>
+          <option value="chequesport" ${isChequeSport?'selected':''}>Attestation Chèque Sport Mennecy</option>
+        </select>
+      </div>
       <div style="position:relative;">
         <input type="text" id="attestationSearchInput" placeholder="🔍 Nom de l'élève..." autocomplete="off">
         <div id="attestationSearchResults" class="global-search-results"></div>
@@ -3279,14 +3307,52 @@ function renderAttestationSettings(){
           ${Object.entries(FAMILY_RANK_LABELS).map(([k,l])=>`<option value="${k}" ${familyRank===k?'selected':''}>${escapeHtml(l)}</option>`).join('')}
         </select>
       </div>
-      <button class="primary" id="generateAttestationBtn" style="width:100%; margin-top:10px;">📄 Générer une attestation de paiement</button>
+      ${isChequeSport ? `
+      <div class="row" style="width:100%; margin:10px 0 0; gap:8px;">
+        <div class="fiche-field">
+          <span class="field-label">Montant ticket loisir CAF (€)</span>
+          <input type="number" step="0.01" id="attestationCafAmount" value="${escapeHtml(ui.attestationCafAmount||'')}" placeholder="0,00">
+        </div>
+        <div class="fiche-field">
+          <span class="field-label">Montant Pass Sport (€)</span>
+          <input type="number" step="0.01" id="attestationPassSportAmount" value="${escapeHtml(ui.attestationPassSportAmount||'')}" placeholder="0,00">
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <span class="field-label">Montant cotisation/adhésion (licence comprise) (€)${chequeSportFee && chequeSportFee.error ? ' — non calculable automatiquement, à renseigner' : ' — calculé automatiquement, modifiable'}</span>
+        <input type="number" step="0.01" id="attestationCotisationAmount" value="${escapeHtml(ui.attestationCotisationAmount||'')}" placeholder="0,00">
+      </div>
+      <div style="margin-top:8px;">
+        <span class="field-label">Date d'inscription</span>
+        <input type="date" id="attestationInscriptionDate" value="${ui.attestationInscriptionDate}">
+      </div>
       ` : ''}
+      <button class="primary" id="generateAttestationBtn" style="width:100%; margin-top:10px;">📄 ${isChequeSport ? 'Générer une attestation Chèque Sport Mennecy' : 'Générer une attestation de paiement'}</button>
+      ` : ''}
+      <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
+        <span class="field-label">Récapitulatif des attestations Chèque Sport (PDF)</span>
+        <p style="font-size:11.5px; color:var(--ink-dim); margin:4px 0 8px; line-height:1.4;">Liste toutes les attestations Chèque Sport générées entre deux dates (nom, prénom, date de naissance, discipline, montant cotisation).</p>
+        <div class="row" style="width:100%; gap:8px;">
+          <div class="fiche-field">
+            <span class="field-label">Du</span>
+            <input type="date" id="chequeSportRecapFrom" value="${escapeHtml(ui.chequeSportRecapFrom||'')}">
+          </div>
+          <div class="fiche-field">
+            <span class="field-label">Au</span>
+            <input type="date" id="chequeSportRecapTo" value="${escapeHtml(ui.chequeSportRecapTo||'')}">
+          </div>
+        </div>
+        <button class="ghost" id="generateChequeSportRecapBtn" style="width:100%; margin-top:8px;">📋 Générer le récapitulatif PDF</button>
+      </div>
       ` : ''}
     </div>
   `;
 
   const toggleBtn = document.getElementById('toggleAttestationHidden');
   if(toggleBtn) toggleBtn.addEventListener('click', ()=>{ saveAttestationHidden(!hidden); renderAttestationSettings(); });
+
+  const typeSelect = document.getElementById('attestationType');
+  if(typeSelect) typeSelect.addEventListener('change', ()=>{ ui.attestationType = typeSelect.value; renderAttestationSettings(); });
 
   const input = document.getElementById('attestationSearchInput');
   const results = document.getElementById('attestationSearchResults');
@@ -3312,15 +3378,38 @@ function renderAttestationSettings(){
       const row = e.target.closest('[data-action="pick-attestation-member"]');
       if(!row) return;
       ui.attestationMemberId = row.dataset.id;
+      ui.attestationCotisationMemberId = null;
       renderAttestationSettings();
     });
   }
   const clearBtn = document.getElementById('clearAttestationMember');
-  if(clearBtn) clearBtn.addEventListener('click', ()=>{ ui.attestationMemberId = null; renderAttestationSettings(); });
+  if(clearBtn) clearBtn.addEventListener('click', ()=>{ ui.attestationMemberId = null; ui.attestationCotisationMemberId = null; renderAttestationSettings(); });
   const rankSelect = document.getElementById('attestationFamilyRank');
-  if(rankSelect) rankSelect.addEventListener('change', ()=>{ ui.attestationFamilyRank = rankSelect.value; });
+  if(rankSelect) rankSelect.addEventListener('change', ()=>{ ui.attestationFamilyRank = rankSelect.value; ui.attestationCotisationMemberId = null; renderAttestationSettings(); });
+  const cafInput = document.getElementById('attestationCafAmount');
+  if(cafInput) cafInput.addEventListener('input', ()=>{ ui.attestationCafAmount = cafInput.value; });
+  const passSportInput = document.getElementById('attestationPassSportAmount');
+  if(passSportInput) passSportInput.addEventListener('input', ()=>{ ui.attestationPassSportAmount = passSportInput.value; });
+  const cotisationInput = document.getElementById('attestationCotisationAmount');
+  if(cotisationInput) cotisationInput.addEventListener('input', ()=>{ ui.attestationCotisationAmount = cotisationInput.value; });
+  const inscriptionDateInput = document.getElementById('attestationInscriptionDate');
+  if(inscriptionDateInput) inscriptionDateInput.addEventListener('change', ()=>{ ui.attestationInscriptionDate = inscriptionDateInput.value || todayStr(); });
   const genBtn = document.getElementById('generateAttestationBtn');
-  if(genBtn) genBtn.addEventListener('click', generatePaymentAttestationPdf);
+  if(genBtn) genBtn.addEventListener('click', isChequeSport ? generateChequeSportAttestationPdf : generatePaymentAttestationPdf);
+  const recapFromInput = document.getElementById('chequeSportRecapFrom');
+  if(recapFromInput) recapFromInput.addEventListener('change', ()=>{ ui.chequeSportRecapFrom = recapFromInput.value; });
+  const recapToInput = document.getElementById('chequeSportRecapTo');
+  if(recapToInput) recapToInput.addEventListener('change', ()=>{ ui.chequeSportRecapTo = recapToInput.value; });
+  const recapBtn = document.getElementById('generateChequeSportRecapBtn');
+  if(recapBtn) recapBtn.addEventListener('click', ()=>{
+    const from = (recapFromInput && recapFromInput.value) || '';
+    const to = (recapToInput && recapToInput.value) || '';
+    if(!from || !to){ showToast('Choisis une date de début et une date de fin'); return; }
+    if(from > to){ showToast('La date de début doit précéder la date de fin'); return; }
+    ui.chequeSportRecapFrom = from;
+    ui.chequeSportRecapTo = to;
+    generateChequeSportRecapPdf(from, to);
+  });
 }
 document.addEventListener('click', e=>{
   const input = document.getElementById('attestationSearchInput');
@@ -3410,6 +3499,176 @@ async function generatePaymentAttestationPdf(){
     const safeName = m.name.replace(/[^\w-]+/g,'-');
     pdf.save(`attestation-paiement-${safeName}.pdf`);
     showToast('Attestation générée');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
+
+// Recrée le formulaire officiel de la Ville de Mennecy (Direction des sports, de la vie associative
+// et de l'animation) "ATTESTATION UNIQUE CHEQUE SPORT CULTURE UNIVERSEL", rempli automatiquement à
+// partir de la fiche élève. Contrairement à l'attestation de paiement (qui porte l'entête du club),
+// ce document reproduit l'entête de la mairie — c'est elle qui délivre l'attestation, le club se
+// contente de la compléter et de la signer/tamponner.
+const MENNECY_CREST_B64 = 'data:image/jpeg;base64,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';
+// Journal des attestations Chèque Sport générées, pour permettre plus tard un récapitulatif PDF
+// filtré par période (nom/prénom/date de naissance/discipline/montant cotisation). Stocké dans
+// data.settings.chequeSportLog (comme validatedDuplicateKeys) plutôt qu'en tant qu'entité à part
+// entière : c'est un simple historique qui grossit, jamais réédité une fois une ligne créée.
+function logChequeSportAttestation(m, cotisationAmount){
+  if(!data.settings.chequeSportLog) data.settings.chequeSportLog = [];
+  const group = data.groups.find(g=>g.id===m.groupId);
+  const disciplineLabel = group ? (courseToDiscipline(group.name) || group.name) : '—';
+  const amountNum = (cotisationAmount!==undefined && cotisationAmount!==null && cotisationAmount!=='') ? Number(String(cotisationAmount).replace(',','.')) : null;
+  data.settings.chequeSportLog.push({
+    id: uid(),
+    memberId: m.id,
+    name: m.name || '',
+    birthDate: m.birthDate || '',
+    discipline: disciplineLabel,
+    cotisation: (amountNum!==null && !isNaN(amountNum)) ? amountNum : null,
+    generatedAt: todayStr()
+  });
+  saveData();
+}
+function buildChequeSportHtml(m, feeAmount, caf, passSport, inscriptionDate, seasonLabel){
+  const age = ageAtDate(m.birthDate, todayStr());
+  const genderLabel = m.gender==='F' ? 'Féminin' : (m.gender==='M' ? 'Masculin' : '—');
+  const group = data.groups.find(g=>g.id===m.groupId);
+  const disciplineLabel = group ? (courseToDiscipline(group.name) || group.name) : '—';
+  const categoryLabel = computeCategory(m.birthDate) || '—';
+  const F = v => (v!==undefined && v!==null && v!=='') ? String(v).replace('.',',') : '';
+  const fmtDateSlash = fmtDateShort;
+  // Reproduit le style "à points" du formulaire papier d'origine : la valeur remplie est écrite
+  // directement au-dessus d'une ligne pointillée (comme sur le PDF de la mairie), plutôt qu'un
+  // simple "Label : valeur" en gras — la ligne de points reste visible même une fois remplie.
+  const dotted = (value, minWidth)=> `<span style="display:inline-block; min-width:${minWidth||160}px; border-bottom:1px dotted #1a1a1a; padding:0 2px 2px; font-weight:600;">${value}</span>`;
+  const field = (label, value, minWidth, extraTop)=> `<div style="margin-top:${20+(extraTop||0)}px;">${label} : ${dotted(value, minWidth)}</div>`;
+  return `
+    <div style="width:700px; padding:16px 46px 40px; background:#fff; box-sizing:border-box; font-family:'Inter',sans-serif; color:#1a1a1a; font-size:14px; line-height:1.7;">
+      <table style="width:100%; border-collapse:collapse;"><tr>
+        <td style="vertical-align:top; padding:0;">
+          <div style="font-weight:800; font-size:19px; letter-spacing:0.5px;">VILLE DE MENNECY</div>
+          <div style="margin-top:12px; font-weight:700; font-size:12.5px;">DIRECTION DES SPORTS, DE LA VIE ASSOCIATIVE ET DE L'ANIMATION</div>
+          <div style="font-size:12px; margin-top:3px;">31 rue de Milly</div>
+          <div style="font-size:12px;">01.69.90.73.44</div>
+          <div style="font-size:12px; text-decoration:underline;">chequesportculture@mennecy.fr</div>
+        </td>
+        <td style="width:90px; vertical-align:top; text-align:center; padding:0;">
+          <img src="${MENNECY_CREST_B64}" alt="Ville de Mennecy" style="width:74px; height:auto; display:block; margin:0 auto;">
+          <div style="font-size:9.5px; margin-top:4px;">www.mennecy.fr</div>
+        </td>
+      </tr></table>
+      <div style="border-bottom:1.4px solid #1a1a1a; margin-top:10px;"></div>
+
+      <div style="text-align:center; font-weight:700; margin-top:26px; font-size:13.5px; letter-spacing:0.3px;">
+        <div>ATTESTATION UNIQUE</div>
+        <div style="margin-top:3px;">CHEQUE SPORT CULTURE UNIVERSEL ${escapeHtml(seasonLabel)}</div>
+      </div>
+
+      <div style="border:1.2px solid #1a1a1a; padding:14px 16px; margin-top:22px;">
+        <div>Nom de l'association : <strong>ACADEMIE MENNECOISE D'ARTS MARTIAUX - AMAM</strong></div>
+        <div style="margin-top:10px;">Mail : <strong>amam91540@gmail.com</strong> &nbsp;&nbsp;&nbsp;&nbsp; Téléphone : <strong>01.64.57.32.49</strong></div>
+      </div>
+
+      ${field("Nom et prénom de l'enfant", escapeHtml(m.name||''), 380)}
+      <div style="margin-top:20px;">Date de naissance : ${dotted(fmtDateSlash(m.birthDate) || '—', 150)} &nbsp;&nbsp;&nbsp; Age : ${dotted(age!==null?age:'—', 50)} &nbsp;&nbsp;&nbsp; Sexe : ${dotted(genderLabel, 90)}</div>
+      ${field("Sport / activité pratiqué(e)", escapeHtml(disciplineLabel), 300)}
+      ${field('Catégorie', escapeHtml(categoryLabel), 220)}
+
+      ${field('Montant du ticket loisir CAF', F(caf) ? `${F(caf)} €` : '—', 100, 14)}
+      ${field('Montant du Pass Sport', F(passSport) ? `${F(passSport)} €` : '—', 100)}
+      ${field('Montant cotisation/adhésion licence comprise', F(feeAmount) ? `${F(feeAmount)} €` : '—', 100)}
+
+      ${field("Date d'inscription", fmtDateLong(inscriptionDate) || '—', 200, 14)}
+
+      <div style="margin-top:40px;">Signature et cachet de l'association</div>
+    </div>`;
+}
+async function generateChequeSportAttestationPdf(){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const m = data.members.find(x=>x.id===ui.attestationMemberId);
+  if(!m){ showToast('Sélectionne un élève'); return; }
+  const btn = document.getElementById('generateAttestationBtn');
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
+  try{
+    const seasonLabel = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
+    const inscriptionDate = ui.attestationInscriptionDate || todayStr();
+    const html = buildChequeSportHtml(m, ui.attestationCotisationAmount, ui.attestationCafAmount, ui.attestationPassSportAmount, inscriptionDate, seasonLabel);
+    const canvas = await captureOffscreenSection(html, '', 700);
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    addCanvasFitOrTop(pdf, canvas, 24);
+    const safeName = m.name.replace(/[^\w-]+/g,'-');
+    pdf.save(`attestation-cheque-sport-mennecy-${safeName}.pdf`);
+    logChequeSportAttestation(m, ui.attestationCotisationAmount);
+    showToast('Attestation Chèque Sport générée');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
+
+// Récapitulatif PDF de toutes les attestations Chèque Sport générées sur une période choisie
+// (bornes incluses), à partir du journal data.settings.chequeSportLog. Rows découpées par blocs de
+// 20 (chaque bloc étant sa propre mini-table avec en-tête répété) pour que paginateBlocksIntoPdf
+// puisse répartir proprement sur plusieurs pages sans jamais couper une ligne en deux.
+function buildChequeSportRecapBlocks(rows, fromLabel, toLabel, logoSrc){
+  const headerHtml = `
+    <div class="recap-header">
+      ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
+      <div>
+        <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
+        <div class="rh-sub">Récapitulatif des attestations Chèque Sport Mennecy — du ${escapeHtml(fromLabel)} au ${escapeHtml(toLabel)}</div>
+      </div>
+    </div>`;
+  const F = v => (v!==undefined && v!==null) ? Number(v).toFixed(2).replace('.',',') : '—';
+  const headRow = `<tr><th>Nom</th><th>Prénom</th><th>Date de naissance</th><th>Discipline</th><th>Montant cotisation</th></tr>`;
+  const rowHtml = e=>{
+    const parts = String(e.name||'').trim().split(/\s+/);
+    const prenom = parts[0]||'';
+    const nom = parts.slice(1).join(' ');
+    return `<tr><td>${escapeHtml(nom)}</td><td>${escapeHtml(prenom)}</td><td>${fmtDateShort(e.birthDate)||'—'}</td><td>${escapeHtml(e.discipline||'—')}</td><td>${e.cotisation!==null && e.cotisation!==undefined ? F(e.cotisation)+' €' : '—'}</td></tr>`;
+  };
+  const blocks = [];
+  if(rows.length===0){
+    blocks.push(`<table class="recap-table">${headRow}<tr><td colspan="5" style="text-align:center; color:#888; padding:20px 10px;">Aucune attestation générée sur cette période.</td></tr></table>`);
+  } else {
+    const CHUNK = 20;
+    for(let i=0;i<rows.length;i+=CHUNK){
+      const chunk = rows.slice(i, i+CHUNK);
+      blocks.push(`<table class="recap-table">${headRow}${chunk.map(rowHtml).join('')}</table>`);
+    }
+  }
+  return { headerHtml, blocks };
+}
+async function generateChequeSportRecapPdf(fromDate, toDate){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const btn = document.getElementById('generateChequeSportRecapBtn');
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
+  try{
+    const rows = (data.settings.chequeSportLog||[])
+      .filter(e=> e.generatedAt && (!fromDate || e.generatedAt>=fromDate) && (!toDate || e.generatedAt<=toDate))
+      .sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+    const logoImg = document.querySelector('header.topbar .club-logo-light');
+    const logoSrc = logoImg ? logoImg.src : '';
+    const { headerHtml, blocks } = buildChequeSportRecapBlocks(rows, fmtDateShort(fromDate)||'—', fmtDateShort(toDate)||'—', logoSrc);
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    const margin = 24;
+    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass:'recap-doc', containerWidthPx:700, margin });
+    pdf.save(`recapitulatif-cheque-sport-mennecy-${fromDate}-au-${toDate}.pdf`);
+    showToast('Récapitulatif Chèque Sport généré');
   } catch(err){
     showToast('Échec de la génération : ' + (err.message||err));
   } finally {
