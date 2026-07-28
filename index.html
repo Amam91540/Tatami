@@ -1589,72 +1589,10 @@ function setBackendConfig(cfg){
   localStorage.setItem('dojo-backend-config', JSON.stringify(cfg));
 }
 
-async function loadData(){
-  const cfg = getBackendConfig();
-  let loadedFromBackend = false;
-  let pendingMergeOnLoad = false;
-  if(cfg && cfg.url && cfg.key){
-    try{
-      const res = await fetch(`${cfg.url}?key=${encodeURIComponent(cfg.key)}`);
-      const json = await res.json();
-      if(json && !json.error){
-        // Le classeur distant peut avoir été mis en place avant l'ajout de champs plus récents
-        // (ex: passages de grade). S'il ne les renvoie pas, on garde la version locale de ces
-        // champs au lieu de les effacer silencieusement à chaque chargement.
-        let local = null;
-        try{ const raw = localStorage.getItem('dojo-data'); if(raw) local = JSON.parse(raw); }catch(e){}
-        let lastSynced = null;
-        try{ const raw = localStorage.getItem('dojo-synced-snapshot'); if(raw) lastSynced = JSON.parse(raw); }catch(e){}
-        // On garde une copie du serveur AVANT de réinjecter les changements locaux en attente :
-        // c'est cette version-là (et pas la fusionnée) qui doit servir de référence "connue
-        // synchronisée" pour la prochaine sauvegarde, sans quoi un changement local pas encore
-        // confirmé serait à tort considéré comme déjà envoyé et ne serait jamais réessayé.
-        const preMergeServerSnapshot = snapshotFrom(json);
-        data = json;
-        if(local && typeof local === 'object'){
-          Object.keys(local).forEach(key=>{
-            if(data[key] === undefined) data[key] = local[key];
-          });
-          if(local.settings && typeof local.settings === 'object'){
-            data.settings = data.settings || {};
-            Object.keys(local.settings).forEach(key=>{
-              if(data.settings[key] === undefined) data.settings[key] = local.settings[key];
-            });
-          }
-          SYNCED_SNAPSHOT_COLLECTIONS.forEach(coll=>{
-            const deletedIds = (local.deletedIds && local.deletedIds[coll]) || [];
-            const merged = mergeLocalPendingArray(data[coll], local[coll], lastSynced ? lastSynced[coll] : null, deletedIds);
-            if(JSON.stringify(merged) !== JSON.stringify(data[coll])){ pendingMergeOnLoad = true; data[coll] = merged; }
-          });
-          const mergedAtt = mergeLocalPendingAttendance(data.attendance, local.attendance, lastSynced ? lastSynced.attendance : null);
-          if(JSON.stringify(mergedAtt) !== JSON.stringify(data.attendance)){ pendingMergeOnLoad = true; data.attendance = mergedAtt; }
-          if(pendingMergeOnLoad){
-            // On sait maintenant que le serveur a une version en retard sur au moins une entité :
-            // on fixe la référence de synchro sur CETTE version serveur (pas la fusionnée), pour
-            // que la sauvegarde qu'on déclenche juste après renvoie bien les changements en attente.
-            syncedSnapshot = preMergeServerSnapshot;
-          }
-        }
-        data.groups ||= []; data.members ||= []; data.sessions ||= []; data.attendance ||= {};
-        loadedFromBackend = true;
-      } else {
-        showToast('Connexion au classeur refusée — vérifie la clé');
-      }
-    }catch(e){
-      showToast('Classeur inaccessible — mode local pour cette fois');
-    }
-  }
-  if(!loadedFromBackend){
-    try{
-      const raw = localStorage.getItem('dojo-data');
-      if(raw){
-        data = JSON.parse(raw);
-        data.groups ||= []; data.members ||= []; data.sessions ||= []; data.attendance ||= {};
-      }
-    }catch(e){
-      // pas encore de données enregistrées, ou stockage indisponible — on démarre avec une ardoise vierge
-    }
-  }
+// Vérifications/migrations qui doivent toujours s'appliquer une fois `data` déterminé, que ce
+// soit depuis le local (phase 1 de loadData) ou après fusion avec le classeur (phase 2) — d'où
+// leur regroupement ici plutôt qu'une duplication entre les deux phases.
+function applyDataInvariants(){
   ensureSettings();
   ensureKnownRecurrence();
   if(migrateValidatedFlag()){ saveData(); }
@@ -1667,24 +1605,103 @@ async function loadData(){
   // seul thème. `data.settings.theme` reste dans le modèle de données pour ne pas casser
   // d'anciennes sauvegardes, mais n'est plus lu nulle part.
   data.settings.theme = 'light';
+}
+async function loadData(){
+  // Phase 1 : démarrage instantané avec ce qui est déjà connu sur ce téléphone (localStorage),
+  // sans attendre le réseau — évite de laisser l'écran "Chargement…" affiché plusieurs secondes
+  // à chaque lancement le temps d'interroger le classeur Google Sheets (voir phase 2 plus bas).
+  try{
+    const raw = localStorage.getItem('dojo-data');
+    if(raw){
+      data = JSON.parse(raw);
+      data.groups ||= []; data.members ||= []; data.sessions ||= []; data.attendance ||= {};
+    }
+  }catch(e){
+    // pas encore de données enregistrées, ou stockage indisponible — on démarre avec une ardoise vierge
+  }
+  applyDataInvariants();
   ready = true;
   document.getElementById('clubName').value = data.clubName || '';
   document.getElementById('clubContact').value = data.clubContact || '';
-  if(pendingMergeOnLoad){
-    // Un changement fait juste avant ce rechargement n'avait pas encore été confirmé par le
-    // serveur (voir mergeLocalPendingArray) : on relance tout de suite la sauvegarde pour qu'il
-    // ne reste pas bloqué en attente. saveData() se charge lui-même, une fois l'envoi réussi, de
-    // fixer la nouvelle référence de synchro (captureSyncedSnapshot) — inutile de l'appeler ici.
-    saveData();
-  } else {
-    // Point de référence pour ne renvoyer, à la prochaine sauvegarde, que ce qui aura réellement
-    // changé sur cet appareil depuis ce chargement (voir captureSyncedSnapshot).
-    captureSyncedSnapshot();
-  }
   renderAll();
-  // Le chargement initial est terminé : on retire l'écran de démarrage (voir #app-loading).
   const loadingEl = document.getElementById('app-loading');
   if(loadingEl) loadingEl.classList.add('hide');
+
+  // Phase 2 : va chercher la version à jour du classeur en arrière-plan, sans bloquer l'affichage
+  // déjà fait ci-dessus. Si aucun classeur n'est connecté, ou si le réseau échoue, la phase 1 fait
+  // foi telle quelle (comportement identique à avant pour ce cas).
+  await syncBackendOnLaunch();
+}
+async function syncBackendOnLaunch(){
+  const cfg = getBackendConfig();
+  if(!cfg || !cfg.url || !cfg.key){
+    captureSyncedSnapshot();
+    return;
+  }
+  let pendingMergeOnLoad = false;
+  try{
+    const res = await fetch(`${cfg.url}?key=${encodeURIComponent(cfg.key)}`);
+    const json = await res.json();
+    if(json && !json.error){
+      // Le classeur distant peut avoir été mis en place avant l'ajout de champs plus récents
+      // (ex: passages de grade). S'il ne les renvoie pas, on garde la version locale de ces
+      // champs au lieu de les effacer silencieusement à chaque chargement.
+      let local = null;
+      try{ const raw = localStorage.getItem('dojo-data'); if(raw) local = JSON.parse(raw); }catch(e){}
+      let lastSynced = null;
+      try{ const raw = localStorage.getItem('dojo-synced-snapshot'); if(raw) lastSynced = JSON.parse(raw); }catch(e){}
+      // On garde une copie du serveur AVANT de réinjecter les changements locaux en attente :
+      // c'est cette version-là (et pas la fusionnée) qui doit servir de référence "connue
+      // synchronisée" pour la prochaine sauvegarde, sans quoi un changement local pas encore
+      // confirmé serait à tort considéré comme déjà envoyé et ne serait jamais réessayé.
+      const preMergeServerSnapshot = snapshotFrom(json);
+      data = json;
+      if(local && typeof local === 'object'){
+        Object.keys(local).forEach(key=>{
+          if(data[key] === undefined) data[key] = local[key];
+        });
+        if(local.settings && typeof local.settings === 'object'){
+          data.settings = data.settings || {};
+          Object.keys(local.settings).forEach(key=>{
+            if(data.settings[key] === undefined) data.settings[key] = local.settings[key];
+          });
+        }
+        SYNCED_SNAPSHOT_COLLECTIONS.forEach(coll=>{
+          const deletedIds = (local.deletedIds && local.deletedIds[coll]) || [];
+          const merged = mergeLocalPendingArray(data[coll], local[coll], lastSynced ? lastSynced[coll] : null, deletedIds);
+          if(JSON.stringify(merged) !== JSON.stringify(data[coll])){ pendingMergeOnLoad = true; data[coll] = merged; }
+        });
+        const mergedAtt = mergeLocalPendingAttendance(data.attendance, local.attendance, lastSynced ? lastSynced.attendance : null);
+        if(JSON.stringify(mergedAtt) !== JSON.stringify(data.attendance)){ pendingMergeOnLoad = true; data.attendance = mergedAtt; }
+        if(pendingMergeOnLoad){
+          // On sait maintenant que le serveur a une version en retard sur au moins une entité :
+          // on fixe la référence de synchro sur CETTE version serveur (pas la fusionnée), pour
+          // que la sauvegarde qu'on déclenche juste après renvoie bien les changements en attente.
+          syncedSnapshot = preMergeServerSnapshot;
+        }
+      }
+      data.groups ||= []; data.members ||= []; data.sessions ||= []; data.attendance ||= {};
+      applyDataInvariants();
+      if(pendingMergeOnLoad){
+        // Un changement fait juste avant ce rechargement n'avait pas encore été confirmé par le
+        // serveur (voir mergeLocalPendingArray) : on relance tout de suite la sauvegarde pour qu'il
+        // ne reste pas bloqué en attente. saveData() se charge lui-même, une fois l'envoi réussi, de
+        // fixer la nouvelle référence de synchro (captureSyncedSnapshot) — inutile de l'appeler ici.
+        saveData();
+      } else {
+        // Point de référence pour ne renvoyer, à la prochaine sauvegarde, que ce qui aura réellement
+        // changé sur cet appareil depuis ce chargement (voir captureSyncedSnapshot).
+        captureSyncedSnapshot();
+      }
+      renderAll();
+    } else {
+      showToast('Connexion au classeur refusée — vérifie la clé');
+      captureSyncedSnapshot();
+    }
+  }catch(e){
+    showToast('Classeur inaccessible — mode local pour cette fois');
+    captureSyncedSnapshot();
+  }
 }
 let saveInFlight = false;
 let savePendingAfter = false;
