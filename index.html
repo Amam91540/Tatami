@@ -4205,6 +4205,10 @@ function renderImportedCompetitionRow(c){
         <input type="text" data-field="name" value="${escapeHtml(effectiveCompetitionName(c))}">
       </div>
       <div>
+        <span class="field-label">Date</span>
+        <input type="date" data-field="date" value="${escapeHtml(effectiveCompetitionDate(c))}">
+      </div>
+      <div>
         <span class="field-label">Ville</span>
         <input type="text" data-field="city" value="${escapeHtml(effectiveCompetitionCity(c))}">
       </div>
@@ -4223,7 +4227,7 @@ function renderImportedCompetitionRow(c){
   <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
       <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'imported', c}))}</div>
-      <div class="e">${c.date?fmtDate(c.date):escapeHtml(c.dayLabel)} · ${escapeHtml(effectiveCompetitionCity(c))}</div>
+      <div class="e">${effectiveCompetitionDate(c)?fmtDate(effectiveCompetitionDate(c)):escapeHtml(c.dayLabel)} · ${escapeHtml(effectiveCompetitionCity(c))}</div>
       <div style="margin-top:4px;">${calendarCategoryTagsHtml(importedCompetitionAgeCategories(c))}</div>
     </div>
     <div style="display:flex; gap:4px; flex-shrink:0;">
@@ -4365,7 +4369,7 @@ function renderImportedCompetitionsSettings(){
   const importedList = [...visibleCompetitionCalendar()];
   const manualList = data.calendarEvents || [];
   const rows = [
-    ...importedList.map(c=>({ kind:'imported', c, date:c.date||'' })),
+    ...importedList.map(c=>({ kind:'imported', c, date:effectiveCompetitionDate(c) })),
     ...manualList.map(e=>({ kind:'manual', e, date:e.date||'' }))
   ].sort((a,b)=> a.date.localeCompare(b.date));
   const expanded = !!ui.importedCompetitionsExpanded;
@@ -4396,7 +4400,7 @@ function renderImportedCompetitionsSettings(){
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" style="transform:rotate(${expanded?90:0}deg); transition:transform .15s;"><path d="M9 6l6 6-6 6"/></svg>
     </button>
     ${expanded ? `
-    <p style="font-size:12.5px; color:var(--ink-dim); margin:10px 0;">Supprimer une compétition importée ici la retire définitivement — elle ne réapparaîtra plus. Le crayon permet de corriger le nom, la ville, l'adresse et les catégories d'âge concernées. Tu peux aussi ajouter toi-même une compétition ou un stage absent de la liste importée.</p>
+    <p style="font-size:12.5px; color:var(--ink-dim); margin:10px 0;">Supprimer une compétition importée ici la retire définitivement — elle ne réapparaîtra plus. Le crayon permet de corriger le nom, la date, la ville, l'adresse et les catégories d'âge concernées. Tu peux aussi ajouter toi-même une compétition ou un stage absent de la liste importée.</p>
     <div style="position:relative; margin-bottom:10px;">
       <input type="text" id="calendarSettingsSearch" placeholder="Rechercher une compétition ou un stage par nom…" value="${escapeHtml(ui.calendarSettingsSearchQuery)}" style="width:100%; padding-right:32px;" autocomplete="off">
       ${ui.calendarSettingsSearchQuery ? `<button class="ghost icon-btn" id="calendarSettingsSearchClear" title="Effacer" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); padding:2px 8px; font-size:12px; border:none; background:transparent;">✕</button>` : ''}
@@ -4592,12 +4596,13 @@ function renderImportedCompetitionsSettings(){
   if(saveBtn) saveBtn.addEventListener('click', ()=>{
     const row = saveBtn.closest('[data-form]');
     const name = row.querySelector('[data-field="name"]').value.trim();
+    const date = row.querySelector('[data-field="date"]').value;
     const city = row.querySelector('[data-field="city"]').value.trim();
     const address = row.querySelector('[data-field="address"]').value.trim();
     const ageCategories = readAgeCategoriesFromForm(row);
     if(!data.settings.competitionOverrides) data.settings.competitionOverrides = {};
     const prevOverride = data.settings.competitionOverrides[saveBtn.dataset.key] || {};
-    data.settings.competitionOverrides[saveBtn.dataset.key] = { ...prevOverride, name, city, address, ageCategories };
+    data.settings.competitionOverrides[saveBtn.dataset.key] = { ...prevOverride, name, date, city, address, ageCategories };
     const rawComp = COMPETITION_CALENDAR.find(c=>competitionKey(c)===saveBtn.dataset.key);
     if(rawComp) saveCompetitionProfile(rawComp.name, rawComp.city, { address, ageCategories });
     saveData();
@@ -7731,6 +7736,10 @@ function effectiveCompetitionAddress(c){
   if(profile && profile.address) return profile.address;
   return KNOWN_COMPETITION_ADDRESSES[(c.city||'').trim().toUpperCase()] || '';
 }
+function effectiveCompetitionDate(c){
+  const o = getCompetitionOverride(c);
+  return (o.date !== undefined && o.date !== null && o.date !== '') ? o.date : (c.date||'');
+}
 function competitionKey(c){
   return `${c.name}|${c.date}|${c.city}|${(c.details||[]).join(',')}`;
 }
@@ -7843,7 +7852,7 @@ function wireAgeCategoryExclusivity(formEl){
 function getAllCalendarEntries(){
   const imported = visibleCompetitionCalendar().map(c=>({
     key: competitionKey(c), kind:'imported', type:'competition',
-    name: effectiveCompetitionName(c), date: c.date||'', dayLabel: c.dayLabel||'',
+    name: effectiveCompetitionName(c), date: effectiveCompetitionDate(c), dayLabel: c.dayLabel||'',
     city: effectiveCompetitionCity(c),
     ageCategories: importedCompetitionAgeCategories(c),
     validated: getCompetitionOverride(c).validated === true,
@@ -7884,7 +7893,7 @@ function migrateFederationCalendarOnce(){
     const ov = getCompetitionOverride(c);
     data.calendarEvents.push({
       id: uid(), type:'competition',
-      name: effectiveCompetitionName(c), date: c.date||'', city: effectiveCompetitionCity(c),
+      name: effectiveCompetitionName(c), date: effectiveCompetitionDate(c), city: effectiveCompetitionCity(c),
       address: effectiveCompetitionAddress(c), ageCategories: importedCompetitionAgeCategories(c),
       validated: ov.validated===true, cancelled: ov.cancelled===true,
       level: c.level||'', dayLabel: c.dayLabel||'', details: c.details||[], weighIn: c.weighIn||[],
@@ -8140,10 +8149,11 @@ function competitionsWithinNextMonth(){
   const today = new Date(); today.setHours(0,0,0,0);
   const cutoff = new Date(today.getFullYear(), today.getMonth()+1, today.getDate());
   return visibleCompetitionCalendar().filter(c=>{
-    if(!c.date) return false;
-    const d = new Date(c.date+'T00:00:00');
+    const dt = effectiveCompetitionDate(c);
+    if(!dt) return false;
+    const d = new Date(dt+'T00:00:00');
     return d >= today && d <= cutoff;
-  }).sort((a,b)=> a.date.localeCompare(b.date));
+  }).sort((a,b)=> effectiveCompetitionDate(a).localeCompare(effectiveCompetitionDate(b)));
 }
 function competitionNameWithCategory(c){
   const bandLabel = matchConfiguredBandLabel(c.name + ' ' + (c.details||[]).join(' '));
@@ -8165,7 +8175,7 @@ function renderCalendarCompetitionSuggestions(list, wrap){
     <div class="convoc-row" data-action="pick-calendar-competition" data-idx="${COMPETITION_CALENDAR.indexOf(c)}" style="cursor:pointer;">
       <div class="info">
         <div class="n">${escapeHtml(effectiveCompetitionName(c))}${c.level?' <span class="tag">'+escapeHtml(c.level)+'</span>':''}${hasConvocationForCompetition(c)?' <span title="Convocation déjà générée" style="display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:#3F8F3F; color:#fff; font-size:10px; font-weight:800; flex-shrink:0;">✓</span>':''}</div>
-        <div class="e">${c.date?fmtDate(c.date):escapeHtml(c.dayLabel)} · ${escapeHtml(effectiveCompetitionCity(c))}</div>
+        <div class="e">${effectiveCompetitionDate(c)?fmtDate(effectiveCompetitionDate(c)):escapeHtml(c.dayLabel)} · ${escapeHtml(effectiveCompetitionCity(c))}</div>
       </div>
     </div>`).join('') || '<div class="empty" style="padding:10px;">Aucune compétition dans le mois à venir pour ce mot-clé.</div>';
   wrap.classList.add('show');
@@ -8206,7 +8216,7 @@ function pickCalendarCompetition(idx){
   if(!c) return;
   const fullEventName = effectiveCompetitionName(c);
   document.getElementById('convocEvent').value = fullEventName;
-  if(c.date) document.getElementById('convocDate').value = c.date;
+  if(effectiveCompetitionDate(c)) document.getElementById('convocDate').value = effectiveCompetitionDate(c);
   document.getElementById('convocVille').value = effectiveCompetitionCity(c);
   document.getElementById('convocLieu').value = effectiveCompetitionAddress(c);
   saveCompetitionProfile(c.name, c.city, { address: effectiveCompetitionAddress(c), ageCategories: importedCompetitionAgeCategories(c) });
@@ -8297,7 +8307,7 @@ function initCalendarCompetitionPicker(){
     select.innerHTML = `<option value="">— Choisir une compétition —</option>` + withinMonth.map(c=>{
       const idx = COMPETITION_CALENDAR.indexOf(c);
       const already = hasConvocationForCompetition(c) ? '✓ ' : '';
-      const dateLabel = c.date ? fmtDate(c.date) : c.dayLabel;
+      const dateLabel = effectiveCompetitionDate(c) ? fmtDate(effectiveCompetitionDate(c)) : c.dayLabel;
       const levelPart = c.level ? ` (${c.level})` : '';
       const label = `${already}${effectiveCompetitionName(c)}${levelPart} — ${dateLabel} · ${effectiveCompetitionCity(c)}`;
       return `<option value="${idx}">${escapeHtml(label)}</option>`;
