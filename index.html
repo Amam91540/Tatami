@@ -291,8 +291,8 @@
 
   /* Bordereau d'encaissement A.M.A.M — tableau à nombreuses colonnes étroites, format paysage */
   .bordereau-table{ width:100%; border-collapse:collapse; font-size:10.5px; }
-  .bordereau-table th{ background:#2A2F26; color:#fff; text-align:left; padding:5px 6px; font-size:9px; text-transform:uppercase; letter-spacing:0.02em; border:1px solid #2A2F26; }
-  .bordereau-table td{ padding:5px 6px; border:1px solid #ddd; vertical-align:top; }
+  .bordereau-table th{ background:#2A2F26; color:#fff; text-align:center; vertical-align:middle; padding:5px 6px; font-size:9px; text-transform:uppercase; letter-spacing:0.02em; border:1px solid #2A2F26; }
+  .bordereau-table td{ padding:5px 6px; border:1px solid #ddd; text-align:center; vertical-align:middle; }
   .bordereau-table tr:nth-child(even) td{ background:#FAFAF7; }
   .bordereau-table tr.bord-total td{ background:#F1F4EA; font-weight:800; border-top:2px solid #2A2F26; }
   .bordereau-doc .bd-meta{ display:flex; justify-content:space-between; font-size:12px; margin-bottom:10px; gap:12px; flex-wrap:wrap; }
@@ -7743,18 +7743,37 @@ function renderCotisationsCard(){
 
   // Bordereau d'encaissement A.M.A.M : nombre de paiements pas encore mis sur un bordereau + dernier
   // folio généré, par section — pour l'affichage du bloc dédié.
+  // Liste des bordereaux déjà générés pour une section (le plus récent folio en premier) : chaque
+  // ligne est cliquable pour retélécharger exactement ce bordereau-là (regenerateBordereauFromLog),
+  // sans consommer un nouveau numéro de folio.
+  function buildBordereauHistoryHtml(section){
+    const logs = (data.settings.bordereauLog||[]).filter(l=>l.section===section).sort((a,b)=> b.folio-a.folio);
+    if(!logs.length) return '<div class="empty" style="font-size:11.5px; padding:4px 0 4px 4px;">Aucun bordereau généré pour cette section pour l\'instant.</div>';
+    return `<div style="margin:2px 0 4px;">${logs.map(l=>{
+      const n = (l.paymentIds||[]).length;
+      return `<div data-action="bordereau-history-item" data-id="${escapeHtml(l.id)}" style="cursor:pointer; padding:4px 4px; font-size:12px; border-bottom:1px solid var(--line); text-decoration:underline dotted; text-decoration-color:var(--ink-dim);">Folio N°${l.folio} — ${escapeHtml(fmtDateShort(l.generatedAt)||l.generatedAt)} · ${n} paiement${n>1?'s':''}</div>`;
+    }).join('')}</div>`;
+  }
   const bordereauSectionsHtml = BORDEREAU_SECTIONS.map(section=>{
     const pendingCount = (data.payments||[]).filter(p=>
       ['especes','cheque','ancv'].includes(p.method) && p.status!=='annule' && p.status!=='rejete' &&
       !p.bordereauFolio && paymentBordereauSection(p)===section
     ).length;
-    const lastLog = (data.settings.bordereauLog||[]).filter(l=>l.section===section).sort((a,b)=> b.folio-a.folio)[0];
-    return `<div class="row" style="align-items:center; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--line);">
-      <div>
-        <div style="font-weight:600; font-size:13.5px;">${escapeHtml(section)}</div>
-        <div style="font-size:11.5px; color:var(--ink-dim);">${pendingCount ? `${pendingCount} paiement${pendingCount>1?'s':''} en attente` : 'Aucun paiement en attente'}${lastLog ? ` · dernier folio N°${lastLog.folio} (${fmtDateShort(lastLog.generatedAt)})` : ''}</div>
+    const logsForSection = (data.settings.bordereauLog||[]).filter(l=>l.section===section);
+    const lastLog = logsForSection.slice().sort((a,b)=> b.folio-a.folio)[0];
+    const historyOpen = !!(ui.bordereauHistoryOpen && ui.bordereauHistoryOpen[section]);
+    return `<div style="padding:7px 0; border-bottom:1px solid var(--line);">
+      <div class="row" style="align-items:center; justify-content:space-between;">
+        <div>
+          <div style="font-weight:600; font-size:13.5px;">${escapeHtml(section)}</div>
+          <div style="font-size:11.5px; color:var(--ink-dim);">${pendingCount ? `${pendingCount} paiement${pendingCount>1?'s':''} en attente` : 'Aucun paiement en attente'}${lastLog ? ` · dernier folio N°${lastLog.folio} (${fmtDateShort(lastLog.generatedAt)})` : ''}</div>
+        </div>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <button class="ghost" data-action="toggle-bordereau-history" data-section="${escapeHtml(section)}" title="Retrouver les bordereaux déjà générés pour cette section" style="padding:5px 8px; font-size:12.5px;">🕘${logsForSection.length ? ` ${logsForSection.length}` : ''}</button>
+          <button class="ghost" data-action="generate-bordereau" data-section="${escapeHtml(section)}" style="padding:5px 10px; font-size:12.5px; white-space:nowrap;">📄 Générer</button>
+        </div>
       </div>
-      <button class="ghost" data-action="generate-bordereau" data-section="${escapeHtml(section)}" style="padding:5px 10px; font-size:12.5px; white-space:nowrap;">📄 Générer</button>
+      ${historyOpen ? buildBordereauHistoryHtml(section) : ''}
     </div>`;
   }).join('');
 
@@ -7830,6 +7849,17 @@ function renderCotisationsCard(){
   if(exportEncaissedBtn) exportEncaissedBtn.addEventListener('click', generateEncaissedPaymentsPdf);
   wrap.querySelectorAll('[data-action="generate-bordereau"]').forEach(btn=>{
     btn.addEventListener('click', ()=> generateBordereauPdf(btn.dataset.section));
+  });
+  wrap.querySelectorAll('[data-action="toggle-bordereau-history"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!ui.bordereauHistoryOpen) ui.bordereauHistoryOpen = {};
+      const s = btn.dataset.section;
+      ui.bordereauHistoryOpen[s] = !ui.bordereauHistoryOpen[s];
+      renderCotisationsCard();
+    });
+  });
+  wrap.querySelectorAll('[data-action="bordereau-history-item"]').forEach(el=>{
+    el.addEventListener('click', ()=> regenerateBordereauFromLog(el.dataset.id));
   });
   wrap.querySelectorAll('[data-action="cheque-mark-encaisse"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -8171,9 +8201,46 @@ async function generateBordereauPdf(section){
       const ids = new Set(log.paymentIds);
       paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
     }
-    // Regroupement par famille (une ligne par famille) : cumul Inscription/Divers/ANCV/espèces/chèque,
-    // et pour les chèques, tous les mois d'encaissement distincts (Date 1/2/3) et le nom du chèque s'il
-    // diffère de l'adhérent.
+    await buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsForDoc);
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
+// Retélécharge exactement le même bordereau (même folio, mêmes paiements) qu'une génération passée,
+// retrouvée dans l'historique (data.settings.bordereauLog) — pour "retrouver ceux qui ont été
+// générés" sans consommer un nouveau numéro de folio.
+async function regenerateBordereauFromLog(logId){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const log = (data.settings.bordereauLog||[]).find(l=>l.id===logId);
+  if(!log){ showToast('Bordereau introuvable'); return; }
+  const btn = document.querySelector(`[data-action="bordereau-history-item"][data-id="${logId}"]`);
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération…'; }
+  try{
+    const ids = new Set(log.paymentIds||[]);
+    const paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
+    await buildAndSaveBordereauPdf(log.section, log.folio, log.generatedAt, paymentsForDoc);
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
+// Construit le tableau (une ligne par adhérent, colonnes de mode de paiement fusionnées par famille)
+// et génère/télécharge le PDF du bordereau — factorisé pour être appelé aussi bien lors d'une
+// nouvelle génération (generateBordereauPdf) que lors d'un retéléchargement depuis l'historique
+// (regenerateBordereauFromLog).
+async function buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsForDoc){
+    // Regroupement par famille : une ligne PAR ADHÉRENT pour le Nom/Inscription/Divers (chacun sa
+    // propre part, tirée de la répartition du paiement — allocation.amount), mais les colonnes
+    // ANCV/Espèces/Chèque/Nom du chèque/Date 1-2-3 sont fusionnées (rowspan) sur le bloc de la
+    // famille : un même chèque qui règle plusieurs personnes n'affiche son montant/N°/dates qu'une
+    // seule fois, pas répété sur chaque ligne.
     const groups = {};
     const groupOrder = [];
     paymentsForDoc.forEach(p=>{
@@ -8185,15 +8252,12 @@ async function generateBordereauPdf(section){
     let totInscription=0, totDivers=0, totAncv=0, totEspeces=0, totCheque=0;
     const rows = groupOrder.map(key=>{
       const g = groups[key];
-      let inscription=0, divers=0, ancv=0, especes=0, cheque=0;
+      // Totaux fusionnés au niveau famille (comme avant) pour les colonnes de mode de paiement.
+      let ancv=0, especes=0, cheque=0;
       const chequeOwners = new Set();
       const chequeMonthEntries = [];
-      const diversMotifs = [];
-      const memberNames = new Set();
       g.payments.forEach(p=>{
-        inscription += p.amountTotal;
         const diversAmt = p.diversEnabled ? (Number(p.diversAmount)||0) : 0;
-        if(diversAmt>0){ divers += diversAmt; if(p.diversMotif) diversMotifs.push(p.diversMotif); }
         const methodAmount = Math.round((p.amountTotal + diversAmt)*100)/100;
         if(p.method==='ancv') ancv += methodAmount;
         else if(p.method==='especes') especes += methodAmount;
@@ -8202,27 +8266,54 @@ async function generateBordereauPdf(section){
           if(p.payerName && p.payerName.trim()) chequeOwners.add(p.payerName.trim());
           if(p.cashDate) chequeMonthEntries.push({ date: p.cashDate, label: cashPeriodShortMonth(p.cashDate) });
         }
-        (p.allocations||[]).forEach(a=>{ const om=data.members.find(x=>x.id===a.memberId); if(om) memberNames.add(om.name); });
       });
-      totInscription += inscription; totDivers += divers; totAncv += ancv; totEspeces += especes; totCheque += cheque;
-      // Mois d'encaissement distincts, triés chronologiquement (plusieurs chèques échelonnés pour la
-      // même famille) — jusqu'à 3 affichés (Date 1/2/3).
       chequeMonthEntries.sort((a,b)=> a.date.localeCompare(b.date));
       const monthsSorted = [...new Set(chequeMonthEntries.map(e=>e.label))];
-      const observations = diversMotifs.length ? `Divers : ${diversMotifs.join(', ')}` : [...memberNames].join(', ');
-      return `<tr>
-        <td><strong>${escapeHtml(g.surname)}</strong></td>
-        <td>${fmtEuro(inscription)}</td>
-        <td>${divers>0 ? fmtEuro(divers) : '—'}</td>
-        <td>${ancv>0 ? fmtEuro(ancv) : '—'}</td>
-        <td>${especes>0 ? fmtEuro(especes) : '—'}</td>
-        <td>${cheque>0 ? fmtEuro(cheque) : '—'}</td>
-        <td>${chequeOwners.size ? `<strong>${escapeHtml([...chequeOwners].join(', '))}</strong>` : '—'}</td>
-        <td>${escapeHtml(monthsSorted[0]||'—')}</td>
-        <td>${escapeHtml(monthsSorted[1]||'—')}</td>
-        <td>${escapeHtml(monthsSorted[2]||'—')}</td>
-        <td>${escapeHtml(observations||'—')}</td>
-      </tr>`;
+      totAncv += ancv; totEspeces += especes; totCheque += cheque;
+      // Une ligne par adhérent distinct concerné par au moins un paiement de cette famille — Inscription
+      // = somme de sa part (allocation.amount) sur ces paiements. Le "Divers" d'un paiement est
+      // rattaché à la ligne du 1er adhérent de ce paiement (un divers ne concerne en pratique qu'une
+      // seule personne, ex: kimono d'un enfant précis).
+      const memberIds = [...new Set(g.payments.flatMap(p=>(p.allocations||[]).map(a=>a.memberId)))];
+      const memberRows = memberIds.map(id=>data.members.find(x=>x.id===id)).filter(Boolean)
+        .sort((a,b)=> a.name.localeCompare(b.name, 'fr'))
+        .map(m=>{
+          let inscription=0, divers=0;
+          const motifs = [];
+          g.payments.forEach(p=>{
+            const alloc = (p.allocations||[]).find(a=>a.memberId===m.id);
+            if(alloc) inscription += Number(alloc.amount)||0;
+            const firstAllocId = (p.allocations||[])[0] && p.allocations[0].memberId;
+            if(p.diversEnabled && firstAllocId===m.id){
+              const amt = Number(p.diversAmount)||0;
+              if(amt>0){ divers += amt; if(p.diversMotif) motifs.push(p.diversMotif); }
+            }
+          });
+          return { member:m, inscription, divers, motifs };
+        });
+      totInscription += memberRows.reduce((s,r)=>s+r.inscription,0);
+      totDivers += memberRows.reduce((s,r)=>s+r.divers,0);
+      const rowspan = memberRows.length || 1;
+      const mergedCellsHtml = `
+        <td rowspan="${rowspan}">${ancv>0 ? fmtEuro(ancv) : '—'}</td>
+        <td rowspan="${rowspan}">${especes>0 ? fmtEuro(especes) : '—'}</td>
+        <td rowspan="${rowspan}">${cheque>0 ? fmtEuro(cheque) : '—'}</td>
+        <td rowspan="${rowspan}">${chequeOwners.size ? `<strong>${escapeHtml([...chequeOwners].join(', '))}</strong>` : '—'}</td>
+        <td rowspan="${rowspan}">${escapeHtml(monthsSorted[0]||'—')}</td>
+        <td rowspan="${rowspan}">${escapeHtml(monthsSorted[1]||'—')}</td>
+        <td rowspan="${rowspan}">${escapeHtml(monthsSorted[2]||'—')}</td>`;
+      if(memberRows.length===0){
+        // Paiement sans allocation exploitable (cas limite) : une ligne vide portant quand même les
+        // colonnes fusionnées, pour ne jamais perdre le montant du bordereau.
+        return `<tr><td>${escapeHtml(g.surname)}</td><td>—</td><td>—</td>${mergedCellsHtml}<td>—</td></tr>`;
+      }
+      return memberRows.map((r,idx)=>`<tr>
+        <td>${escapeHtml(r.member.name)}</td>
+        <td>${fmtEuro(r.inscription)}</td>
+        <td>${r.divers>0 ? fmtEuro(r.divers) : '—'}</td>
+        ${idx===0 ? mergedCellsHtml : ''}
+        <td>${r.motifs.length ? escapeHtml(r.motifs.join(', ')) : '—'}</td>
+      </tr>`).join('');
     }).join('');
     const totalRow = `<tr class="bord-total">
       <td>TOTAL</td><td>${fmtEuro(totInscription)}</td><td>${fmtEuro(totDivers)}</td><td>${fmtEuro(totAncv)}</td><td>${fmtEuro(totEspeces)}</td><td>${fmtEuro(totCheque)}</td>
@@ -8235,7 +8326,7 @@ async function generateBordereauPdf(section){
     const meta = `<div class="bd-meta">
       <div>Section : <strong>${escapeHtml(section)}</strong></div>
       <div>Date : <strong>${fmtDateShort(generatedAt)||generatedAt}</strong></div>
-      <div>Par : ……………………</div>
+      <div>Par : <strong>NG</strong></div>
       <div>Folio N° : <strong>${folio}</strong></div>
     </div>`;
     const logoImg = document.querySelector('header.topbar .club-logo-light');
@@ -8256,11 +8347,6 @@ async function generateBordereauPdf(section){
     await paginateBlocksIntoPdf(pdf, { blocks:[table, footer], headerHtml, containerClass:'recap-doc bordereau-doc', containerWidthPx:1000, margin });
     pdf.save(`bordereau-encaissement-${section.toLowerCase()}-folio${folio}-${todayStr()}.pdf`);
     showToast(`Bordereau ${section} — Folio N°${folio} généré`);
-  } catch(err){
-    showToast('Échec de la génération : ' + (err.message||err));
-  } finally {
-    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
-  }
 }
 function renderCompetitionsCalendarCard(){
   const wrap = document.getElementById('competitions-calendar');
