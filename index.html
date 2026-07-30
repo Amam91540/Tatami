@@ -1645,6 +1645,27 @@ function ensureLicensePendingGroupOnce(){
 function nextSeasonStartYear(){
   return (data.settings.seasonStartYear || autoSeasonStartYear()) + 1;
 }
+// Renomme la catégorie d'âge "Poussinets" en "Mini-Poussins" une bonne fois pour toutes : comme
+// data.settings.ageBands est déjà persisté (synchronisé depuis le classeur) pour tout club existant,
+// changer uniquement le libellé par défaut dans defaultAgeBands() ne suffit pas — ensureSettings ne
+// réinitialise ce tableau que s'il est vide. On corrige donc ici directement les données déjà
+// enregistrées : le tableau des catégories d'âge, et toute référence texte à "Poussinets" stockée
+// sur des événements du calendrier (data.calendarEvents[].ageCategories).
+function renamePoussinetsToMiniPoussinsOnce(){
+  const flag = 'poussinetsRenamedToMiniPoussins_v1';
+  if(data.settings[flag]) return false;
+  let changed = false;
+  (data.settings.ageBands||[]).forEach(b=>{
+    if(b && b.label === 'Poussinets'){ b.label = 'Mini-Poussins'; changed = true; }
+  });
+  (data.calendarEvents||[]).forEach(ev=>{
+    if(Array.isArray(ev.ageCategories)){
+      ev.ageCategories = ev.ageCategories.map(c=> c==='Poussinets' ? 'Mini-Poussins' : c);
+    }
+  });
+  data.settings[flag] = true;
+  return changed;
+}
 // Année "à venir" affichée partout dans l'UI (sélecteur de saison, bandeau, carte Réglages, badge
 // de recherche). Une fois qu'une préparation de saison a commencé (voir prepareNextSeasonLicenses),
 // on se fige sur l'année ALORS calculée (data.settings.preparedSeasonYear) plutôt que de la
@@ -1675,6 +1696,7 @@ function applyDataInvariants(){
   if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
   if(ensureComiteDirecteurGroupOnce()){ saveData(); }
   if(ensureLicensePendingGroupOnce()){ saveData(); }
+  if(renamePoussinetsToMiniPoussinsOnce()){ saveData(); }
   // Mode sombre supprimé : plus de CSS ni d'attribut data-theme à gérer, l'app n'a plus qu'un
   // seul thème. `data.settings.theme` reste dans le modèle de données pour ne pas casser
   // d'anciennes sauvegardes, mais n'est plus lu nulle part.
