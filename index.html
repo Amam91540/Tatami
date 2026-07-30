@@ -394,6 +394,13 @@
   #convoc-print-overlay .overlay-bar{ display:flex; gap:8px; max-width:1000px; margin:0 auto 16px; }
   #convoc-print-overlay .overlay-bar button{ flex:1; }
 
+  #bordereau-preview-overlay{ display:none; position:fixed; inset:0; background:var(--bg); z-index:100; padding:16px; overflow:auto; }
+  #bordereau-preview-overlay.show{ display:block; }
+  #bordereau-preview-overlay .overlay-bar{ display:flex; gap:8px; max-width:1300px; margin:0 auto 12px; }
+  #bordereau-preview-overlay .overlay-bar button{ flex:1; }
+  .bordereau-table-edit input.bordereau-edit-input{ width:100%; border:1px dashed var(--line); background:#fffdf6; padding:3px 4px; font:inherit; text-align:inherit; border-radius:4px; }
+  .bordereau-table-edit input.bordereau-edit-input:focus{ outline:none; border-color:var(--tatami); background:#fff; }
+
   #import-archive-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:120; padding:16px; overflow:auto; }
   #import-archive-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
   #import-archive-overlay .iao-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:520px; width:100%; margin-top:6vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
@@ -1044,6 +1051,7 @@
 <div id="family-suggestions-overlay"></div>
 <div id="payment-form-overlay"></div>
 <div id="member-cotisation-overlay"></div>
+<div id="bordereau-preview-overlay"></div>
 <div id="convoc-whatsapp-overlay"></div>
 <div id="birthday-overlay"></div>
 <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" style="display:none">
@@ -1270,16 +1278,18 @@ function flashSyncDot(){
 function confirmDialog(message, opts){
   opts = opts || {};
   const overlay = document.getElementById('confirm-dialog-overlay');
-  if(!overlay) return Promise.resolve(confirm(message)); // filet de sécurité si l'overlay est absent
+  if(!overlay) return Promise.resolve(opts.okOnly ? (alert(message), true) : confirm(message)); // filet de sécurité si l'overlay est absent
   return new Promise(resolve=>{
-    const confirmLabel = opts.confirmLabel || 'Confirmer';
+    const confirmLabel = opts.confirmLabel || (opts.okOnly ? 'Fermer' : 'Confirmer');
     const cancelLabel = opts.cancelLabel || 'Annuler';
+    // okOnly : simple fenêtre d'information (ex: alerte de blocage) avec un unique bouton de
+    // fermeture, plutôt qu'un choix confirmer/annuler — réutilise le même overlay/style.
     overlay.innerHTML = `
       <div class="cfd-card">
         ${opts.title ? `<h2 style="margin-top:0;">${escapeHtml(opts.title)}</h2>` : ''}
         <p class="cfd-message">${escapeHtml(message).replace(/\n/g,'<br>')}</p>
         <div class="cfd-actions">
-          <button class="ghost" id="cfdCancelBtn">${escapeHtml(cancelLabel)}</button>
+          ${opts.okOnly ? '' : `<button class="ghost" id="cfdCancelBtn">${escapeHtml(cancelLabel)}</button>`}
           <button class="${opts.danger ? 'danger' : 'primary'}" id="cfdConfirmBtn">${escapeHtml(confirmLabel)}</button>
         </div>
       </div>`;
@@ -1295,7 +1305,8 @@ function confirmDialog(message, opts){
       resolve(result);
     };
     document.addEventListener('keydown', onKey);
-    document.getElementById('cfdCancelBtn').onclick = ()=> close(false);
+    const cancelBtn = document.getElementById('cfdCancelBtn');
+    if(cancelBtn) cancelBtn.onclick = ()=> close(false);
     document.getElementById('cfdConfirmBtn').onclick = ()=> close(true);
   });
 }
@@ -1337,7 +1348,7 @@ function openBirthdayOverlay(celebrants){
 function defaultAgeBands(){
   return [
     { label:'Baby Judo/Karaté', minAge:4, maxAge:5 },
-    { label:'Poussinets', minAge:6, maxAge:7 },
+    { label:'Mini-Poussins', minAge:6, maxAge:7 },
     { label:'Poussins', minAge:8, maxAge:9 },
     { label:'Benjamins', minAge:10, maxAge:11 },
     { label:'Minimes', minAge:12, maxAge:13 },
@@ -3936,6 +3947,30 @@ function paymentDisplayName(p){
   if(p.payerName && p.payerName.trim()) return p.payerName.trim();
   return (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?om.name:'?'; }).join(', ');
 }
+// "Nom du chèque" à afficher dans les PDF (chèques à encaisser / paiements encaissés) : le nom du
+// propriétaire du chèque s'il a été saisi manuellement (chèque signé par un tiers), sinon le nom de
+// famille commun aux adhérents concernés — ex. une fratrie payée par un seul chèque n'affiche que
+// "DUPONT", pas la liste répétée des prénoms de chaque enfant. Si les adhérents n'ont pas le même nom
+// de famille (paiement couvrant plusieurs familles, cas rare), on affiche uniquement le nom de famille
+// de la 1ère personne de la répartition — celle sur qui le chèque a été saisi.
+function paymentChequeFamilyLabel(p){
+  if(p.payerName && p.payerName.trim()) return p.payerName.trim();
+  const allocs = p.allocations||[];
+  const surnames = [...new Set(allocs.map(a=>{
+    const om = data.members.find(x=>x.id===a.memberId);
+    return om ? memberSurname(om.name).toUpperCase() : null;
+  }).filter(Boolean))];
+  if(surnames.length===1) return surnames[0];
+  const firstMember = allocs.length ? data.members.find(x=>x.id===allocs[0].memberId) : null;
+  return firstMember ? memberSurname(firstMember.name).toUpperCase() : paymentDisplayName(p);
+}
+// Montant réellement reçu pour ce paiement (cotisation + Divers) — à utiliser partout où on affiche le
+// montant du chèque/paiement physique (ex: "Chèques à encaisser", totaux Vue d'ensemble). p.amountTotal
+// à lui seul ne représente que la part cotisation (utilisée pour le calcul des restes dus par membre).
+function paymentGrossAmount(p){
+  const divers = p.diversEnabled ? (Number(p.diversAmount)||0) : 0;
+  return Math.round(((Number(p.amountTotal)||0) + divers)*100)/100;
+}
 // "Périodes" d'encaissement de chèque : uniquement fin de mois (les chèques sont déposés en banque
 // le 30/dernier jour du mois — plus de choix Début/Mi, demandé explicitement). On stocke quand même
 // une date ISO canonique (dernier jour du mois) pour que le tri chronologique, le regroupement et les
@@ -4171,7 +4206,7 @@ function renderFamilyGroupsCard(){
   if(!wrap) return;
   const families = Object.values(data.settings.familyGroups||{}).filter(f=>familyMembers(f.id).length>0);
   if(families.length===0){ wrap.innerHTML = ''; return; }
-  const addableMembers = data.members.filter(m=>!m.archived && !m.familyId).sort((a,b)=> a.name.localeCompare(b.name));
+  const addableMembers = data.members.filter(m=>!m.archived && !m.familyId).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
   const rows = families.map(f=>{
     const members = familyMembers(f.id).sort((a,b)=> (a.feeRank||'p1').localeCompare(b.feeRank||'p1'));
     const membersHtml = members.map(m=>{
@@ -4254,11 +4289,15 @@ function openPaymentFormOverlay(opts){
   // méthode, ajouter la famille...) reconstruit le HTML à partir des seules valeurs initiales et
   // efface tout ce que l'utilisateur avait déjà saisi.
   const draft = editing
-    ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(editing.amountTotal) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '', diversEnabled: !!editing.diversEnabled, diversMotif: editing.diversMotif || '', diversAmount: editing.diversAmount!==undefined && editing.diversAmount!==null && editing.diversAmount!=='' ? String(editing.diversAmount) : '' }
+    // Le champ "Montant total" affiche le montant GLOBAL reçu (cotisation + Divers) dès qu'un Divers
+    // est actif — le Divers en sera déduit automatiquement pour la répartition. En édition, on
+    // reconstitue donc ce montant global à partir de la part cotisation enregistrée (editing.amountTotal,
+    // qui elle reste toujours la part cotisation seule côté stockage) + le Divers déjà enregistré.
+    ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(Math.round(((Number(editing.amountTotal)||0) + (editing.diversEnabled ? (Number(editing.diversAmount)||0) : 0))*100)/100) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '', diversEnabled: !!editing.diversEnabled, diversMotif: editing.diversMotif || '', diversAmount: editing.diversAmount!==undefined && editing.diversAmount!==null && editing.diversAmount!=='' ? String(editing.diversAmount) : '' }
     : { method: 'especes', status: 'encaisse', allocations: opts.presetMemberId ? [{ memberId: opts.presetMemberId, amount: null }] : [], payerNameOverride: false, payerName: '', amountTotal: '', cashDate: '', chequeNumber: '', chequeBank: '', note: '', diversEnabled: false, diversMotif: '', diversAmount: '' };
   function memberOptionsHtml(excludeIds){
     return data.members.filter(m=>!m.archived && !excludeIds.includes(m.id))
-      .sort((a,b)=> a.name.localeCompare(b.name))
+      .sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'))
       .map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
   }
   function render(){
@@ -4283,16 +4322,13 @@ function openPaymentFormOverlay(opts){
     const missingFamilyMembers = currentFamilyIds.length===1
       ? familyMembers(currentFamilyIds[0]).filter(fm=>!fm.archived && !allocIds.includes(fm.id))
       : [];
+    // Même avec une seule personne, on affiche toujours la créance et un champ de montant à saisir
+    // (comme pour un paiement familial partagé) — indispensable dès qu'un Divers coexiste avec la
+    // cotisation dans le même paiement (ex: chèque de 255€ = 200€ de kimono + 55€ de cotisation) : sans
+    // ce champ il n'y a aucun moyen de préciser explicitement la part cotisation.
     const allocRowsHtml = draft.allocations.map((a,idx)=>{
       const m = data.members.find(x=>x.id===a.memberId);
       const due = m ? memberRemainingDue(m) : null;
-      if(singleRecipient){
-        // Une seule personne : pas de répartition à saisir, le montant total lui revient
-        // intégralement (calculé automatiquement à l'enregistrement).
-        return `<div class="row" style="margin:4px 0; align-items:center;">
-          <span style="flex:1; font-size:13px;">${m?escapeHtml(m.name):'—'}${due && due.remaining!==null ? ` <span style="color:var(--ink-dim); font-size:11.5px;">(reste dû ${fmtEuro(due.remaining)})</span>` : ''}</span>
-        </div>`;
-      }
       const suggested = (a.amount!==null && a.amount!==undefined && a.amount!=='') ? a.amount : (due && due.remaining!==null ? due.remaining : '');
       return `<div class="row" style="margin:4px 0; align-items:center;">
         <span style="flex:1; font-size:13px;">${m?escapeHtml(m.name):'—'}${due && due.remaining!==null ? ` <span style="color:var(--ink-dim); font-size:11.5px;">(reste dû ${fmtEuro(due.remaining)})</span>` : ''}</span>
@@ -4345,14 +4381,15 @@ function openPaymentFormOverlay(opts){
         ${draft.diversEnabled ? `<div class="row">
           <div style="flex:2;"><span class="field-label">Motif</span><input type="text" id="pf-divers-motif" value="${escapeHtml(draft.diversMotif||'')}" placeholder="Ex: Kimono"></div>
           <div style="flex:1;"><span class="field-label">Montant (€)</span><input type="number" step="0.01" id="pf-divers-amount" value="${escapeHtml(draft.diversAmount||'')}"></div>
-        </div>` : ''}
+        </div>
+        <p style="font-size:11.5px; color:var(--ink-dim); margin:-2px 0 8px;">Le montant Divers est déduit du "Montant total" ci-dessus : seul le reste est réparti sur les cotisations. Si le paiement ne concerne que du Divers, laisse le Montant total à 0.</p>` : ''}
         <div>
           <span class="field-label">Note (optionnel)</span>
           <input type="text" id="pf-note" value="${escapeHtml(draft.note||'')}">
         </div>
         <div style="margin-top:6px;">
           <span class="field-label">Réparti entre</span>
-          ${!singleRecipient && draft.allocations.length>0 ? `<div class="row" style="align-items:center; justify-content:space-between; gap:8px; font-size:12.5px; margin:2px 0 6px; color:var(--ink-dim);">
+          ${draft.allocations.length>0 ? `<div class="row" style="align-items:center; justify-content:space-between; gap:8px; font-size:12.5px; margin:2px 0 6px; color:var(--ink-dim);">
             <span>Total dû pour ces personnes : <strong style="color:var(--clay);">${fmtEuro(totalDueSelected)}</strong></span>
             <button type="button" class="ghost" id="pf-auto-allocate" style="padding:3px 9px; font-size:11.5px; white-space:nowrap;">↻ Répartir selon les créances</button>
           </div>` : ''}
@@ -4371,6 +4408,7 @@ function openPaymentFormOverlay(opts){
           <button class="primary" id="pf-save" style="flex:1;">✓ Enregistrer</button>
           <button class="ghost" id="pf-cancel" style="flex:1;">Annuler</button>
         </div>
+        ${editing ? `<button class="ghost" id="pf-delete" style="width:100%; margin-top:8px; color:var(--clay);">🗑 Supprimer ce paiement</button>` : ''}
       </div>`;
     document.getElementById('pf-method').addEventListener('change', e=>{ draft.method = e.target.value; if(draft.method!=='cheque') draft.status='encaisse'; render(); });
     // Resynchronise chaque champ libre dans draft à chaque frappe, pour qu'un re-render déclenché par
@@ -4407,8 +4445,15 @@ function openPaymentFormOverlay(opts){
     });
     const autoAllocateBtn = document.getElementById('pf-auto-allocate');
     if(autoAllocateBtn) autoAllocateBtn.addEventListener('click', ()=>{
-      const amountTotal = Number(document.getElementById('pf-amount').value);
-      if(!amountTotal || amountTotal<=0){ showToast('Renseigne d’abord le montant total payé'); return; }
+      const grossAmount = Number(document.getElementById('pf-amount').value) || 0;
+      if(!grossAmount || grossAmount<=0){ showToast('Renseigne d’abord le montant total payé'); return; }
+      // Le Divers (ex: kimono) fait partie du montant global saisi mais ne se répartit pas sur les
+      // cotisations — on le déduit d'abord pour ne répartir que ce qui reste.
+      const diversAmountField = document.getElementById('pf-divers-amount');
+      const diversAmountVal = (draft.diversEnabled && diversAmountField) ? (Number(diversAmountField.value)||0) : 0;
+      if(draft.diversEnabled && diversAmountVal>grossAmount){ showToast('Le montant Divers dépasse le montant total saisi'); return; }
+      const amountTotal = Math.max(0, Math.round((grossAmount-diversAmountVal)*100)/100);
+      if(amountTotal<=0){ showToast('Rien à répartir sur les cotisations : le Divers couvre tout le montant saisi'); return; }
       if(draft.allocations.length===0) return;
       // Ordre de déduction des créances : rang familial (1er membre → 4ème+) quand il est connu, sinon
       // l'ordre d'ajout dans le formulaire — ex: si la famille doit 100€ + 80€ + 60€ et qu'on saisit
@@ -4448,17 +4493,37 @@ function openPaymentFormOverlay(opts){
       btn.addEventListener('click', ()=>{ draft.allocations.splice(Number(btn.dataset.idx),1); render(); });
     });
     document.getElementById('pf-cancel').addEventListener('click', closePaymentFormOverlay);
+    const deleteBtn = document.getElementById('pf-delete');
+    if(deleteBtn) deleteBtn.addEventListener('click', async ()=>{
+      await deletePayment(editing.id, opts.onSaved);
+      // deletePayment demande confirmation d'abord : si annulé, le paiement existe toujours et on
+      // laisse le formulaire ouvert plutôt que de fermer sans rien avoir supprimé.
+      if(!(data.payments||[]).find(p=>p.id===editing.id)) closePaymentFormOverlay();
+    });
     document.getElementById('pf-save').addEventListener('click', ()=>{
-      const amountTotal = Number(document.getElementById('pf-amount').value);
-      if(!amountTotal || amountTotal<=0){ showToast('Montant invalide'); return; }
+      const grossAmount = Number(document.getElementById('pf-amount').value) || 0;
+      const diversEnabledNow = !!(document.getElementById('pf-divers-toggle') && document.getElementById('pf-divers-toggle').checked);
+      const diversAmountNow = diversEnabledNow ? (Math.round((Number(document.getElementById('pf-divers-amount').value)||0)*100)/100) : 0;
+      if(diversEnabledNow && diversAmountNow>grossAmount && grossAmount>0){ showToast('Le montant Divers dépasse le montant total saisi'); return; }
+      // Le "Montant total" saisi représente le montant global reçu (cotisation + Divers) dès qu'un
+      // Divers est actif — on déduit sa part pour obtenir le montant réellement à répartir/enregistrer
+      // sur les cotisations. Un paiement 100% Divers (motif + montant, rien pour la cotisation) reste
+      // valide même si le Montant total est resté à 0.
+      const amountTotal = diversEnabledNow ? Math.max(0, Math.round((grossAmount-diversAmountNow)*100)/100) : grossAmount;
+      const hasSomethingToPay = grossAmount>0 || (diversEnabledNow && diversAmountNow>0);
+      if(!hasSomethingToPay){ showToast('Montant invalide'); return; }
       if(draft.allocations.length===0){ showToast('Ajoute au moins un destinataire'); return; }
-      // Un seul destinataire : pas de répartition à vérifier, le montant total lui revient entièrement.
-      if(draft.allocations.length===1){
-        draft.allocations[0].amount = amountTotal;
+      // La répartition cotisation par personne est désormais toujours saisie explicitement (même à un
+      // seul destinataire, comme pour un paiement familial) — indispensable dès qu'un Divers coexiste
+      // avec la cotisation dans le même paiement pour bien distinguer les deux montants.
+      if(amountTotal<=0.009){
+        // Rien à répartir sur les cotisations (paiement 100% Divers) : on annule toute répartition
+        // résiduelle plutôt que de bloquer l'enregistrement.
+        draft.allocations.forEach(a=> a.amount = 0);
       } else {
         const allocSum = draft.allocations.reduce((s,a)=> s+(Number(a.amount)||0), 0);
         if(Math.abs(allocSum - amountTotal) > 0.01){
-          showToast(`La répartition (${fmtEuro(allocSum)}) ne correspond pas au montant total (${fmtEuro(amountTotal)})`);
+          showToast(`La répartition (${fmtEuro(allocSum)}) ne correspond pas au montant à répartir (${fmtEuro(amountTotal)})${diversEnabledNow ? ' — Divers déjà déduit' : ''}`);
           return;
         }
       }
@@ -4473,9 +4538,9 @@ function openPaymentFormOverlay(opts){
       if(newStatus==='encaisse' && !(editing && editing.status==='encaisse')) encaissedAt = todayStr();
       const payerNameEl = document.getElementById('pf-payername');
       const payerName = (draft.method==='cheque' && draft.payerNameOverride && payerNameEl) ? payerNameEl.value.trim() : '';
-      const diversEnabled = !!(document.getElementById('pf-divers-toggle') && document.getElementById('pf-divers-toggle').checked);
+      const diversEnabled = diversEnabledNow;
       const diversMotif = diversEnabled ? (document.getElementById('pf-divers-motif').value.trim()) : '';
-      const diversAmount = diversEnabled ? (Math.round((Number(document.getElementById('pf-divers-amount').value)||0)*100)/100) : 0;
+      const diversAmount = diversAmountNow;
       const payload = {
         id: editing ? editing.id : uid(),
         method: draft.method,
@@ -4560,18 +4625,35 @@ function renderMemberCotisationOverlay(memberId){
     : [];
   const payments = [...directPayments, ...familyOnlyPayments].sort((a,b)=> String(b.cashDate||'').localeCompare(String(a.cashDate||'')));
   const paymentsHtml = payments.map(p=>{
-    const others = (p.allocations||[]).filter(a=>a.memberId!==memberId).map(a=>{
-      const om = data.members.find(x=>x.id===a.memberId);
-      return om ? `${escapeHtml(om.name)} (${fmtEuro(a.amount)})` : null;
-    }).filter(Boolean);
-    const myShare = memberAmountAllocated(p, memberId);
     const isFamilyOnly = !directIds.has(p.id);
     const statusColor = p.status==='rejete' ? 'var(--clay)' : (p.status==='attente' ? '#B08A2E' : 'var(--tatami)');
+    const allocs = p.allocations||[];
+    const diversAmt = p.diversEnabled ? Math.round((Number(p.diversAmount)||0)*100)/100 : 0;
+    const cotisationTotal = Math.round((Number(p.amountTotal)||0)*100)/100;
+    // Le récap affiche toujours le montant TOTAL réellement encaissé (cotisation + Divers) — pas
+    // seulement la part de cet adhérent, qui peut être à 0€ (créance déjà soldée) alors que le
+    // chèque/paiement lui-même est bien de 100€ par exemple.
+    const grossTotal = Math.round((cotisationTotal+diversAmt)*100)/100;
+    // Détail de répartition entre plusieurs personnes : toujours affiché dès qu'il y a plus d'un
+    // destinataire, y compris la part de CET adhérent même si elle est à 0€ — sinon le récap ne
+    // permet pas de comprendre où va le reste du montant.
+    const allocDetailsHtml = allocs.length>1 ? allocs.map(a=>{
+      const om = data.members.find(x=>x.id===a.memberId);
+      const nm = om ? om.name : '?';
+      return `${escapeHtml(nm)} ${fmtEuro(a.amount)}`;
+    }).join(', ') : '';
+    // Part "Divers" (ex: kimono) : motif + montant, qu'elle soit seule (aucune cotisation dans ce
+    // paiement) ou en plus d'une cotisation.
+    const diversDetailHtml = diversAmt>0.009 ? `Divers${p.diversMotif ? ' : '+escapeHtml(p.diversMotif) : ''} — ${fmtEuro(diversAmt)}` : '';
+    const detailBits = [];
+    if(allocDetailsHtml) detailBits.push(`réparti avec ${allocDetailsHtml}`);
+    if(diversDetailHtml) detailBits.push(diversDetailHtml);
+    const detailHtml = detailBits.length ? `<span style="font-weight:400; color:var(--ink-dim); font-size:11.5px;"> (${detailBits.join(' · ')})</span>` : '';
     return `
     <div class="group-block" style="margin-top:8px;">
       <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
         <div>
-          <div style="font-weight:600; font-size:13px;">${escapeHtml(PAYMENT_METHOD_LABELS[p.method]||p.method)} — ${fmtEuro(myShare)}${others.length ? `<span style="font-weight:400; color:var(--ink-dim); font-size:11.5px;"> (${p.method==='cheque'?'chèque':'paiement'} partagé avec ${others.join(', ')}, total ${fmtEuro(p.amountTotal)})</span>` : ''}${isFamilyOnly ? ' <span style="font-weight:400; color:var(--ink-dim); font-size:11.5px; font-style:italic;">— concerne la famille, sans part pour cet adhérent</span>' : ''}</div>
+          <div style="font-weight:600; font-size:13px;">${escapeHtml(PAYMENT_METHOD_LABELS[p.method]||p.method)} — ${fmtEuro(grossTotal)}${detailHtml}${isFamilyOnly ? ' <span style="font-weight:400; color:var(--ink-dim); font-size:11.5px; font-style:italic;">— concerne la famille, sans part pour cet adhérent</span>' : ''}</div>
           <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${p.cashDate?fmtDate(p.cashDate):'—'}${p.method==='cheque' && p.chequeNumber ? ' · N° '+escapeHtml(p.chequeNumber) : ''}${p.note?' · '+escapeHtml(p.note):''}</div>
         </div>
         <span class="tag" style="background:transparent; border:1px solid ${statusColor}; color:${statusColor}; flex-shrink:0;">${escapeHtml(PAYMENT_STATUS_LABELS[p.status]||p.status)}</span>
@@ -5048,6 +5130,21 @@ async function generateChequeSportAttestationPdf(){
   }
   const m = data.members.find(x=>x.id===ui.attestationMemberId);
   if(!m){ showToast('Sélectionne un élève'); return; }
+  // Le Chèque Sport Mennecy est réservé aux mineurs domiciliés à Mennecy — on bloque la génération
+  // (fenêtre à fermer, pas juste un toast) plutôt que de laisser sortir une attestation invalide.
+  const cityOk = String(m.city||'').trim().toLowerCase()==='mennecy';
+  const age = m.birthDate ? ageAtDate(m.birthDate, todayStr()) : null;
+  const isMajeur = age!==null && age>=18;
+  if(!cityOk || isMajeur){
+    const problems = [];
+    if(!cityOk) problems.push(`ne réside pas à Mennecy (ville renseignée : "${m.city ? m.city : '—'}")`);
+    if(isMajeur) problems.push(`est majeur (${age} ans)`);
+    await confirmDialog(
+      `${m.name} ${problems.join(' et ')}.\n\nLe Chèque Sport Mennecy est réservé aux mineurs domiciliés à Mennecy — cette attestation ne peut pas être délivrée pour cet élève.`,
+      { title: '⚠️ Chèque Sport Mennecy — non éligible', okOnly:true, danger:true }
+    );
+    return;
+  }
   const btn = document.getElementById('generateAttestationBtn');
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
@@ -7624,9 +7721,13 @@ function buildCalendarTimelineHtml(entries){
   }
   return html;
 }
+// Masque/affiche la liste du bloc "Paiements encaissés" (carrousel + lignes) — le total du
+// bandeau supérieur "Vue d'ensemble" reste visible même masqué.
+const encaissedListVisibility = cardVisibility('encaisse-list', false);
 function renderCotisationsCard(){
   const wrap = document.getElementById('cotisations-card');
   if(!wrap) return;
+  const encaissedHidden = encaissedListVisibility.get();
   const activeMembers = data.members.filter(m=>!m.archived);
   let totalExpected = 0, totalEncaisse = 0, totalAttente = 0, totalRemaining = 0;
   const byMethod = {};
@@ -7637,9 +7738,10 @@ function renderCotisationsCard(){
     if(due.remaining!==null && due.remaining>0.01){ totalRemaining += due.remaining; dueList.push({ m, remaining: due.remaining }); }
   });
   (data.payments||[]).forEach(p=>{
-    if(p.status==='encaisse') totalEncaisse += p.amountTotal;
-    else if(p.status==='attente') totalAttente += p.amountTotal;
-    if(p.status==='encaisse' || p.status==='attente') byMethod[p.method] = (byMethod[p.method]||0) + p.amountTotal;
+    const gross = paymentGrossAmount(p);
+    if(p.status==='encaisse') totalEncaisse += gross;
+    else if(p.status==='attente') totalAttente += gross;
+    if(p.status==='encaisse' || p.status==='attente') byMethod[p.method] = (byMethod[p.method]||0) + gross;
   });
   dueList.sort((a,b)=> memberSurname(a.m.name).localeCompare(memberSurname(b.m.name), 'fr'));
   const allChequesToCash = (data.payments||[]).filter(p=>p.method==='cheque' && p.status==='attente' && p.cashDate);
@@ -7699,10 +7801,13 @@ function renderCotisationsCard(){
       parts.push(escapeHtml(memberNames));
       if(groupLabel) parts.push(escapeHtml(groupLabel));
       const lineHtml = parts.join(' <span style="color:var(--ink-dim);">–</span> ');
-      return `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12.5px; padding:2px 0;">
-        <span style="flex:1; min-width:0;">${lineHtml}</span>
+      // Cliquer sur la ligne ouvre le détail/édition du paiement (comme dans "Paiements encaissés") ;
+      // le bouton ✅ reste cliquable indépendamment (stopPropagation) pour marquer encaissé sans ouvrir
+      // la fiche.
+      return `<div data-action="cheque-open" data-id="${p.id}" style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12.5px; padding:2px 0; cursor:pointer;" title="Voir / modifier ce chèque">
+        <span style="flex:1; min-width:0; text-decoration:underline dotted; text-decoration-color:var(--ink-dim);">${lineHtml}</span>
         <span style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-          <span>${fmtEuro(p.amountTotal)}</span>
+          <span>${fmtEuro(paymentGrossAmount(p))}</span>
           <button type="button" class="ghost" data-action="cheque-mark-encaisse" data-id="${p.id}" title="Marquer ce chèque comme encaissé" style="padding:1px 6px; font-size:13px; line-height:1.4;">✅</button>
         </span>
       </div>`;
@@ -7716,23 +7821,58 @@ function renderCotisationsCard(){
   function buildEncaissedBlockHtml(){
     if(!ui.encaissedMethodIndex) ui.encaissedMethodIndex = 0;
     const method = PAYMENT_METHOD_CAROUSEL_ORDER[ui.encaissedMethodIndex % PAYMENT_METHOD_CAROUSEL_ORDER.length];
-    const list = (data.payments||[]).filter(p=>p.status==='encaisse' && p.method===method)
+    // Dès que les 2 dates (Du/Au) de l'export PDF sont renseignées, la liste affichée à l'écran se
+    // restreint elle aussi à cette période (filtrée sur la date d'encaissement réelle) — un seul champ
+    // rempli n'a pas encore d'effet, tant que la plage n'est pas complète.
+    const fromDate = ui.encaissedPdfFrom || '';
+    const toDate = ui.encaissedPdfTo || '';
+    const rangeActive = !!(fromDate && toDate);
+    const effectiveDate = p=> p.encaissedAt || (p.createdAt ? p.createdAt.slice(0,10) : '');
+    const list = (data.payments||[]).filter(p=>{
+      if(p.status!=='encaisse' || p.method!==method) return false;
+      if(rangeActive){
+        const d = effectiveDate(p);
+        if(!d || d<fromDate || d>toDate) return false;
+      }
+      return true;
+    })
       // Date réelle d'encaissement (jour où le chèque/paiement a été validé), pas la date/période
       // prévue ni la date de création.
       .sort((a,b)=> (b.encaissedAt||b.createdAt||'').localeCompare(a.encaissedAt||a.createdAt||''));
-    const total = list.reduce((s,p)=>s+p.amountTotal,0);
-    const rows = list.map(p=>{
-      const displayName = paymentDisplayName(p);
+    // Une ligne par enfant/adhérent (sa propre part, allocation.amount), pas une ligne par paiement —
+    // et une part à 0€ (ex: paiement familial groupé dont ce membre-là était déjà soldé) n'apparaît
+    // pas dans cette liste, même si le paiement concerne d'autres personnes en même temps.
+    const lineItems = [];
+    list.forEach(p=>{
       const dateLabel = p.encaissedAt ? fmtDateShort(p.encaissedAt) : (p.createdAt ? fmtDateShort(p.createdAt.slice(0,10)) : '—');
-      return `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12.5px; padding:3px 0; border-bottom:1px solid var(--line);">
-        <span data-action="encaissed-open" data-id="${p.id}" style="flex:1; min-width:0; cursor:pointer; text-decoration:underline dotted; text-decoration-color:var(--ink-dim);" title="Voir le récapitulatif de ce paiement">${escapeHtml(displayName)}</span>
+      // Numéro de folio du bordereau déjà généré pour ce paiement (le cas échéant) — vide si le
+      // bordereau n'a pas encore été généré.
+      const folio = p.bordereauFolio || null;
+      const allocs = p.allocations||[];
+      if(allocs.length===0){
+        if(p.amountTotal>0.009) lineItems.push({ paymentId: p.id, name: paymentDisplayName(p), amount: p.amountTotal, dateLabel, folio });
+        return;
+      }
+      allocs.forEach(a=>{
+        const amount = Number(a.amount)||0;
+        if(amount<=0.009) return;
+        const om = data.members.find(x=>x.id===a.memberId);
+        lineItems.push({ paymentId: p.id, name: om?om.name:'?', amount, dateLabel, folio });
+      });
+    });
+    // Recherche par nom (loupe en haut à droite du bloc) : filtre la liste déjà construite, sans
+    // toucher au total/carrousel/export qui restent basés sur la méthode courante.
+    const searchQuery = (ui.encaissedSearchQuery||'').trim().toLowerCase();
+    const filteredItems = searchQuery ? lineItems.filter(li=> String(li.name||'').toLowerCase().includes(searchQuery)) : lineItems;
+    const total = filteredItems.reduce((s,li)=>s+li.amount,0);
+    const rows = filteredItems.map(li=> `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12.5px; padding:3px 0; border-bottom:1px solid var(--line);">
+        <span data-action="encaissed-open" data-id="${li.paymentId}" style="flex:1; min-width:0; cursor:pointer; text-decoration:underline dotted; text-decoration-color:var(--ink-dim);" title="Voir le récapitulatif de ce paiement">${escapeHtml(li.name)}${li.folio ? ` <span style="color:var(--ink-dim); text-decoration:none;">- Folio ${li.folio}</span>` : ''}</span>
         <span style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
-          <span style="color:var(--ink-dim);">${dateLabel}</span>
-          <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">${fmtEuro(p.amountTotal)}</span>
+          <span style="color:var(--ink-dim);">${li.dateLabel}</span>
+          <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">${fmtEuro(li.amount)}</span>
         </span>
-      </div>`;
-    }).join('') || '<div class="empty">Aucun paiement encaissé pour cette méthode.</div>';
-    return `<div style="text-align:center; font-size:12px; color:var(--ink-dim); margin-bottom:6px;">${list.length} paiement${list.length>1?'s':''} · ${fmtEuro(total)}</div>${rows}`;
+      </div>`).join('') || (searchQuery ? '<div class="empty">Aucun paiement ne correspond à cette recherche.</div>' : '<div class="empty">Aucun paiement encaissé pour cette méthode.</div>');
+    return `<div style="text-align:center; font-size:12px; color:var(--ink-dim); margin-bottom:6px;">${filteredItems.length} paiement${filteredItems.length>1?'s':''} · ${fmtEuro(total)}</div>${rows}`;
   }
   function wireEncaissedRows(container){
     if(!container) return;
@@ -7813,14 +7953,27 @@ function renderCotisationsCard(){
     <div class="card">
       <div class="row" style="align-items:center; justify-content:space-between;">
         <h2 style="margin-top:0;">Paiements encaissés</h2>
-        <button class="ghost" id="exportEncaissedPdfBtn" style="padding:5px 10px; font-size:12.5px; white-space:nowrap;">📄 Export PDF (${escapeHtml(PAYMENT_METHOD_LABELS[PAYMENT_METHOD_CAROUSEL_ORDER[(ui.encaissedMethodIndex||0) % PAYMENT_METHOD_CAROUSEL_ORDER.length]])})</button>
+        <button type="button" class="ghost icon-btn" id="toggleEncaissedSearch" title="${ui.encaissedSearchOpen ? 'Fermer la recherche' : 'Rechercher un paiement'}" style="padding:5px 8px; font-size:13px;">🔍</button>
       </div>
-      <div class="row" style="align-items:center; justify-content:center; gap:14px; margin-top:4px;">
+      ${ui.encaissedSearchOpen ? `<input type="text" id="encaissedSearchInput" placeholder="🔎 Rechercher un paiement par nom…" value="${escapeHtml(ui.encaissedSearchQuery||'')}" style="margin:4px 0 8px;">` : ''}
+      <div style="margin:4px 0 10px;">
+        <span class="field-label">Export PDF — période (optionnel)</span>
+        <p style="font-size:11px; color:var(--ink-dim); margin:2px 0 6px; line-height:1.4;">Laisse vide pour tout inclure, ou choisis une plage (ex: du 01/09/2025 au 30/09/2025) filtrée sur la date d'encaissement.</p>
+        <div class="row" style="gap:8px; margin-bottom:8px;">
+          <div style="flex:1;"><span class="field-label" style="font-size:10.5px;">Du</span><input type="date" id="encaissedPdfFrom" value="${escapeHtml(ui.encaissedPdfFrom||'')}"></div>
+          <div style="flex:1;"><span class="field-label" style="font-size:10.5px;">Au</span><input type="date" id="encaissedPdfTo" value="${escapeHtml(ui.encaissedPdfTo||'')}"></div>
+        </div>
+        <button class="ghost" id="exportEncaissedPdfBtn" style="width:100%; padding:7px 10px; font-size:12.5px;">📄 Export PDF (${escapeHtml(PAYMENT_METHOD_LABELS[PAYMENT_METHOD_CAROUSEL_ORDER[(ui.encaissedMethodIndex||0) % PAYMENT_METHOD_CAROUSEL_ORDER.length]])})</button>
+      </div>
+      <div class="row" style="align-items:center; justify-content:center; gap:14px; margin-top:4px; padding-top:10px; border-top:1px solid var(--line);">
         <button type="button" class="ghost icon-btn" id="encaissedPrevBtn" style="padding:5px 10px;">‹</button>
         <div id="encaissedMethodLabel" style="font-weight:700; font-size:14px; min-width:170px; text-align:center;">${escapeHtml(PAYMENT_METHOD_LABELS[PAYMENT_METHOD_CAROUSEL_ORDER[(ui.encaissedMethodIndex||0) % PAYMENT_METHOD_CAROUSEL_ORDER.length]])}</div>
         <button type="button" class="ghost icon-btn" id="encaissedNextBtn" style="padding:5px 10px;">›</button>
       </div>
-      <div id="encaissedListWrap" style="margin-top:10px;">${buildEncaissedBlockHtml()}</div>
+      <div class="row" style="align-items:center; justify-content:flex-end; margin-top:6px;">
+        <button class="ghost icon-btn" id="toggleEncaissedListHidden" title="${encaissedHidden?'Afficher':'Masquer'} les paiements" style="padding:6px 9px; font-size:12px;">${encaissedHidden?'👁️ Afficher les paiements':'🙈 Masquer les paiements'}</button>
+      </div>
+      ${!encaissedHidden ? `<div id="encaissedListWrap" style="margin-top:6px;">${buildEncaissedBlockHtml()}</div>` : ''}
     </div>
     <div class="card">
       <h2 style="margin-top:0;">📋 Bordereau d'encaissement A.M.A.M</h2>
@@ -7847,6 +8000,25 @@ function renderCotisationsCard(){
   if(exportChequesBtn) exportChequesBtn.addEventListener('click', generateChequesToCashPdf);
   const exportEncaissedBtn = document.getElementById('exportEncaissedPdfBtn');
   if(exportEncaissedBtn) exportEncaissedBtn.addEventListener('click', generateEncaissedPaymentsPdf);
+  const toggleEncaissedBtn = document.getElementById('toggleEncaissedListHidden');
+  if(toggleEncaissedBtn) toggleEncaissedBtn.addEventListener('click', ()=>{ encaissedListVisibility.set(!encaissedHidden); renderCotisationsCard(); });
+  const toggleEncaissedSearchBtn = document.getElementById('toggleEncaissedSearch');
+  if(toggleEncaissedSearchBtn) toggleEncaissedSearchBtn.addEventListener('click', ()=>{
+    ui.encaissedSearchOpen = !ui.encaissedSearchOpen;
+    if(!ui.encaissedSearchOpen) ui.encaissedSearchQuery = '';
+    renderCotisationsCard();
+  });
+  const encaissedSearchInput = document.getElementById('encaissedSearchInput');
+  if(encaissedSearchInput){
+    encaissedSearchInput.addEventListener('input', e=>{ ui.encaissedSearchQuery = e.target.value; refreshEncaissedBlock(); });
+    encaissedSearchInput.focus();
+    const vLen = encaissedSearchInput.value.length;
+    encaissedSearchInput.setSelectionRange(vLen, vLen);
+  }
+  const encaissedFromInput = document.getElementById('encaissedPdfFrom');
+  if(encaissedFromInput) encaissedFromInput.addEventListener('change', e=>{ ui.encaissedPdfFrom = e.target.value; refreshEncaissedBlock(); });
+  const encaissedToInput = document.getElementById('encaissedPdfTo');
+  if(encaissedToInput) encaissedToInput.addEventListener('change', e=>{ ui.encaissedPdfTo = e.target.value; refreshEncaissedBlock(); });
   wrap.querySelectorAll('[data-action="generate-bordereau"]').forEach(btn=>{
     btn.addEventListener('click', ()=> generateBordereauPdf(btn.dataset.section));
   });
@@ -7862,7 +8034,8 @@ function renderCotisationsCard(){
     el.addEventListener('click', ()=> regenerateBordereauFromLog(el.dataset.id));
   });
   wrap.querySelectorAll('[data-action="cheque-mark-encaisse"]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
       const p = (data.payments||[]).find(x=>x.id===btn.dataset.id);
       if(!p) return;
       p.status = 'encaisse';
@@ -7871,6 +8044,9 @@ function renderCotisationsCard(){
       renderActiveTab();
       showToast('Chèque marqué comme encaissé');
     });
+  });
+  wrap.querySelectorAll('[data-action="cheque-open"]').forEach(row=>{
+    row.addEventListener('click', ()=> openPaymentFormOverlay({ paymentId: row.dataset.id, onSaved: renderCotisationsCard }));
   });
   const periodFilterSelect = document.getElementById('chequesPeriodFilter');
   if(periodFilterSelect) periodFilterSelect.addEventListener('change', e=>{
@@ -7986,7 +8162,7 @@ async function generateChequesToCashPdf(){
     let totalAmount = 0;
     const byDiscipline = {};
     chequesToCash.forEach(p=>{
-      totalAmount += p.amountTotal;
+      totalAmount += paymentGrossAmount(p);
       const firstMember = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
       const group = firstMember ? data.groups.find(x=>x.id===firstMember.groupId) : null;
       const discipline = group ? (courseToDiscipline(group.name) || group.name) : null;
@@ -8014,14 +8190,14 @@ async function generateChequesToCashPdf(){
       </div>`;
     const headRow = `<tr><th>Nom du chèque</th><th>Adhérent(s)</th><th>Cours</th><th>N° chèque</th><th>Banque</th><th>Période</th><th>Montant</th></tr>`;
     const rowHtml = p=>{
-      const chequeOwnerName = paymentDisplayName(p);
+      const chequeOwnerName = paymentChequeFamilyLabel(p);
       const memberNames = (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?om.name:'?'; }).join(', ');
       const groupNames = [...new Set((p.allocations||[]).map(a=>{
         const om = data.members.find(x=>x.id===a.memberId);
         const g = om ? data.groups.find(x=>x.id===om.groupId) : null;
         return g ? g.name : null;
       }).filter(Boolean))].join(' / ');
-      return `<tr><td>${escapeHtml(chequeOwnerName)}</td><td>${escapeHtml(memberNames)}</td><td>${escapeHtml(groupNames||'—')}</td><td>${escapeHtml(p.chequeNumber||'—')}</td><td>${escapeHtml(p.chequeBank||'—')}</td><td>${escapeHtml(cashPeriodLabel(p.cashDate))}</td><td>${fmtEuro(p.amountTotal)}</td></tr>`;
+      return `<tr><td>${escapeHtml(chequeOwnerName)}</td><td>${escapeHtml(memberNames)}</td><td>${escapeHtml(groupNames||'—')}</td><td>${escapeHtml(p.chequeNumber||'—')}</td><td>${escapeHtml(p.chequeBank||'—')}</td><td>${escapeHtml(cashPeriodLabel(p.cashDate))}</td><td>${fmtEuro(paymentGrossAmount(p))}</td></tr>`;
     };
     const blocks = [];
     if(disciplineNames.length===0){
@@ -8030,7 +8206,7 @@ async function generateChequesToCashPdf(){
       const CHUNK = 18;
       disciplineNames.forEach(key=>{
         const rows = byDiscipline[key];
-        const subTotal = rows.reduce((s,p)=>s+p.amountTotal,0);
+        const subTotal = rows.reduce((s,p)=>s+paymentGrossAmount(p),0);
         for(let i=0;i<rows.length;i+=CHUNK){
           const chunk = rows.slice(i, i+CHUNK);
           const title = `<div class="recap-event"><div class="re-title">${escapeHtml(key)}${i===0 ? ` — ${rows.length} chèque${rows.length>1?'s':''} · ${fmtEuro(subTotal)}` : ' (suite)'}</div></div>`;
@@ -8052,7 +8228,11 @@ async function generateChequesToCashPdf(){
 }
 // Export PDF des paiements encaissés pour la méthode actuellement affichée dans le carrousel
 // "Paiements encaissés" (chèque, espèces, chèque sport, virement, autre) — les colonnes N° chèque et
-// banque n'apparaissent que pour la méthode chèque.
+// banque n'apparaissent que pour la méthode chèque. Une plage de dates optionnelle (ui.encaissedPdfFrom
+// / ui.encaissedPdfTo, filtrées sur la date d'encaissement réelle) permet de ne sortir qu'une période
+// précise (ex: du 01/09/2025 au 30/09/2025). Une ligne par ÉLÈVE (pas de regroupement familial : un
+// paiement partagé entre plusieurs personnes donne une ligne par personne, avec sa part), et une
+// ligne TOTAL en fin de tableau.
 async function generateEncaissedPaymentsPdf(){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
     showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
@@ -8064,46 +8244,79 @@ async function generateEncaissedPaymentsPdf(){
   try{
     const method = PAYMENT_METHOD_CAROUSEL_ORDER[(ui.encaissedMethodIndex||0) % PAYMENT_METHOD_CAROUSEL_ORDER.length];
     const isCheque = method==='cheque';
-    const list = (data.payments||[]).filter(p=>p.status==='encaisse' && p.method===method)
-      .sort((a,b)=> (a.encaissedAt||a.createdAt||'').localeCompare(b.encaissedAt||b.createdAt||''));
-    const total = list.reduce((s,p)=>s+p.amountTotal,0);
+    const fromDate = ui.encaissedPdfFrom || '';
+    const toDate = ui.encaissedPdfTo || '';
+    const effectiveDate = p=> p.encaissedAt || (p.createdAt ? p.createdAt.slice(0,10) : '');
+    const list = (data.payments||[]).filter(p=>{
+      if(p.status!=='encaisse' || p.method!==method) return false;
+      const d = effectiveDate(p);
+      if(fromDate && (!d || d<fromDate)) return false;
+      if(toDate && (!d || d>toDate)) return false;
+      return true;
+    }).sort((a,b)=> effectiveDate(a).localeCompare(effectiveDate(b)));
+    // Éclate chaque paiement en une ligne par adhérent alloué (sa propre part), plutôt qu'une seule
+    // ligne groupée par famille/paiement. Une part à 0€ (ex: paiement groupé familial dont ce membre-là
+    // était déjà soldé, gardé à 0€ uniquement pour la traçabilité sur sa fiche) n'a rien à faire dans
+    // ce PDF d'encaissement — on l'exclut, même si le paiement a eu lieu en même temps que d'autres.
+    const rows = [];
+    list.forEach(p=>{
+      const dateLabel = p.encaissedAt ? (fmtDateShort(p.encaissedAt)||'—') : (p.createdAt ? (fmtDateShort(p.createdAt.slice(0,10))||'—') : '—');
+      // Nom du chèque (nom de famille de la fratrie, ou nom saisi si différent de l'adhérent) — même
+      // valeur répétée sur chaque ligne issue d'un même chèque partagé, comme N° chèque/Banque.
+      const chequeName = paymentChequeFamilyLabel(p);
+      const allocs = p.allocations||[];
+      if(allocs.length===0){
+        if(p.amountTotal>0.009) rows.push({ name: paymentDisplayName(p), group:'—', chequeName, chequeNumber:p.chequeNumber, chequeBank:p.chequeBank, dateLabel, amount:p.amountTotal });
+        return;
+      }
+      allocs.forEach(a=>{
+        const amount = Number(a.amount)||0;
+        if(amount<=0.009) return;
+        const om = data.members.find(x=>x.id===a.memberId);
+        const g = om ? data.groups.find(x=>x.id===om.groupId) : null;
+        rows.push({ name: om?om.name:'?', group: g?g.name:'—', chequeName, chequeNumber:p.chequeNumber, chequeBank:p.chequeBank, dateLabel, amount });
+      });
+    });
+    // Tri alphabétique "NOM Prénom" (nom de famille en premier) pour tout le document, indépendamment
+    // de la date d'encaissement de chaque paiement.
+    rows.sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr') || a.name.localeCompare(b.name, 'fr'));
+    const total = rows.reduce((s,r)=>s+(Number(r.amount)||0),0);
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
+    const periodSuffix = (fromDate || toDate) ? ` — du ${fromDate?fmtDateShort(fromDate):'…'} au ${toDate?fmtDateShort(toDate):'…'}` : '';
     const headerHtml = `
       <div class="recap-header">
         ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
         <div>
           <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
-          <div class="rh-sub">Paiements encaissés — ${escapeHtml(PAYMENT_METHOD_LABELS[method])} — ${fmtDateShort(todayStr())||''} · Total : ${fmtEuro(total)}</div>
+          <div class="rh-sub">Paiements encaissés — ${escapeHtml(PAYMENT_METHOD_LABELS[method])}${periodSuffix} — ${fmtDateShort(todayStr())||''} · Total : ${fmtEuro(total)}</div>
         </div>
       </div>`;
-    const headRow = `<tr><th>Nom</th><th>Cours</th>${isCheque?'<th>N° chèque</th><th>Banque</th>':''}<th>Encaissé le</th><th>Montant</th></tr>`;
-    const rowHtml = p=>{
-      const displayName = paymentDisplayName(p);
-      const groupNames = [...new Set((p.allocations||[]).map(a=>{
-        const om = data.members.find(x=>x.id===a.memberId);
-        const g = om ? data.groups.find(x=>x.id===om.groupId) : null;
-        return g ? g.name : null;
-      }).filter(Boolean))].join(' / ');
-      const dateLabel = p.encaissedAt ? (fmtDateShort(p.encaissedAt)||'—') : (p.createdAt ? (fmtDateShort(p.createdAt.slice(0,10))||'—') : '—');
-      return `<tr><td>${escapeHtml(displayName)}</td><td>${escapeHtml(groupNames||'—')}</td>${isCheque?`<td>${escapeHtml(p.chequeNumber||'—')}</td><td>${escapeHtml(p.chequeBank||'—')}</td>`:''}<td>${dateLabel}</td><td>${fmtEuro(p.amountTotal)}</td></tr>`;
-    };
+    const colCount = isCheque ? 7 : 4;
+    // Ordre demandé pour les chèques : Nom du chèque (famille) — Personne concernée — Cours — puis le
+    // reste (N° chèque, Banque, Encaissé le, Montant).
+    const headRow = `<tr>${isCheque?'<th>Nom du chèque</th>':''}<th>Personne concernée</th><th>Cours</th>${isCheque?'<th>N° chèque</th><th>Banque</th>':''}<th>Encaissé le</th><th>Montant</th></tr>`;
+    // Nom affiché "NOM Prénom" (nom de famille en premier, en gras) plutôt que l'ordre de saisie
+    // "Prénom Nom", pour un tri visuel cohérent avec l'ordre alphabétique du tableau.
+    const rowHtml = r=> `<tr>${isCheque?`<td>${escapeHtml(r.chequeName||'—')}</td>`:''}<td>${nameWithBoldSurname(r.name)}</td><td>${escapeHtml(r.group||'—')}</td>${isCheque?`<td>${escapeHtml(r.chequeNumber||'—')}</td><td>${escapeHtml(r.chequeBank||'—')}</td>`:''}<td>${r.dateLabel}</td><td>${fmtEuro(r.amount)}</td></tr>`;
     const blocks = [];
-    if(list.length===0){
-      const colspan = isCheque ? 6 : 4;
-      blocks.push(`<table class="recap-table">${headRow}<tr><td colspan="${colspan}" style="text-align:center; color:#888; padding:20px 10px;">Aucun paiement encaissé pour cette méthode.</td></tr></table>`);
+    if(rows.length===0){
+      blocks.push(`<table class="recap-table">${headRow}<tr><td colspan="${colCount}" style="text-align:center; color:#888; padding:20px 10px;">Aucun paiement encaissé pour cette sélection.</td></tr></table>`);
     } else {
       const CHUNK = 22;
-      for(let i=0;i<list.length;i+=CHUNK){
-        const chunk = list.slice(i, i+CHUNK);
-        blocks.push(`<table class="recap-table">${headRow}${chunk.map(rowHtml).join('')}</table>`);
+      for(let i=0;i<rows.length;i+=CHUNK){
+        const chunk = rows.slice(i, i+CHUNK);
+        const isLastChunk = (i+CHUNK)>=rows.length;
+        const totalRowHtml = isLastChunk ? `<tr style="font-weight:800; background:#F1F4EA;"><td colspan="${colCount-1}">TOTAL</td><td>${fmtEuro(total)}</td></tr>` : '';
+        blocks.push(`<table class="recap-table">${headRow}${chunk.map(rowHtml).join('')}${totalRowHtml}</table>`);
       }
     }
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
     const margin = 24;
     await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass:'recap-doc', containerWidthPx:700, margin });
-    pdf.save(`paiements-encaisses-${method}-${todayStr()}.pdf`);
+    const rangeSuffix = (fromDate || toDate) ? `-${fromDate||'debut'}_${toDate||'fin'}` : '';
+    pdf.save(`paiements-encaisses-${method}${rangeSuffix}-${todayStr()}.pdf`);
     showToast('PDF généré');
   } catch(err){
     showToast('Échec de la génération : ' + (err.message||err));
@@ -8117,10 +8330,14 @@ async function generateEncaissedPaymentsPdf(){
 // leur discipline "adulte", et le Kobudo au Aïkibudo (regroupement demandé explicitement, distinct de
 // courseToDiscipline qui sert par ailleurs aux statistiques).
 const BORDEREAU_SECTIONS = ['Judo', 'Karate', 'Aikibudo', 'Taiso'];
-function paymentBordereauSection(p){
-  const first = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
-  if(!first) return null;
-  const group = data.groups.find(g=>g.id===first.groupId);
+// Section bordereau (Judo/Karate/Aikibudo/Taiso) d'un adhérent donné, selon son propre cours — même
+// regroupement Baby->discipline "adulte" et Kobudo->Aikibudo que pour le paiement dans son ensemble.
+// Réutilisé à la fois pour déterminer la section du bordereau (1ère personne du paiement) et pour
+// repérer, ligne par ligne dans un bordereau familial, les membres qui ne pratiquent PAS la discipline
+// du bordereau (leur discipline doit alors être précisée en Observations).
+function memberBordereauSection(m){
+  if(!m) return null;
+  const group = data.groups.find(g=>g.id===m.groupId);
   if(!group) return null;
   const disc = courseToDiscipline(group.name);
   if(!disc) return null;
@@ -8128,6 +8345,10 @@ function paymentBordereauSection(p){
   if(disc==='Baby Karate') return 'Karate';
   if(disc==='Kobudo') return 'Aikibudo';
   return BORDEREAU_SECTIONS.includes(disc) ? disc : null;
+}
+function paymentBordereauSection(p){
+  const first = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
+  return first ? memberBordereauSection(first) : null;
 }
 // Regroupe les paiements d'un même bordereau par famille (une ligne par famille) : on utilise le
 // rattachement famille existant (familyId) quand il existe, sinon le nom de famille de la première
@@ -8146,12 +8367,15 @@ function paymentBordereauFamilySurname(p){
   const ln = memberLastName(first);
   return (ln || first.name || '—').toUpperCase();
 }
-// Prochain numéro de folio pour une section : compteur persistant, jamais réutilisé (même en cas de
-// suppression/correction ultérieure d'un bordereau).
+// Prochain numéro de folio : une numérotation UNIQUE, tous bordereaux confondus (Judo, Karate,
+// Aikibudo, Taiso) — pas un compteur séparé par section. Ex: si le Judo génère le folio 1, le
+// prochain bordereau généré (même s'il s'agit du Karate) sera le folio 2, jamais un nouveau "folio 1"
+// pour cette section. Compteur persistant, jamais réutilisé même en cas de suppression/correction
+// ultérieure d'un bordereau.
 function nextBordereauFolio(section){
   if(!data.settings.bordereauFolioCounters) data.settings.bordereauFolioCounters = {};
-  const next = (data.settings.bordereauFolioCounters[section]||0) + 1;
-  data.settings.bordereauFolioCounters[section] = next;
+  const next = (data.settings.bordereauFolioCounters.global||0) + 1;
+  data.settings.bordereauFolioCounters.global = next;
   return next;
 }
 // Génère (ou régénère) le bordereau d'encaissement A.M.A.M pour une section. Reprend tous les
@@ -8161,6 +8385,8 @@ function nextBordereauFolio(section){
 // horodatés à aujourd'hui — générer le bordereau, c'est l'acte de dépôt en banque). Si rien de nouveau
 // n'est en attente, on régénère simplement le dernier bordereau déjà généré pour cette section, sans
 // consommer de nouveau numéro.
+// Prépare le folio (nouveau ou existant) puis ouvre l'aperçu modifiable — la génération effective du
+// PDF n'a lieu qu'une fois l'aperçu validé (bouton "Générer le PDF" dans openBordereauPreviewOverlay).
 async function generateBordereauPdf(section){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
     showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
@@ -8168,7 +8394,7 @@ async function generateBordereauPdf(section){
   }
   const btn = document.querySelector(`[data-action="generate-bordereau"][data-section="${section}"]`);
   const originalLabel = btn ? btn.textContent : '';
-  if(btn){ btn.disabled = true; btn.textContent = 'Génération…'; }
+  if(btn){ btn.disabled = true; btn.textContent = 'Préparation…'; }
   try{
     const pending = (data.payments||[]).filter(p=>
       ['especes','cheque','ancv'].includes(p.method) &&
@@ -8201,138 +8427,181 @@ async function generateBordereauPdf(section){
       const ids = new Set(log.paymentIds);
       paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
     }
-    await buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsForDoc);
+    openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc);
   } catch(err){
-    showToast('Échec de la génération : ' + (err.message||err));
+    showToast('Échec de la préparation : ' + (err.message||err));
   } finally {
     if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
   }
 }
-// Retélécharge exactement le même bordereau (même folio, mêmes paiements) qu'une génération passée,
-// retrouvée dans l'historique (data.settings.bordereauLog) — pour "retrouver ceux qui ont été
-// générés" sans consommer un nouveau numéro de folio.
-async function regenerateBordereauFromLog(logId){
-  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
-    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
-    return;
-  }
+// Retrouve exactement le même bordereau (même folio, mêmes paiements) qu'une génération passée dans
+// l'historique (data.settings.bordereauLog) et rouvre l'aperçu modifiable — sans consommer de nouveau
+// numéro de folio ; les corrections déjà enregistrées la dernière fois sont réaffichées.
+function regenerateBordereauFromLog(logId){
   const log = (data.settings.bordereauLog||[]).find(l=>l.id===logId);
   if(!log){ showToast('Bordereau introuvable'); return; }
-  const btn = document.querySelector(`[data-action="bordereau-history-item"][data-id="${logId}"]`);
-  const originalLabel = btn ? btn.textContent : '';
-  if(btn){ btn.disabled = true; btn.textContent = 'Génération…'; }
   try{
     const ids = new Set(log.paymentIds||[]);
     const paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
-    await buildAndSaveBordereauPdf(log.section, log.folio, log.generatedAt, paymentsForDoc);
+    openBordereauPreviewOverlay(log.section, log.folio, log.generatedAt, paymentsForDoc);
   } catch(err){
-    showToast('Échec de la génération : ' + (err.message||err));
-  } finally {
-    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+    showToast('Échec de l’ouverture de l’aperçu : ' + (err.message||err));
   }
 }
 // Construit le tableau (une ligne par adhérent, colonnes de mode de paiement fusionnées par famille)
 // et génère/télécharge le PDF du bordereau — factorisé pour être appelé aussi bien lors d'une
 // nouvelle génération (generateBordereauPdf) que lors d'un retéléchargement depuis l'historique
 // (regenerateBordereauFromLog).
-async function buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsForDoc){
-    // Regroupement par famille : une ligne PAR ADHÉRENT pour le Nom/Inscription/Divers (chacun sa
-    // propre part, tirée de la répartition du paiement — allocation.amount), mais les colonnes
-    // ANCV/Espèces/Chèque/Nom du chèque/Date 1-2-3 sont fusionnées (rowspan) sur le bloc de la
-    // famille : un même chèque qui règle plusieurs personnes n'affiche son montant/N°/dates qu'une
-    // seule fois, pas répété sur chaque ligne.
-    const groups = {};
-    const groupOrder = [];
-    paymentsForDoc.forEach(p=>{
-      const key = paymentBordereauFamilyKey(p);
-      if(!groups[key]){ groups[key] = { surname: paymentBordereauFamilySurname(p), payments: [] }; groupOrder.push(key); }
-      groups[key].payments.push(p);
-    });
-    groupOrder.sort((ka,kb)=> groups[ka].surname.localeCompare(groups[kb].surname, 'fr'));
-    let totInscription=0, totDivers=0, totAncv=0, totEspeces=0, totCheque=0;
-    const rows = groupOrder.map(key=>{
-      const g = groups[key];
-      // Totaux fusionnés au niveau famille (comme avant) pour les colonnes de mode de paiement.
-      let ancv=0, especes=0, cheque=0;
-      const chequeOwners = new Set();
-      // Un mois = une seule case Date 1/2/3 : tous les chèques encaissables le même mois pour cette
-      // famille voient leur montant CUMULÉ dans cette case unique (ex: "SEPT 40,00 €"), jamais deux
-      // mois mélangés dans une même case — s'il y a plus de 3 mois différents, seuls les 3 premiers
-      // (chronologiquement) sont affichés.
-      const chequeMonthTotals = {};
-      g.payments.forEach(p=>{
-        const diversAmt = p.diversEnabled ? (Number(p.diversAmount)||0) : 0;
-        const methodAmount = Math.round((p.amountTotal + diversAmt)*100)/100;
-        if(p.method==='ancv') ancv += methodAmount;
-        else if(p.method==='especes') especes += methodAmount;
-        else if(p.method==='cheque'){
-          cheque += methodAmount;
-          if(p.payerName && p.payerName.trim()) chequeOwners.add(p.payerName.trim());
-          if(p.cashDate){
-            const label = cashPeriodShortMonth(p.cashDate);
-            if(!chequeMonthTotals[label]) chequeMonthTotals[label] = { amount:0, firstDate:p.cashDate };
-            chequeMonthTotals[label].amount = Math.round((chequeMonthTotals[label].amount+methodAmount)*100)/100;
-            if(p.cashDate < chequeMonthTotals[label].firstDate) chequeMonthTotals[label].firstDate = p.cashDate;
-          }
+// Calcule toutes les données du bordereau (mois des colonnes Date, familles, lignes par adhérent,
+// totaux) SANS construire de HTML — réutilisé à la fois par l'aperçu modifiable (openBordereauPreviewOverlay)
+// et par la génération finale du PDF (buildAndSaveBordereauPdf), pour ne jamais désynchroniser les deux.
+function computeBordereauData(section, paymentsForDoc){
+  // Les colonnes Date sont ancrées sur des mois calendaires FIXES pour TOUT le bordereau — le mois du
+  // chèque le plus proche, puis les suivants (ex: Date 1 = septembre, Date 2 = octobre...) — jamais un
+  // mois différent par ligne : "Date 1" doit toujours vouloir dire le même mois sur toutes les lignes.
+  const chequeCashDatesAll = paymentsForDoc.filter(p=>p.method==='cheque' && p.cashDate).map(p=>p.cashDate).sort();
+  // Par défaut 3 colonnes Date. Si l'écart entre le 1er et le dernier mois de chèque dépasse 3 mois
+  // (une famille qui échelonne sur plus de 3 mois), on ajoute exceptionnellement les colonnes
+  // manquantes plutôt que de perdre le montant du/des chèque(s) hors fenêtre.
+  let dateSlotMonths = [null, null, null];
+  if(chequeCashDatesAll.length){
+    const d0 = new Date(chequeCashDatesAll[0]+'T00:00:00');
+    const dLast = new Date(chequeCashDatesAll[chequeCashDatesAll.length-1]+'T00:00:00');
+    const spanMonths = (dLast.getFullYear()*12+dLast.getMonth()) - (d0.getFullYear()*12+d0.getMonth()) + 1;
+    const numSlots = Math.max(3, spanMonths);
+    dateSlotMonths = [];
+    for(let i=0;i<numSlots;i++){
+      const d = new Date(d0.getFullYear(), d0.getMonth()+i, 1);
+      dateSlotMonths.push({ year: d.getFullYear(), month: d.getMonth(), label: d.toLocaleDateString('fr-FR', { month:'short' }).replace('.','').toUpperCase() });
+    }
+  }
+  function dateSlotIndexOf(dateStr){
+    const d = new Date(dateStr+'T00:00:00');
+    return dateSlotMonths.findIndex(slot=> slot && slot.year===d.getFullYear() && slot.month===d.getMonth());
+  }
+  // Regroupement par famille : une ligne PAR ADHÉRENT pour le Nom/Inscription/Divers (chacun sa propre
+  // part, tirée de la répartition du paiement — allocation.amount), mais ANCV/Espèces/Chèque/Nom du
+  // chèque/Date 1-2-3 sont fusionnées (rowspan) sur le bloc de la famille.
+  const groups = {};
+  const groupOrder = [];
+  paymentsForDoc.forEach(p=>{
+    const key = paymentBordereauFamilyKey(p);
+    if(!groups[key]){ groups[key] = { surname: paymentBordereauFamilySurname(p), payments: [] }; groupOrder.push(key); }
+    groups[key].payments.push(p);
+  });
+  groupOrder.sort((ka,kb)=> groups[ka].surname.localeCompare(groups[kb].surname, 'fr'));
+  let totInscription=0, totDivers=0, totAncv=0, totEspeces=0, totCheque=0;
+  const totalDateSlotAmounts = new Array(dateSlotMonths.length).fill(0);
+  const families = groupOrder.map(key=>{
+    const g = groups[key];
+    let ancv=0, especes=0, cheque=0;
+    const chequeOwners = new Set();
+    const dateSlotAmounts = new Array(dateSlotMonths.length).fill(0);
+    g.payments.forEach(p=>{
+      const diversAmt = p.diversEnabled ? (Number(p.diversAmount)||0) : 0;
+      const methodAmount = Math.round((p.amountTotal + diversAmt)*100)/100;
+      if(p.method==='ancv') ancv += methodAmount;
+      else if(p.method==='especes') especes += methodAmount;
+      else if(p.method==='cheque'){
+        cheque += methodAmount;
+        if(p.payerName && p.payerName.trim()) chequeOwners.add(p.payerName.trim());
+        if(p.cashDate){
+          const slotIdx = dateSlotIndexOf(p.cashDate);
+          if(slotIdx!==-1) dateSlotAmounts[slotIdx] = Math.round((dateSlotAmounts[slotIdx]+methodAmount)*100)/100;
         }
-      });
-      const monthsSorted = Object.keys(chequeMonthTotals)
-        .sort((a,b)=> chequeMonthTotals[a].firstDate.localeCompare(chequeMonthTotals[b].firstDate))
-        .map(label=> `${label} ${fmtEuro(chequeMonthTotals[label].amount)}`);
-      totAncv += ancv; totEspeces += especes; totCheque += cheque;
-      // Une ligne par adhérent distinct concerné par au moins un paiement de cette famille — Inscription
-      // = somme de sa part (allocation.amount) sur ces paiements. Le "Divers" d'un paiement est
-      // rattaché à la ligne du 1er adhérent de ce paiement (un divers ne concerne en pratique qu'une
-      // seule personne, ex: kimono d'un enfant précis).
-      const memberIds = [...new Set(g.payments.flatMap(p=>(p.allocations||[]).map(a=>a.memberId)))];
-      const memberRows = memberIds.map(id=>data.members.find(x=>x.id===id)).filter(Boolean)
-        .sort((a,b)=> a.name.localeCompare(b.name, 'fr'))
-        .map(m=>{
-          let inscription=0, divers=0;
-          const motifs = [];
-          g.payments.forEach(p=>{
-            const alloc = (p.allocations||[]).find(a=>a.memberId===m.id);
-            if(alloc) inscription += Number(alloc.amount)||0;
-            const firstAllocId = (p.allocations||[])[0] && p.allocations[0].memberId;
-            if(p.diversEnabled && firstAllocId===m.id){
-              const amt = Number(p.diversAmount)||0;
-              if(amt>0){ divers += amt; if(p.diversMotif) motifs.push(p.diversMotif); }
-            }
-          });
-          return { member:m, inscription, divers, motifs };
-        });
-      totInscription += memberRows.reduce((s,r)=>s+r.inscription,0);
-      totDivers += memberRows.reduce((s,r)=>s+r.divers,0);
-      const rowspan = memberRows.length || 1;
-      const mergedCellsHtml = `
-        <td rowspan="${rowspan}">${ancv>0 ? fmtEuro(ancv) : '—'}</td>
-        <td rowspan="${rowspan}">${especes>0 ? fmtEuro(especes) : '—'}</td>
-        <td rowspan="${rowspan}">${cheque>0 ? fmtEuro(cheque) : '—'}</td>
-        <td rowspan="${rowspan}">${chequeOwners.size ? `<strong>${escapeHtml([...chequeOwners].join(', '))}</strong>` : '—'}</td>
-        <td rowspan="${rowspan}">${escapeHtml(monthsSorted[0]||'—')}</td>
-        <td rowspan="${rowspan}">${escapeHtml(monthsSorted[1]||'—')}</td>
-        <td rowspan="${rowspan}">${escapeHtml(monthsSorted[2]||'—')}</td>`;
-      if(memberRows.length===0){
-        // Paiement sans allocation exploitable (cas limite) : une ligne vide portant quand même les
-        // colonnes fusionnées, pour ne jamais perdre le montant du bordereau.
-        return `<tr><td>${escapeHtml(g.surname)}</td><td>—</td><td>—</td>${mergedCellsHtml}<td>—</td></tr>`;
       }
-      return memberRows.map((r,idx)=>`<tr>
+    });
+    const monthsSorted = dateSlotMonths.map((slot,i)=> (slot && dateSlotAmounts[i]>0) ? `${slot.label} ${fmtEuro(dateSlotAmounts[i])}` : null);
+    dateSlotAmounts.forEach((amt,i)=>{ totalDateSlotAmounts[i] = Math.round((totalDateSlotAmounts[i]+amt)*100)/100; });
+    totAncv += ancv; totEspeces += especes; totCheque += cheque;
+    // Une ligne par adhérent distinct concerné par au moins un paiement de cette famille — Inscription =
+    // somme de sa part (allocation.amount). Le "Divers" d'un paiement est rattaché à la ligne du 1er
+    // adhérent de ce paiement (un divers ne concerne en pratique qu'une seule personne, ex: kimono).
+    const memberIds = [...new Set(g.payments.flatMap(p=>(p.allocations||[]).map(a=>a.memberId)))];
+    const memberRows = memberIds.map(id=>data.members.find(x=>x.id===id)).filter(Boolean)
+      .sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'))
+      .map(m=>{
+        let inscription=0, divers=0;
+        const motifs = [];
+        g.payments.forEach(p=>{
+          const alloc = (p.allocations||[]).find(a=>a.memberId===m.id);
+          if(alloc) inscription += Number(alloc.amount)||0;
+          const firstAllocId = (p.allocations||[])[0] && p.allocations[0].memberId;
+          if(p.diversEnabled && firstAllocId===m.id){
+            const amt = Number(p.diversAmount)||0;
+            if(amt>0){ divers += amt; if(p.diversMotif) motifs.push(p.diversMotif); }
+          }
+        });
+        // Le paiement d'une famille tombe entièrement sur la section de la 1ère personne du chèque — si
+        // un autre membre de la famille pratique une discipline différente, on le précise ici (valeur
+        // par défaut de la colonne Observations, modifiable dans l'aperçu).
+        const memberDisc = memberBordereauSection(m);
+        if(memberDisc && memberDisc!==section) motifs.push(memberDisc);
+        return { member:m, inscription, divers, motifsDefault: motifs };
+      });
+    totInscription += memberRows.reduce((s,r)=>s+r.inscription,0);
+    totDivers += memberRows.reduce((s,r)=>s+r.divers,0);
+    return { key, surname:g.surname, ancv, especes, cheque, chequeOwnersDefault: [...chequeOwners].join(', '), monthsSorted, memberRows };
+  });
+  return {
+    dateSlotMonths, families,
+    totals: { totInscription, totDivers, totAncv, totEspeces, totCheque, totalDateSlotAmounts }
+  };
+}
+// Construit le <table> HTML du bordereau à partir des données calculées, en tenant compte des
+// corrections éventuelles (Nom du chèque / Observations) saisies dans l'aperçu modifiable — sinon
+// utilise les valeurs par défaut calculées automatiquement.
+function buildBordereauTableHtml(computed, overrides){
+  const ov = overrides || {};
+  const ovChequeName = ov.chequeName || {};
+  const ovObservations = ov.observations || {};
+  const { dateSlotMonths, families, totals } = computed;
+  const rows = families.map(fam=>{
+    const rowspan = fam.memberRows.length || 1;
+    const dateCellsHtml = fam.monthsSorted.map(m=>`<td rowspan="${rowspan}">${escapeHtml(m||'—')}</td>`).join('');
+    const chequeNameValue = ovChequeName[fam.key]!==undefined ? ovChequeName[fam.key] : fam.chequeOwnersDefault;
+    const mergedCellsHtml = `
+      <td rowspan="${rowspan}">${fam.ancv>0 ? fmtEuro(fam.ancv) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.especes>0 ? fmtEuro(fam.especes) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.cheque>0 ? fmtEuro(fam.cheque) : '—'}</td>
+      <td rowspan="${rowspan}">${chequeNameValue ? `<strong>${escapeHtml(chequeNameValue)}</strong>` : '—'}</td>
+      ${dateCellsHtml}`;
+    if(fam.memberRows.length===0){
+      // Paiement sans allocation exploitable (cas limite) : une ligne vide portant quand même les
+      // colonnes fusionnées, pour ne jamais perdre le montant du bordereau.
+      return `<tr><td>${escapeHtml(fam.surname)}</td><td>—</td><td>—</td>${mergedCellsHtml}<td>—</td></tr>`;
+    }
+    return fam.memberRows.map((r,idx)=>{
+      const obsValue = ovObservations[r.member.id]!==undefined ? ovObservations[r.member.id] : r.motifsDefault.join(', ');
+      return `<tr>
         <td>${escapeHtml(r.member.name)}</td>
         <td>${fmtEuro(r.inscription)}</td>
         <td>${r.divers>0 ? fmtEuro(r.divers) : '—'}</td>
         ${idx===0 ? mergedCellsHtml : ''}
-        <td>${r.motifs.length ? escapeHtml(r.motifs.join(', ')) : '—'}</td>
-      </tr>`).join('');
+        <td>${obsValue ? escapeHtml(obsValue) : '—'}</td>
+      </tr>`;
     }).join('');
-    const totalRow = `<tr class="bord-total">
-      <td>TOTAL</td><td>${fmtEuro(totInscription)}</td><td>${fmtEuro(totDivers)}</td><td>${fmtEuro(totAncv)}</td><td>${fmtEuro(totEspeces)}</td><td>${fmtEuro(totCheque)}</td>
-      <td colspan="5"></td>
-    </tr>`;
-    const headRow = `<tr><th>Nom</th><th>Inscription</th><th>Divers</th><th>ANCV</th><th>Espèces</th><th>Chèque</th><th>Nom du chèque</th><th>Date 1</th><th>Date 2</th><th>Date 3</th><th>Observations</th></tr>`;
-    const table = groupOrder.length
-      ? `<table class="bordereau-table">${headRow}${rows}${totalRow}</table>`
-      : `<table class="bordereau-table">${headRow}<tr><td colspan="11" style="text-align:center; color:#888; padding:16px 10px;">Aucun paiement.</td></tr></table>`;
+  }).join('');
+  // Total en bas de chaque colonne Date (somme des chèques encaissés ce mois-là, tous adhérents
+  // confondus) — permet de vérifier en un coup d'œil le montant à déposer par mois.
+  const totalDateCellsHtml = totals.totalDateSlotAmounts.map(amt=>`<td>${amt>0.009 ? fmtEuro(amt) : '—'}</td>`).join('');
+  const totalRow = `<tr class="bord-total">
+    <td>TOTAL</td><td>${fmtEuro(totals.totInscription)}</td><td>${fmtEuro(totals.totDivers)}</td><td>${fmtEuro(totals.totAncv)}</td><td>${fmtEuro(totals.totEspeces)}</td><td>${fmtEuro(totals.totCheque)}</td>
+    <td></td>${totalDateCellsHtml}<td></td>
+  </tr>`;
+  const dateColLabel = (i)=> `Date ${i+1}${dateSlotMonths[i] ? ' ('+escapeHtml(dateSlotMonths[i].label)+')' : ''}`;
+  const dateHeadCellsHtml = dateSlotMonths.map((_,i)=>`<th>${dateColLabel(i)}</th>`).join('');
+  const totalCols = 8 + dateSlotMonths.length; // Nom, Inscription, Divers, ANCV, Espèces, Chèque, Nom du chèque, Dates..., Observations
+  const headRow = `<tr><th>Nom</th><th>Inscription</th><th>Divers</th><th>ANCV</th><th>Espèces</th><th>Chèque</th><th>Nom du chèque</th>${dateHeadCellsHtml}<th>Observations</th></tr>`;
+  return families.length
+    ? `<table class="bordereau-table">${headRow}${rows}${totalRow}</table>`
+    : `<table class="bordereau-table">${headRow}<tr><td colspan="${totalCols}" style="text-align:center; color:#888; padding:16px 10px;">Aucun paiement.</td></tr></table>`;
+}
+// Construit le tableau et génère/télécharge le PDF du bordereau — appelé une fois que l'aperçu
+// modifiable a été validé (overrides = corrections saisies à la main sur Nom du chèque/Observations).
+async function buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsForDoc, overrides){
+    const computed = computeBordereauData(section, paymentsForDoc);
+    const table = buildBordereauTableHtml(computed, overrides);
     const meta = `<div class="bd-meta">
       <div>Section : <strong>${escapeHtml(section)}</strong></div>
       <div>Date : <strong>${fmtDateShort(generatedAt)||generatedAt}</strong></div>
@@ -8354,9 +8623,90 @@ async function buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsFor
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4', orientation:'landscape' });
     const margin = 24;
-    await paginateBlocksIntoPdf(pdf, { blocks:[table, footer], headerHtml, containerClass:'recap-doc bordereau-doc', containerWidthPx:1000, margin });
+    // Colonnes Date exceptionnelles au-delà de 3 : on élargit le conteneur pour garder les cellules lisibles.
+    const containerWidthPx = 1000 + Math.max(0, computed.dateSlotMonths.length-3)*80;
+    await paginateBlocksIntoPdf(pdf, { blocks:[table, footer], headerHtml, containerClass:'recap-doc bordereau-doc', containerWidthPx, margin });
     pdf.save(`bordereau-encaissement-${section.toLowerCase()}-folio${folio}-${todayStr()}.pdf`);
     showToast(`Bordereau ${section} — Folio N°${folio} généré`);
+}
+// Fenêtre d'aperçu modifiable, affichée AVANT la génération effective du PDF : reprend le même tableau
+// que le PDF, avec "Nom du chèque" et "Observations" éditables directement à la main (ex: préciser une
+// discipline, ajouter une remarque). Les corrections sont mémorisées sur l'entrée du journal
+// (data.settings.bordereauLog) pour être réutilisées si ce même folio est régénéré plus tard.
+function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc){
+  const overlay = document.getElementById('bordereau-preview-overlay');
+  if(!overlay) return;
+  const computed = computeBordereauData(section, paymentsForDoc);
+  const log = (data.settings.bordereauLog||[]).find(l=>l.folio===folio && l.section===section);
+  const overrides = (log && log.overrides) ? log.overrides : { chequeName:{}, observations:{} };
+  const rowsHtml = computed.families.map(fam=>{
+    const rowspan = fam.memberRows.length || 1;
+    const dateCellsHtml = fam.monthsSorted.map(m=>`<td rowspan="${rowspan}">${escapeHtml(m||'—')}</td>`).join('');
+    const chequeNameValue = overrides.chequeName[fam.key]!==undefined ? overrides.chequeName[fam.key] : fam.chequeOwnersDefault;
+    const mergedCellsHtml = `
+      <td rowspan="${rowspan}">${fam.ancv>0 ? fmtEuro(fam.ancv) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.especes>0 ? fmtEuro(fam.especes) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.cheque>0 ? fmtEuro(fam.cheque) : '—'}</td>
+      <td rowspan="${rowspan}"><input type="text" class="bordereau-edit-input" data-family-key="${escapeHtml(fam.key)}" value="${escapeHtml(chequeNameValue)}" placeholder="—"></td>
+      ${dateCellsHtml}`;
+    if(fam.memberRows.length===0){
+      return `<tr><td>${escapeHtml(fam.surname)}</td><td>—</td><td>—</td>${mergedCellsHtml}<td>—</td></tr>`;
+    }
+    return fam.memberRows.map((r,idx)=>{
+      const obsValue = overrides.observations[r.member.id]!==undefined ? overrides.observations[r.member.id] : r.motifsDefault.join(', ');
+      return `<tr>
+        <td>${escapeHtml(r.member.name)}</td>
+        <td>${fmtEuro(r.inscription)}</td>
+        <td>${r.divers>0 ? fmtEuro(r.divers) : '—'}</td>
+        ${idx===0 ? mergedCellsHtml : ''}
+        <td><input type="text" class="bordereau-edit-input" data-member-id="${r.member.id}" value="${escapeHtml(obsValue)}" placeholder="—"></td>
+      </tr>`;
+    }).join('');
+  }).join('');
+  const totalDateCellsHtml = computed.totals.totalDateSlotAmounts.map(amt=>`<td>${amt>0.009 ? fmtEuro(amt) : '—'}</td>`).join('');
+  const totalRow = `<tr class="bord-total">
+    <td>TOTAL</td><td>${fmtEuro(computed.totals.totInscription)}</td><td>${fmtEuro(computed.totals.totDivers)}</td><td>${fmtEuro(computed.totals.totAncv)}</td><td>${fmtEuro(computed.totals.totEspeces)}</td><td>${fmtEuro(computed.totals.totCheque)}</td>
+    <td></td>${totalDateCellsHtml}<td></td>
+  </tr>`;
+  const dateColLabel = (i)=> `Date ${i+1}${computed.dateSlotMonths[i] ? ' ('+escapeHtml(computed.dateSlotMonths[i].label)+')' : ''}`;
+  const dateHeadCellsHtml = computed.dateSlotMonths.map((_,i)=>`<th>${dateColLabel(i)}</th>`).join('');
+  const totalCols = 8 + computed.dateSlotMonths.length;
+  const headRow = `<tr><th>Nom</th><th>Inscription</th><th>Divers</th><th>ANCV</th><th>Espèces</th><th>Chèque</th><th>Nom du chèque</th>${dateHeadCellsHtml}<th>Observations</th></tr>`;
+  const tableHtml = computed.families.length
+    ? `<table class="bordereau-table bordereau-table-edit">${headRow}${rowsHtml}${totalRow}</table>`
+    : `<table class="bordereau-table bordereau-table-edit">${headRow}<tr><td colspan="${totalCols}" style="text-align:center; color:#888; padding:16px 10px;">Aucun paiement.</td></tr></table>`;
+  overlay.innerHTML = `
+    <div class="overlay-bar">
+      <button class="primary" id="bordereauPreviewGenerateBtn">📄 Générer le PDF</button>
+      <button class="ghost" id="bordereauPreviewCancelBtn">Fermer</button>
+    </div>
+    <p style="text-align:center; color:var(--ink-dim); font-size:12.5px; margin:0 0 12px;">Aperçu — ${escapeHtml(section)}, Folio N°${folio}. "Nom du chèque" et "Observations" sont modifiables à la main avant de générer le PDF.</p>
+    <div style="max-width:1300px; margin:0 auto;">${tableHtml}</div>
+  `;
+  overlay.classList.add('show');
+  document.getElementById('bordereauPreviewCancelBtn').addEventListener('click', ()=>{
+    overlay.classList.remove('show');
+    overlay.innerHTML = '';
+  });
+  document.getElementById('bordereauPreviewGenerateBtn').addEventListener('click', async ()=>{
+    const newOverrides = { chequeName:{}, observations:{} };
+    overlay.querySelectorAll('[data-family-key]').forEach(inp=>{ newOverrides.chequeName[inp.dataset.familyKey] = inp.value; });
+    overlay.querySelectorAll('[data-member-id]').forEach(inp=>{ newOverrides.observations[inp.dataset.memberId] = inp.value; });
+    if(log) log.overrides = newOverrides;
+    saveData();
+    const btn = document.getElementById('bordereauPreviewGenerateBtn');
+    const originalLabel = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Génération…';
+    try{
+      await buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsForDoc, newOverrides);
+      overlay.classList.remove('show');
+      overlay.innerHTML = '';
+    } catch(err){
+      showToast('Échec de la génération : ' + (err.message||err));
+    } finally {
+      btn.disabled = false; btn.textContent = originalLabel;
+    }
+  });
 }
 function renderCompetitionsCalendarCard(){
   const wrap = document.getElementById('competitions-calendar');
@@ -10157,7 +10507,7 @@ function qualificationSelectHtml(attrs, selectedValue, categoryLabel){
   </select>`;
 }
 
-// Catégories de poids FFJDA par tranche d'âge (garçons/filles). Poussins, Poussinets et Baby
+// Catégories de poids FFJDA par tranche d'âge (garçons/filles). Poussins, Mini-Poussins et Baby
 // n'ont pas de catégorie de poids fixe : composition en poules morphologiques le jour même.
 const WEIGHT_CATEGORIES_BY_BAND = {
   'benjamins': { g:['-26','-30','-34','-38','-42','-46','-50','-55','-60','-66','+66'], f:['-28','-32','-36','-40','-44','-48','-52','-57','-63','+63'] },
@@ -12043,11 +12393,11 @@ function buildSocialMedalistsData(presents){
       nonClasses.push({ name:r.name, result, suffix });
     }
   });
-  ['1','2','3'].forEach(k=> podium[k].sort((a,b)=> a.localeCompare(b, 'fr')));
+  ['1','2','3'].forEach(k=> podium[k].sort((a,b)=> memberSurname(a).localeCompare(memberSurname(b), 'fr')));
   nonClasses.sort((a,b)=>{
     const ra = rankOrderIndex(a.result), rb = rankOrderIndex(b.result);
     if(ra!==rb) return ra-rb;
-    return a.name.localeCompare(b.name, 'fr');
+    return memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr');
   });
   return { gold, silver, bronze, podium, nonClasses };
 }
