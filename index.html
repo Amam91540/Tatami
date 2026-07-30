@@ -830,6 +830,7 @@
 
   <section id="tab-resultats">
    <div id="resultats-live">
+    <div id="resultats-season-banner" style="display:none;"></div>
     <div class="section-group" data-group="resultats-saisir" data-default-open>
       <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="resultats-saisir">
         <span>📝 Saisir un résultat</span>
@@ -1316,7 +1317,7 @@ function confirmDialog(message, opts){
 function birthdayMembersForDate(dateStr){
   if(!dateStr || dateStr.length<10) return [];
   const monthDay = dateStr.slice(5,10); // "MM-DD"
-  return data.members.filter(m=>!m.archived && m.birthDate && m.birthDate.length>=10 && m.birthDate.slice(5,10)===monthDay);
+  return data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.birthDate && m.birthDate.length>=10 && m.birthDate.slice(5,10)===monthDay);
 }
 function showBirthdayNotificationForDate(dateStr){
   const celebrants = birthdayMembersForDate(dateStr);
@@ -1645,25 +1646,27 @@ function ensureLicensePendingGroupOnce(){
 function nextSeasonStartYear(){
   return (data.settings.seasonStartYear || autoSeasonStartYear()) + 1;
 }
-// Renomme la catégorie d'âge "Poussinets" en "Mini-Poussins" une bonne fois pour toutes : comme
-// data.settings.ageBands est déjà persisté (synchronisé depuis le classeur) pour tout club existant,
+// Renomme la catégorie d'âge "Poussinets" en "Mini-Poussins" dans les données déjà enregistrées :
 // changer uniquement le libellé par défaut dans defaultAgeBands() ne suffit pas — ensureSettings ne
-// réinitialise ce tableau que s'il est vide. On corrige donc ici directement les données déjà
-// enregistrées : le tableau des catégories d'âge, et toute référence texte à "Poussinets" stockée
-// sur des événements du calendrier (data.calendarEvents[].ageCategories).
-function renamePoussinetsToMiniPoussinsOnce(){
-  const flag = 'poussinetsRenamedToMiniPoussins_v1';
-  if(data.settings[flag]) return false;
+// réinitialise ce tableau que s'il est vide, et une version déjà synchronisée depuis le classeur
+// garde l'ancien libellé. Volontairement SANS drapeau "une bonne fois pour toutes" : loadData()
+// appelle applyDataInvariants() en deux temps (phase 1 sur le cache local, puis phase 2 après avoir
+// remplacé `data` par la version fraîchement récupérée du classeur — voir syncBackendOnLaunch), et
+// un drapeau posé en phase 1 empêchait la correction de se réappliquer en phase 2 sur les données
+// serveur qui contenaient encore "Poussinets". Cette fonction est donc idempotente et se relance à
+// chaque chargement (comparaison insensible à la casse/aux espaces, coût négligeable).
+function renamePoussinetsToMiniPoussins(){
   let changed = false;
+  const isPoussinets = s => typeof s === 'string' && s.trim().toLowerCase() === 'poussinets';
   (data.settings.ageBands||[]).forEach(b=>{
-    if(b && b.label === 'Poussinets'){ b.label = 'Mini-Poussins'; changed = true; }
+    if(b && isPoussinets(b.label)){ b.label = 'Mini-Poussins'; changed = true; }
   });
   (data.calendarEvents||[]).forEach(ev=>{
     if(Array.isArray(ev.ageCategories)){
-      ev.ageCategories = ev.ageCategories.map(c=> c==='Poussinets' ? 'Mini-Poussins' : c);
+      const mapped = ev.ageCategories.map(c=> isPoussinets(c) ? 'Mini-Poussins' : c);
+      if(JSON.stringify(mapped) !== JSON.stringify(ev.ageCategories)){ ev.ageCategories = mapped; changed = true; }
     }
   });
-  data.settings[flag] = true;
   return changed;
 }
 // Année "à venir" affichée partout dans l'UI (sélecteur de saison, bandeau, carte Réglages, badge
@@ -1696,7 +1699,10 @@ function applyDataInvariants(){
   if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
   if(ensureComiteDirecteurGroupOnce()){ saveData(); }
   if(ensureLicensePendingGroupOnce()){ saveData(); }
-  if(renamePoussinetsToMiniPoussinsOnce()){ saveData(); }
+  if(renamePoussinetsToMiniPoussins()){ saveData(); }
+  if(renumberBordereauFoliosIfDuplicated()){ saveData(); }
+  if(ensureBordereauFolioCounterConsistency()){ saveData(); }
+  if(autoAssignAllPendingPaymentsToBordereaux()){ saveData(); }
   // Mode sombre supprimé : plus de CSS ni d'attribut data-theme à gérer, l'app n'a plus qu'un
   // seul thème. `data.settings.theme` reste dans le modèle de données pour ne pas casser
   // d'anciennes sauvegardes, mais n'est plus lu nulle part.
@@ -2097,6 +2103,52 @@ function getViewingArchive(){
 function isViewingNextSeason(){
   return ui.viewingSeasonId === 'next';
 }
+// Membres à prendre en compte selon la vue actuellement affichée : la saison en cours par défaut, ou
+// UNIQUEMENT les fiches déjà préparées pour la saison à venir (member.forNextSeason) quand ce bandeau
+// est sélectionné en en-tête — jamais les deux mélangés. Règle valable dans TOUTE l'application (sauf
+// Param/réglages/catégories/tarifs et les groupes, communs aux deux saisons — voir nextSeasonBannerHtml).
+function cotisationsScopedMembers(){
+  const nextView = isViewingNextSeason();
+  return data.members.filter(m=>!m.archived && !!m.forNextSeason===nextView);
+}
+// Un membre (par id) appartient-il à la vue actuellement affichée ? Si le membre est introuvable
+// (fiche supprimée), on ne masque rien par défaut plutôt que de faire disparaître une donnée existante.
+function memberMatchesSeasonView(memberId){
+  const m = data.members.find(x=>x.id===memberId);
+  if(!m) return true;
+  return !!m.forNextSeason === isViewingNextSeason();
+}
+// Filtre une liste de "recipients" (convocEvents[].recipients, participants de stage...) pour ne garder
+// que ceux dont la fiche élève appartient à la vue actuellement affichée.
+function recipientsInSeasonView(list){
+  return (list||[]).filter(r=> memberMatchesSeasonView(r.memberId));
+}
+// Un stage "appartient" à la vue actuellement affichée si au moins un de ses participants en fait
+// partie (chaque stage n'est en pratique saisi qu'avec des élèves d'une seule saison à la fois, la
+// recherche d'élève dans le formulaire de stage étant elle-même filtrée par vue).
+function stageInSeasonView(s){
+  return (s.participants||[]).some(p=> memberMatchesSeasonView(p.memberId));
+}
+// Un paiement "appartient" à une vue (saison en cours / saison à venir) selon la fiche à qui il est
+// rattaché (1ère personne de la répartition, même convention que paymentBordereauSection) — chaque
+// fiche "saison à venir" étant un enregistrement distinct (member.forNextSeason + linkedMemberId), un
+// paiement saisi sur l'une des deux fiches ne doit jamais apparaître sur l'autre. Un paiement orphelin
+// (tous ses destinataires ont été supprimés) reste par défaut rattaché à la saison en cours.
+function paymentInSeasonView(p, nextView){
+  const first = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
+  if(!first) return !nextView;
+  return !!first.forNextSeason === nextView;
+}
+// Même logique appliquée à une entrée du journal de bordereau (data.settings.bordereauLog) : dérivée
+// dynamiquement à partir du 1er paiement qu'elle contient (jamais stockée en dur), pour rester juste
+// automatiquement après un basculement de saison — voir archiveCurrentSeason/prepareNextSeasonLicenses,
+// où une fiche "à venir" devient la fiche "en cours" sans changer d'id.
+function bordereauLogSeasonMatches(l, nextView){
+  const firstId = (l.paymentIds||[])[0];
+  const p = firstId ? (data.payments||[]).find(x=>x.id===firstId) : null;
+  if(!p) return !nextView;
+  return paymentInSeasonView(p, nextView);
+}
 function archiveBannerHtml(archive){
   return `<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#FFF6DA; border:1px solid #E8C547; border-radius:8px; padding:9px 12px; font-size:13px; color:#6B5300;">
     <div>🕓 Tu consultes la saison <strong>${escapeHtml(archive.name)}</strong> (lecture seule). Les autres onglets (Présences, Convocations, Param.) restent sur la saison en cours.</div>
@@ -2194,7 +2246,7 @@ function renderArchiveViewGroupes(archive){
 }
 function nextSeasonBannerHtml(){
   return `<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:#E9F3FF; border:1px solid #8FB8E8; border-radius:8px; padding:9px 12px; margin-bottom:12px; font-size:13px; color:#1F4E85;">
-    <div>🗓️ Tu prépares la saison <strong>${escapeHtml(schoolYearLabel(activeNextSeasonYear()))}</strong> — ces fiches n'existent pas encore pour la saison en cours, qui reste inchangée. Les autres onglets (Présences, Convocations, Param.) restent sur la saison en cours.</div>
+    <div>🗓️ Tu prépares la saison <strong>${escapeHtml(schoolYearLabel(activeNextSeasonYear()))}</strong> — totalement distincte de la saison en cours (fiches, présences, cotisations, convocations). Seul l'onglet Param (réglages, catégories, tarifs) reste commun aux deux saisons.</div>
     <button class="ghost icon-btn" data-action="back-to-current-season" style="flex-shrink:0; background:#fff;">← Saison actuelle</button>
   </div>`;
 }
@@ -4317,8 +4369,11 @@ function openPaymentFormOverlay(opts){
     // qui elle reste toujours la part cotisation seule côté stockage) + le Divers déjà enregistré.
     ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(Math.round(((Number(editing.amountTotal)||0) + (editing.diversEnabled ? (Number(editing.diversAmount)||0) : 0))*100)/100) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '', diversEnabled: !!editing.diversEnabled, diversMotif: editing.diversMotif || '', diversAmount: editing.diversAmount!==undefined && editing.diversAmount!==null && editing.diversAmount!=='' ? String(editing.diversAmount) : '' }
     : { method: 'especes', status: 'encaisse', allocations: opts.presetMemberId ? [{ memberId: opts.presetMemberId, amount: null }] : [], payerNameOverride: false, payerName: '', amountTotal: '', cashDate: '', chequeNumber: '', chequeBank: '', note: '', diversEnabled: false, diversMotif: '', diversAmount: '' };
+  // Ne propose que les fiches de la vue actuellement affichée (saison en cours / saison à venir) —
+  // une fiche "saison à venir" étant un enregistrement distinct (member.forNextSeason), un paiement ne
+  // doit jamais pouvoir mélanger un destinataire des deux saisons.
   function memberOptionsHtml(excludeIds){
-    return data.members.filter(m=>!m.archived && !excludeIds.includes(m.id))
+    return cotisationsScopedMembers().filter(m=>!excludeIds.includes(m.id))
       .sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'))
       .map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
   }
@@ -4341,8 +4396,10 @@ function openPaymentFormOverlay(opts){
       const m = data.members.find(x=>x.id===a.memberId);
       return m && m.familyId ? m.familyId : null;
     }).filter(Boolean))];
+    // Filtré à la vue actuellement affichée (voir memberOptionsHtml) : ne jamais proposer d'ajouter
+    // d'un clic un membre de la famille qui appartient à l'autre saison (fiche distincte).
     const missingFamilyMembers = currentFamilyIds.length===1
-      ? familyMembers(currentFamilyIds[0]).filter(fm=>!fm.archived && !allocIds.includes(fm.id))
+      ? familyMembers(currentFamilyIds[0]).filter(fm=>!fm.archived && !!fm.forNextSeason===isViewingNextSeason() && !allocIds.includes(fm.id))
       : [];
     // Même avec une seule personne, on affiche toujours la créance et un champ de montant à saisir
     // (comme pour un paiement familial partagé) — indispensable dès qu'un Divers coexiste avec la
@@ -4587,6 +4644,9 @@ function openPaymentFormOverlay(opts){
       if(!data.payments) data.payments = [];
       const idx = data.payments.findIndex(p=>p.id===payload.id);
       if(idx>=0) data.payments[idx] = payload; else data.payments.push(payload);
+      // Rattache automatiquement ce paiement à un bordereau dès son enregistrement (voir
+      // autoAssignPaymentToBordereau) — sans effet si déjà rattaché (édition d'un paiement existant).
+      autoAssignPaymentToBordereau(payload);
       saveData();
       closePaymentFormOverlay();
       renderActiveTab();
@@ -4631,7 +4691,10 @@ function renderMemberCotisationOverlay(memberId){
   const m = data.members.find(x=>x.id===memberId);
   if(!m){ closeMemberCotisationOverlay(); return; }
   const due = memberRemainingDue(m);
-  const fam = m.familyId ? familyMembers(m.familyId) : [];
+  // Famille restreinte à la même saison que la fiche consultée (voir cotisationsScopedMembers) : un
+  // frère/sœur déjà préparé pour la saison à venir ne doit pas apparaître ici tant qu'on regarde la
+  // fiche "saison en cours", et inversement.
+  const fam = m.familyId ? familyMembers(m.familyId).filter(fm=>!!fm.forNextSeason===!!m.forNextSeason) : [];
   const famRemainingTotal = fam.length>1 ? fam.reduce((sum,fm)=>{
     const d = memberRemainingDue(fm);
     return sum + (d.remaining!==null && d.remaining>0 ? d.remaining : 0);
@@ -6586,13 +6649,28 @@ function mergeDuplicateMembersWithinGroups(){
 // être fiable (sans repli sur le seul nom, trop de faux positifs entre cours différents).
 function findDuplicateMemberSets(){
   const byKey = new Map();
-  data.members.forEach(m=>{
+  // Une fiche archivée (élève parti) ne compte jamais comme doublon — ni entre elle et une fiche
+  // active homonyme, ni entre deux fiches archivées entre elles.
+  data.members.filter(m=>!m.archived).forEach(m=>{
     const key = memberDobKey(memberSurname(m.name), m.birthDate);
     if(!key) return;
     if(!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(m);
   });
-  return [...byKey.values()].filter(list=>list.length>1);
+  return [...byKey.values()].map(dedupeLinkedSeasonPairs).filter(list=>list.length>1);
+}
+// Retire d'un groupe de fiches "même nom + même date de naissance" celles qui sont en réalité la
+// fiche "saison à venir" d'une fiche "saison en cours" déjà présente dans ce même groupe (couple lié
+// via member.forNextSeason + linkedMemberId, voir prepareNextSeasonLicenses) : c'est un seul et même
+// élève réparti sur 2 saisons distinctes, pas 2 fiches en double — ne doit jamais déclencher l'alerte
+// "Élèves en double détectés" ni l'overlay de fusion.
+function dedupeLinkedSeasonPairs(list){
+  const linkedNextSeasonIds = new Set(
+    list.filter(m=> m.forNextSeason && m.linkedMemberId
+      && list.some(o=> o.id===m.linkedMemberId && o.linkedMemberId===m.id))
+      .map(m=>m.id)
+  );
+  return list.filter(m=> !linkedNextSeasonIds.has(m.id));
 }
 
 // Clé de dédoublonnage d'un élève (nom de famille + date de naissance) — identique à celle utilisée
@@ -6943,6 +7021,7 @@ function renderPresencesTab(){
   }
   const currentGroup = data.groups.find(g=>g.id===ui.presenceGroup);
   setup.innerHTML = `
+    ${isViewingNextSeason() ? nextSeasonBannerHtml() : ''}
     <h2>Faire l'appel</h2>
     <div class="row">
       <div style="flex:1">
@@ -6957,7 +7036,10 @@ function renderPresencesTab(){
       </div>
     </div>
     <button class="primary" id="openSessionBtn" style="margin-top:12px; width:100%;">Ouvrir la séance</button>
-  `;  document.getElementById('presenceGroupSel').addEventListener('change', e=>{
+  `;
+  const presenceBackBtn = setup.querySelector('[data-action="back-to-current-season"]');
+  if(presenceBackBtn) presenceBackBtn.addEventListener('click', ()=>{ ui.viewingSeasonId = null; renderActiveTab(); });
+  document.getElementById('presenceGroupSel').addEventListener('change', e=>{
     ui.presenceGroup = e.target.value; ui.presenceSessionId = null;
     document.getElementById('presence-sheet').style.display='none';
     renderPresenceHistory();
@@ -7000,7 +7082,7 @@ function renderPresenceSheet(){
   const session = data.sessions.find(s=>s.id===ui.presenceSessionId);
   if(!session){ sheet.style.display='none'; return; }
   if(!session.guestMemberIds) session.guestMemberIds = [];
-  const members = data.members.filter(m=>m.groupId===session.groupId && isMemberVisibleInSessions(m, [session])).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+  const members = data.members.filter(m=>m.groupId===session.groupId && isMemberVisibleInSessions(m, [session]) && !!m.forNextSeason===isViewingNextSeason()).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
   const guestMembers = sessionGuestMembers(session);
   const att = data.attendance[session.id] || (data.attendance[session.id]={});
   sheet.style.display='block';
@@ -7078,7 +7160,7 @@ function renderPresenceSheet(){
       const q = calStripAccents(guestInput.value).toLowerCase().trim();
       if(!q){ guestWrap.innerHTML=''; guestWrap.classList.remove('show'); return; }
       const alreadyIn = new Set([...members.map(m=>m.id), ...guestMembers.map(m=>m.id)]);
-      const matches = data.members.filter(m=> !m.archived && !alreadyIn.has(m.id) && calStripAccents(m.name).toLowerCase().includes(q)).slice(0,8);
+      const matches = data.members.filter(m=> !m.archived && !!m.forNextSeason===isViewingNextSeason() && !alreadyIn.has(m.id) && calStripAccents(m.name).toLowerCase().includes(q)).slice(0,8);
       if(matches.length===0){
         guestWrap.innerHTML = '<div class="empty" style="padding:10px;">Aucun élève trouvé.</div>';
       } else {
@@ -7147,7 +7229,7 @@ function renderPresenceHistory(){
   if(allSessions.length===0){ wrap.innerHTML = `<h2>Séances</h2><div class="empty">Aucune séance enregistrée pour ce cours.</div>`; return; }
 
   const pendingHtml = pending.map(s=>{
-    const members = data.members.filter(m=>m.groupId===s.groupId && isMemberVisibleInSessions(m, [s]));
+    const members = data.members.filter(m=>m.groupId===s.groupId && isMemberVisibleInSessions(m, [s]) && !!m.forNextSeason===isViewingNextSeason());
     const att = data.attendance[s.id] || {};
     const present = members.filter(m=>isPresent(att[m.id])).length;
     return `
@@ -7280,7 +7362,7 @@ function renderDisciplineStatsCard(startYear){
     if(!disc || !stats.has(disc)) return;
     const s = stats.get(disc);
     const sessions = data.sessions.filter(x=>x.groupId===g.id && inSchoolYear(x.date, startYear) && sessionHasRollCall(x.id));
-    const members = data.members.filter(m=>m.groupId===g.id && isMemberVisibleInSessions(m, sessions));
+    const members = data.members.filter(m=>m.groupId===g.id && isMemberVisibleInSessions(m, sessions) && !!m.forNextSeason===isViewingNextSeason());
     s.sessions += sessions.length;
     members.forEach(m=> s.memberIds.add(m.id));
     sessions.forEach(sess=>{
@@ -7322,7 +7404,7 @@ function renderSuiviContent(){
 
   wrap.innerHTML = groups.map(g=>{
     const sessions = data.sessions.filter(s=>s.groupId===g.id && inSchoolYear(s.date, startYear) && sessionHasRollCall(s.id));
-    const members = [...data.members.filter(m=>m.groupId===g.id && isMemberVisibleInSessions(m, sessions))];
+    const members = [...data.members.filter(m=>m.groupId===g.id && isMemberVisibleInSessions(m, sessions) && !!m.forNextSeason===isViewingNextSeason())];
     const memberPct = m=>{
       const guestSessions = guestSessionsForMember(m.id, startYear);
       const present = sessions.filter(s=> isPresent((data.attendance[s.id]||{})[m.id])).length
@@ -7390,7 +7472,7 @@ async function generateCourseAttendancePdf(groupId){
   const startYear = suiviActiveYear();
   const sessions = data.sessions.filter(s=>s.groupId===groupId && inSchoolYear(s.date, startYear) && sessionHasRollCall(s.id))
     .sort((a,b)=> a.date.localeCompare(b.date));
-  const members = [...data.members.filter(m=>m.groupId===groupId && isMemberVisibleInSessions(m, sessions))].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+  const members = [...data.members.filter(m=>m.groupId===groupId && isMemberVisibleInSessions(m, sessions) && !!m.forNextSeason===isViewingNextSeason())].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
   if(sessions.length===0 || members.length===0){
     showToast('Pas assez de données (séances validées ou pratiquants) pour générer ce suivi');
     return;
@@ -7538,6 +7620,7 @@ function renderBirthdaysCard(){
   const hidden = loadBirthdaysHidden();
 
   const allBirthdays = data.members.filter(m=>{
+    if(m.archived || !!m.forNextSeason!==isViewingNextSeason()) return false;
     if(!m.birthDate) return false;
     return parseInt(m.birthDate.slice(5,7),10)===curMonth;
   }).sort((a,b)=>a.birthDate.slice(8,10)-b.birthDate.slice(8,10));
@@ -7631,6 +7714,7 @@ async function generateBirthdaysPdf(){
   const target = new Date(base.getFullYear(), base.getMonth() + (ui.birthdaysMonthOffset||0), 1);
   const curMonth = target.getMonth()+1, curYear = target.getFullYear();
   const allBirthdays = data.members.filter(m=>{
+    if(m.archived || !!m.forNextSeason!==isViewingNextSeason()) return false;
     if(!m.birthDate) return false;
     return parseInt(m.birthDate.slice(5,7),10)===curMonth;
   }).sort((a,b)=>a.birthDate.slice(8,10)-b.birthDate.slice(8,10));
@@ -7750,7 +7834,12 @@ function renderCotisationsCard(){
   const wrap = document.getElementById('cotisations-card');
   if(!wrap) return;
   const encaissedHidden = encaissedListVisibility.get();
-  const activeMembers = data.members.filter(m=>!m.archived);
+  // Cloisonné à la vue actuellement affichée (saison en cours / saison à venir, voir
+  // cotisationsScopedMembers/paymentInSeasonView) : ce qui est saisi pour une saison n'apparaît jamais
+  // dans l'autre, et inversement.
+  const nextView = isViewingNextSeason();
+  const activeMembers = cotisationsScopedMembers();
+  const scopedPayments = (data.payments||[]).filter(p=>paymentInSeasonView(p, nextView));
   let totalExpected = 0, totalEncaisse = 0, totalAttente = 0, totalRemaining = 0;
   const byMethod = {};
   const dueList = [];
@@ -7759,14 +7848,14 @@ function renderCotisationsCard(){
     if(due.expected.amount!==null) totalExpected += due.expected.amount;
     if(due.remaining!==null && due.remaining>0.01){ totalRemaining += due.remaining; dueList.push({ m, remaining: due.remaining }); }
   });
-  (data.payments||[]).forEach(p=>{
+  scopedPayments.forEach(p=>{
     const gross = paymentGrossAmount(p);
     if(p.status==='encaisse') totalEncaisse += gross;
     else if(p.status==='attente') totalAttente += gross;
     if(p.status==='encaisse' || p.status==='attente') byMethod[p.method] = (byMethod[p.method]||0) + gross;
   });
   dueList.sort((a,b)=> memberSurname(a.m.name).localeCompare(memberSurname(b.m.name), 'fr'));
-  const allChequesToCash = (data.payments||[]).filter(p=>p.method==='cheque' && p.status==='attente' && p.cashDate);
+  const allChequesToCash = scopedPayments.filter(p=>p.method==='cheque' && p.status==='attente' && p.cashDate);
   // Périodes disponibles pour le filtre (calculées sur l'ensemble des chèques en attente, pas
   // seulement ceux déjà filtrés, pour que la liste déroulante reste complète quel que soit le filtre
   // actif).
@@ -7850,7 +7939,7 @@ function renderCotisationsCard(){
     const toDate = ui.encaissedPdfTo || '';
     const rangeActive = !!(fromDate && toDate);
     const effectiveDate = p=> p.encaissedAt || (p.createdAt ? p.createdAt.slice(0,10) : '');
-    const list = (data.payments||[]).filter(p=>{
+    const list = scopedPayments.filter(p=>{
       if(p.status!=='encaisse' || p.method!==method) return false;
       if(rangeActive){
         const d = effectiveDate(p);
@@ -7909,19 +7998,28 @@ function renderCotisationsCard(){
   // ligne est cliquable pour retélécharger exactement ce bordereau-là (regenerateBordereauFromLog),
   // sans consommer un nouveau numéro de folio.
   function buildBordereauHistoryHtml(section){
-    const logs = (data.settings.bordereauLog||[]).filter(l=>l.section===section).sort((a,b)=> b.folio-a.folio);
+    // Cloisonné à la vue actuellement affichée (voir bordereauLogSeasonMatches) : un folio saisi pour
+    // la saison à venir n'apparaît pas dans l'historique de la saison en cours, et inversement.
+    const logs = (data.settings.bordereauLog||[]).filter(l=>l.section===section && bordereauLogSeasonMatches(l, nextView)).sort((a,b)=> b.folio-a.folio);
     if(!logs.length) return '<div class="empty" style="font-size:11.5px; padding:4px 0 4px 4px;">Aucun bordereau généré pour cette section pour l\'instant.</div>';
     return `<div style="margin:2px 0 4px;">${logs.map(l=>{
       const n = (l.paymentIds||[]).length;
-      return `<div data-action="bordereau-history-item" data-id="${escapeHtml(l.id)}" style="cursor:pointer; padding:4px 4px; font-size:12px; border-bottom:1px solid var(--line); text-decoration:underline dotted; text-decoration-color:var(--ink-dim);">Folio N°${l.folio} — ${escapeHtml(fmtDateShort(l.generatedAt)||l.generatedAt)} · ${n} paiement${n>1?'s':''}</div>`;
+      // ✅ = le PDF de ce folio a déjà été téléchargé au moins une fois (l.pdfGenerated) ; ⚠️ = le
+      // feuillet a atteint la limite de lignes (voir BORDEREAU_MAX_LINES/autoAssignPaymentToBordereau).
+      const ids = new Set(l.paymentIds||[]);
+      const paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
+      const lineCount = computeBordereauData(section, paymentsForDoc).families.reduce((s,f)=>s+(f.memberRows.length||1),0);
+      const icons = `${l.pdfGenerated ? '<span title="PDF déjà généré" style="color:#2E7D32; font-size:13px;">✅</span>' : ''}${lineCount>=BORDEREAU_MAX_LINES ? `<span title="Feuillet plein (${lineCount} lignes)" style="color:#B08A2E; font-size:13px;">⚠️</span>` : ''}`;
+      return `<div data-action="bordereau-history-item" data-id="${escapeHtml(l.id)}" style="cursor:pointer; padding:4px 4px; font-size:12px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px;"><span style="flex:1; text-decoration:underline dotted; text-decoration-color:var(--ink-dim);">Folio N°${l.folio} — ${escapeHtml(fmtDateShort(l.generatedAt)||l.generatedAt)} · ${n} paiement${n>1?'s':''}</span>${icons}</div>`;
     }).join('')}</div>`;
   }
   const bordereauSectionsHtml = BORDEREAU_SECTIONS.map(section=>{
-    const pendingCount = (data.payments||[]).filter(p=>
-      ['especes','cheque','ancv'].includes(p.method) && p.status!=='annule' && p.status!=='rejete' &&
-      !p.bordereauFolio && paymentBordereauSection(p)===section
-    ).length;
-    const logsForSection = (data.settings.bordereauLog||[]).filter(l=>l.section===section);
+    // "En attente" = paiements du folio actuellement OUVERT pour cette section (pas encore généré en
+    // PDF) — les paiements sont désormais rattachés automatiquement dès leur saisie (voir
+    // autoAssignPaymentToBordereau), il n'y a donc quasiment plus de paiement sans folio du tout.
+    const openLogForCount = (data.settings.bordereauLog||[]).filter(l=>l.section===section && !l.pdfGenerated && bordereauLogSeasonMatches(l, nextView)).sort((a,b)=> b.folio-a.folio)[0];
+    const pendingCount = openLogForCount ? (openLogForCount.paymentIds||[]).length : 0;
+    const logsForSection = (data.settings.bordereauLog||[]).filter(l=>l.section===section && bordereauLogSeasonMatches(l, nextView));
     const lastLog = logsForSection.slice().sort((a,b)=> b.folio-a.folio)[0];
     const historyOpen = !!(ui.bordereauHistoryOpen && ui.bordereauHistoryOpen[section]);
     return `<div style="padding:7px 0; border-bottom:1px solid var(--line);">
@@ -7940,6 +8038,7 @@ function renderCotisationsCard(){
   }).join('');
 
   wrap.innerHTML = `
+    ${nextView ? `<div style="background:#E9F3FF; border:1px solid #8FB8E8; border-radius:8px; padding:9px 12px; margin-bottom:12px; font-size:13px; color:#1F4E85;">🗓️ Cotisations de la saison à venir <strong>${escapeHtml(schoolYearLabel(activeNextSeasonYear()))}</strong> — totalement distinctes de la saison en cours. Les statistiques de présence, elles, restent sur la saison en cours.</div>` : ''}
     <div class="card">
       <h2 style="margin-top:0;">Vue d'ensemble</h2>
       <div style="display:flex; flex-wrap:wrap; gap:16px; margin-top:6px;">
@@ -7999,7 +8098,7 @@ function renderCotisationsCard(){
     </div>
     <div class="card">
       <h2 style="margin-top:0;">📋 Bordereau d'encaissement A.M.A.M</h2>
-      <p style="font-size:12px; color:var(--ink-dim); margin:4px 0 10px; line-height:1.5;">Un bordereau par section, à générer avant chaque dépôt en banque. Reprend tous les paiements espèces/chèque/ANCV pas encore mis sur un bordereau (regroupés par famille) ; les chèques inclus passent automatiquement "encaissé". Le Chèque Sport garde son attestation dédiée.</p>
+      <p style="font-size:12px; color:var(--ink-dim); margin:4px 0 10px; line-height:1.5;">Un bordereau par section : chaque paiement espèces/chèque/ANCV (regroupé par famille) rejoint automatiquement le folio en cours dès son enregistrement — max 20 lignes par feuillet. "📄 Générer" ouvre l'aperçu du folio en cours pour le corriger puis produire le PDF avant le dépôt en banque (les chèques inclus passent alors "encaissé"). Le Chèque Sport garde son attestation dédiée.</p>
       ${bordereauSectionsHtml}
     </div>`;
   const dueRowsContainer = document.getElementById('cotisationsDueRows');
@@ -8108,7 +8207,7 @@ async function generateDueFeesPdf(){
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
   try{
-    const activeMembers = data.members.filter(m=>!m.archived);
+    const activeMembers = cotisationsScopedMembers();
     const dueList = [];
     let totalRemaining = 0;
     activeMembers.forEach(m=>{
@@ -8179,8 +8278,9 @@ async function generateChequesToCashPdf(){
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
   try{
+    const nextView = isViewingNextSeason();
     const activePeriodFilter = ui.chequesToCashPeriodFilter || '';
-    const chequesToCash = (data.payments||[]).filter(p=>p.method==='cheque' && p.status==='attente' && p.cashDate && (!activePeriodFilter || snapToCashPeriodValue(p.cashDate)===activePeriodFilter));
+    const chequesToCash = (data.payments||[]).filter(p=>p.method==='cheque' && p.status==='attente' && p.cashDate && paymentInSeasonView(p, nextView) && (!activePeriodFilter || snapToCashPeriodValue(p.cashDate)===activePeriodFilter));
     let totalAmount = 0;
     const byDiscipline = {};
     chequesToCash.forEach(p=>{
@@ -8268,9 +8368,11 @@ async function generateEncaissedPaymentsPdf(){
     const isCheque = method==='cheque';
     const fromDate = ui.encaissedPdfFrom || '';
     const toDate = ui.encaissedPdfTo || '';
+    const nextView = isViewingNextSeason();
     const effectiveDate = p=> p.encaissedAt || (p.createdAt ? p.createdAt.slice(0,10) : '');
     const list = (data.payments||[]).filter(p=>{
       if(p.status!=='encaisse' || p.method!==method) return false;
+      if(!paymentInSeasonView(p, nextView)) return false;
       const d = effectiveDate(p);
       if(fromDate && (!d || d<fromDate)) return false;
       if(toDate && (!d || d>toDate)) return false;
@@ -8400,15 +8502,122 @@ function nextBordereauFolio(section){
   data.settings.bordereauFolioCounters.global = next;
   return next;
 }
-// Génère (ou régénère) le bordereau d'encaissement A.M.A.M pour une section. Reprend tous les
-// paiements espèces/chèque/ANCV pas encore inclus dans un bordereau (le Chèque Sport garde son propre
-// PDF d'attestation existant) : si de nouveaux paiements sont en attente, un NOUVEAU folio est
-// consommé et ces paiements y sont rattachés (les chèques encore "à encaisser" passent "encaissé",
-// horodatés à aujourd'hui — générer le bordereau, c'est l'acte de dépôt en banque). Si rien de nouveau
-// n'est en attente, on régénère simplement le dernier bordereau déjà généré pour cette section, sans
-// consommer de nouveau numéro.
-// Prépare le folio (nouveau ou existant) puis ouvre l'aperçu modifiable — la génération effective du
-// PDF n'a lieu qu'une fois l'aperçu validé (bouton "Générer le PDF" dans openBordereauPreviewOverlay).
+// Corrige d'éventuels doublons de folio hérités d'une ancienne numérotation encore par section (ex :
+// Judo Folio N°1 ET Karate Folio N°1 tous les deux, avant que la numérotation soit devenue globale) :
+// renumérote alors TOUT l'historique dans l'ordre chronologique (generatedAt), de façon strictement
+// croissante et unique tous bordereaux confondus, et répercute le nouveau numéro sur les paiements déjà
+// rattachés. Ne fait rien si les numéros sont déjà tous uniques — donc sans drapeau "une bonne fois pour
+// toutes", volontairement rappelé à chaque chargement (voir renamePoussinetsToMiniPoussins pour le même
+// raisonnement : loadData() appelle applyDataInvariants() en 2 phases, et un drapeau posé trop tôt
+// empêcherait la correction de s'appliquer sur les données fraîchement synchronisées du classeur).
+function renumberBordereauFoliosIfDuplicated(){
+  const logs = data.settings.bordereauLog || [];
+  if(logs.length < 2) return false;
+  const seen = new Set();
+  let hasDuplicate = false;
+  logs.forEach(l=>{
+    if(seen.has(l.folio)) hasDuplicate = true;
+    seen.add(l.folio);
+  });
+  if(!hasDuplicate) return false;
+  const ordered = logs.slice().sort((a,b)=>{
+    const da = a.generatedAt||'', db = b.generatedAt||'';
+    if(da!==db) return da<db ? -1 : 1;
+    const sa = BORDEREAU_SECTIONS.indexOf(a.section), sb = BORDEREAU_SECTIONS.indexOf(b.section);
+    if(sa!==sb) return sa-sb;
+    return (a.folio||0)-(b.folio||0);
+  });
+  ordered.forEach((l,i)=>{
+    const newFolio = i+1;
+    if(l.folio !== newFolio){
+      const ids = new Set(l.paymentIds||[]);
+      (data.payments||[]).forEach(p=>{ if(ids.has(p.id)) p.bordereauFolio = newFolio; });
+      l.folio = newFolio;
+    }
+  });
+  data.settings.bordereauFolioCounters = data.settings.bordereauFolioCounters || {};
+  data.settings.bordereauFolioCounters.global = ordered.length;
+  return true;
+}
+// Le compteur de folio doit toujours être au moins égal au plus grand numéro déjà attribué dans
+// l'historique — sinon (classeur où ce compteur n'existait pas encore, ou remis à zéro par erreur),
+// deux sections pourraient de nouveau se voir attribuer le même numéro. Même raisonnement d'idempotence
+// sans drapeau que ci-dessus.
+function ensureBordereauFolioCounterConsistency(){
+  const maxUsed = (data.settings.bordereauLog||[]).reduce((m,l)=> Math.max(m, Number(l.folio)||0), 0);
+  data.settings.bordereauFolioCounters = data.settings.bordereauFolioCounters || {};
+  const current = Number(data.settings.bordereauFolioCounters.global)||0;
+  if(maxUsed > current){
+    data.settings.bordereauFolioCounters.global = maxUsed;
+    return true;
+  }
+  return false;
+}
+// Le bordereau papier A.M.A.M compte 20 lignes. Un feuillet ne doit donc jamais dépasser 20 lignes
+// (une ligne par adhérent, peu importe le nombre de paiements qui les concernent).
+const BORDEREAU_MAX_LINES = 20;
+// Rattache un paiement (espèces/chèque/ANCV, ni annulé ni rejeté) à un bordereau DÈS son
+// enregistrement — plus besoin de cliquer sur "Générer" pour qu'il rejoigne un folio. On le pose sur
+// le folio "ouvert" de sa section (le plus récent qui n'a pas encore été généré en PDF, voir
+// log.pdfGenerated) tant qu'il reste de la place (BORDEREAU_MAX_LINES) ; sinon, ou si aucun folio
+// ouvert n'existe, on en ouvre un nouveau. Un folio reste "ouvert" — donc continue à récupérer les
+// paiements suivants — tant qu'il n'a pas atteint la limite de lignes ET que son PDF n'a pas été
+// généré (le clic sur "📄 Générer le PDF" dans l'aperçu le referme ; "💾 Enregistrer sans générer" le
+// laisse ouvert).
+function autoAssignPaymentToBordereau(payment){
+  if(!['especes','cheque','ancv'].includes(payment.method)) return;
+  if(payment.status==='annule' || payment.status==='rejete') return;
+  if(payment.bordereauFolio) return; // déjà rattaché (ex: correction d'un paiement déjà sur un bordereau)
+  const section = paymentBordereauSection(payment);
+  if(!section) return;
+  if(!data.settings.bordereauLog) data.settings.bordereauLog = [];
+  // Un paiement "saison à venir" (fiche member.forNextSeason) ne doit jamais rejoindre le même folio
+  // qu'un paiement de la saison en cours, même dans la même section — voir paymentInSeasonView.
+  const paymentNextSeason = !!(payment.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean)?.forNextSeason;
+  const openLog = data.settings.bordereauLog
+    .filter(l=>l.section===section && !l.pdfGenerated && bordereauLogSeasonMatches(l, paymentNextSeason))
+    .sort((a,b)=> b.folio-a.folio)[0];
+  if(openLog){
+    const ids = new Set(openLog.paymentIds||[]);
+    ids.add(payment.id);
+    const paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
+    const lineCount = computeBordereauData(section, paymentsForDoc).families.reduce((s,f)=>s+(f.memberRows.length||1),0);
+    if(lineCount <= BORDEREAU_MAX_LINES){
+      openLog.paymentIds = [...ids];
+      payment.bordereauFolio = openLog.folio;
+      payment.bordereauSection = section;
+      return;
+    }
+    // Le folio ouvert déborderait avec ce paiement en plus : on le laisse tel quel (il sera considéré
+    // "plein", voir ⚠️ dans l'historique) et on en ouvre un nouveau pour ce paiement.
+  }
+  const folio = nextBordereauFolio(section);
+  data.settings.bordereauLog.push({ id: uid(), section, folio, generatedAt: todayStr(), paymentIds: [payment.id] });
+  payment.bordereauFolio = folio;
+  payment.bordereauSection = section;
+}
+// Rattrapage : au chargement, rattache automatiquement tout paiement qui ne l'était pas encore (ex:
+// paiements enregistrés avant l'introduction du rattachement automatique) — dans l'ordre chronologique
+// de saisie, pour reconstituer des folios cohérents. Idempotent (chaque paiement déjà rattaché est
+// ignoré), sans drapeau — même raisonnement que les autres correctifs de ce type dans ce fichier.
+function autoAssignAllPendingPaymentsToBordereaux(){
+  let changed = false;
+  const pending = (data.payments||[])
+    .filter(p=> !p.bordereauFolio && ['especes','cheque','ancv'].includes(p.method) && p.status!=='annule' && p.status!=='rejete')
+    .sort((a,b)=> (a.createdAt||'').localeCompare(b.createdAt||''));
+  pending.forEach(p=>{
+    const before = p.bordereauFolio;
+    autoAssignPaymentToBordereau(p);
+    if(p.bordereauFolio !== before) changed = true;
+  });
+  return changed;
+}
+// Ouvre l'aperçu modifiable du folio actuellement "ouvert" pour cette section (voir
+// autoAssignPaymentToBordereau — les paiements y sont déjà rattachés au fur et à mesure de leur
+// saisie). La génération effective du PDF n'a lieu qu'une fois l'aperçu validé (bouton "Générer le
+// PDF" dans openBordereauPreviewOverlay), moment où les chèques encore "à encaisser" de ce folio
+// passent "encaissé" (générer le bordereau, c'est l'acte de dépôt en banque) et où le folio se
+// referme (log.pdfGenerated) — les paiements suivants ouvriront alors un nouveau folio.
 async function generateBordereauPdf(section){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
     showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
@@ -8418,38 +8627,14 @@ async function generateBordereauPdf(section){
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Préparation…'; }
   try{
-    const pending = (data.payments||[]).filter(p=>
-      ['especes','cheque','ancv'].includes(p.method) &&
-      p.status!=='annule' && p.status!=='rejete' &&
-      !p.bordereauFolio &&
-      paymentBordereauSection(p)===section
-    );
-    let paymentsForDoc, folio, generatedAt;
-    if(pending.length>0){
-      folio = nextBordereauFolio(section);
-      generatedAt = todayStr();
-      pending.forEach(p=>{
-        p.bordereauFolio = folio;
-        p.bordereauSection = section;
-        if(p.method==='cheque' && p.status==='attente'){
-          p.status = 'encaisse';
-          if(!p.encaissedAt) p.encaissedAt = generatedAt;
-        }
-      });
-      if(!data.settings.bordereauLog) data.settings.bordereauLog = [];
-      data.settings.bordereauLog.push({ id: uid(), section, folio, generatedAt, paymentIds: pending.map(p=>p.id) });
-      saveData();
-      renderActiveTab();
-      paymentsForDoc = pending;
-    } else {
-      const log = (data.settings.bordereauLog||[]).filter(l=>l.section===section).sort((a,b)=> b.folio-a.folio)[0];
-      if(!log){ showToast('Aucun paiement en attente pour cette section'); return; }
-      folio = log.folio;
-      generatedAt = log.generatedAt;
-      const ids = new Set(log.paymentIds);
-      paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
-    }
-    openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc);
+    const nextView = isViewingNextSeason();
+    const openLog = (data.settings.bordereauLog||[])
+      .filter(l=>l.section===section && !l.pdfGenerated && bordereauLogSeasonMatches(l, nextView))
+      .sort((a,b)=> b.folio-a.folio)[0];
+    if(!openLog){ showToast('Aucun paiement en attente pour cette section'); return; }
+    const ids = new Set(openLog.paymentIds||[]);
+    const paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
+    openBordereauPreviewOverlay(section, openLog.folio, openLog.generatedAt, paymentsForDoc);
   } catch(err){
     showToast('Échec de la préparation : ' + (err.message||err));
   } finally {
@@ -8526,7 +8711,11 @@ function computeBordereauData(section, paymentsForDoc){
       else if(p.method==='especes') especes += methodAmount;
       else if(p.method==='cheque'){
         cheque += methodAmount;
-        if(p.payerName && p.payerName.trim()) chequeOwners.add(p.payerName.trim());
+        // Nom par défaut = nom du propriétaire du chèque s'il a été saisi, sinon nom de famille (même
+        // logique que partout ailleurs dans l'appli, voir paymentChequeFamilyLabel) — jamais vide, pour
+        // que le champ "Nom du chèque" de l'aperçu modifiable arrive déjà pré-rempli.
+        const chequeLabel = paymentChequeFamilyLabel(p);
+        if(chequeLabel) chequeOwners.add(chequeLabel);
         if(p.cashDate){
           const slotIdx = dateSlotIndexOf(p.cashDate);
           if(slotIdx!==-1) dateSlotAmounts[slotIdx] = Math.round((dateSlotAmounts[slotIdx]+methodAmount)*100)/100;
@@ -8700,27 +8889,55 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
   overlay.innerHTML = `
     <div class="overlay-bar">
       <button class="primary" id="bordereauPreviewGenerateBtn">📄 Générer le PDF</button>
+      <button class="ghost" id="bordereauPreviewSaveBtn">💾 Enregistrer sans générer</button>
       <button class="ghost" id="bordereauPreviewCancelBtn">Fermer</button>
     </div>
-    <p style="text-align:center; color:var(--ink-dim); font-size:12.5px; margin:0 0 12px;">Aperçu — ${escapeHtml(section)}, Folio N°${folio}. "Nom du chèque" et "Observations" sont modifiables à la main avant de générer le PDF.</p>
+    <p style="text-align:center; color:var(--ink-dim); font-size:12.5px; margin:0 0 12px;">Aperçu — ${escapeHtml(section)}, Folio N°${folio}. "Nom du chèque" et "Observations" sont modifiables à la main — utilise "Enregistrer sans générer" pour mémoriser tes corrections sans télécharger le PDF tout de suite.</p>
     <div style="max-width:1300px; margin:0 auto;">${tableHtml}</div>
   `;
   overlay.classList.add('show');
+  // Relit les champs modifiables du tableau — factorisé car utilisé aussi bien par "Enregistrer sans
+  // générer" que par "Générer le PDF", pour ne jamais perdre une correction saisie à la main.
+  function collectOverridesFromInputs(){
+    const newOverrides = { chequeName:{}, observations:{} };
+    overlay.querySelectorAll('[data-family-key]').forEach(inp=>{ newOverrides.chequeName[inp.dataset.familyKey] = inp.value; });
+    overlay.querySelectorAll('[data-member-id]').forEach(inp=>{ newOverrides.observations[inp.dataset.memberId] = inp.value; });
+    return newOverrides;
+  }
   document.getElementById('bordereauPreviewCancelBtn').addEventListener('click', ()=>{
     overlay.classList.remove('show');
     overlay.innerHTML = '';
   });
+  document.getElementById('bordereauPreviewSaveBtn').addEventListener('click', ()=>{
+    if(log) log.overrides = collectOverridesFromInputs();
+    saveData();
+    showToast('Modifications enregistrées — PDF pas encore généré');
+    overlay.classList.remove('show');
+    overlay.innerHTML = '';
+  });
   document.getElementById('bordereauPreviewGenerateBtn').addEventListener('click', async ()=>{
-    const newOverrides = { chequeName:{}, observations:{} };
-    overlay.querySelectorAll('[data-family-key]').forEach(inp=>{ newOverrides.chequeName[inp.dataset.familyKey] = inp.value; });
-    overlay.querySelectorAll('[data-member-id]').forEach(inp=>{ newOverrides.observations[inp.dataset.memberId] = inp.value; });
+    const newOverrides = collectOverridesFromInputs();
     if(log) log.overrides = newOverrides;
+    // Générer le PDF, c'est l'acte de dépôt en banque : les chèques encore "à encaisser" de ce folio
+    // passent "encaissé" à ce moment précis (pas avant, au simple rattachement automatique du paiement).
+    const todayIso = todayStr();
+    paymentsForDoc.forEach(p=>{
+      if(p.method==='cheque' && p.status==='attente'){
+        p.status = 'encaisse';
+        if(!p.encaissedAt) p.encaissedAt = todayIso;
+      }
+    });
     saveData();
     const btn = document.getElementById('bordereauPreviewGenerateBtn');
     const originalLabel = btn.textContent;
     btn.disabled = true; btn.textContent = 'Génération…';
     try{
       await buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsForDoc, newOverrides);
+      // Referme le folio : les paiements suivants de cette section ouvriront un nouveau folio (voir
+      // autoAssignPaymentToBordereau, qui ignore les folios déjà pdfGenerated).
+      if(log) log.pdfGenerated = true;
+      saveData();
+      renderActiveTab();
       overlay.classList.remove('show');
       overlay.innerHTML = '';
     } catch(err){
@@ -9061,7 +9278,7 @@ function renderExportCard(){
 
     const generalRows = [['Cours', ...HEADER_COMMON]];
     exportGroups.forEach(g=>{
-      data.members.filter(m=>m.groupId===g.id && !m.archived).forEach(m=>{
+      data.members.filter(m=>m.groupId===g.id && !m.archived && !m.forNextSeason).forEach(m=>{
         generalRows.push([g.name, ...memberRow(m)]);
       });
     });
@@ -9069,14 +9286,14 @@ function renderExportCard(){
 
     exportGroups.forEach(g=>{
       const rows = [HEADER_COMMON];
-      data.members.filter(m=>m.groupId===g.id && !m.archived).forEach(m=> rows.push(memberRow(m)));
+      data.members.filter(m=>m.groupId===g.id && !m.archived && !m.forNextSeason).forEach(m=> rows.push(memberRow(m)));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), safeSheetName(g.name));
     });
 
     const presRows = [['Cours','Date séance','Nom','Statut']];
     exportGroups.forEach(g=>{
       data.sessions.filter(s=>s.groupId===g.id).sort((a,b)=>a.date.localeCompare(b.date)).forEach(s=>{
-        data.members.filter(m=>m.groupId===g.id && !m.archived).forEach(m=>{
+        data.members.filter(m=>m.groupId===g.id && !m.archived && !m.forNextSeason).forEach(m=>{
           presRows.push([g.name, s.date, m.name, attendanceLabel((data.attendance[s.id]||{})[m.id])]);
         });
       });
@@ -9625,7 +9842,12 @@ function renderConvocTab(){
   if(ui.convocCategory && (ui.convocCategory==='all' || cats.includes(ui.convocCategory))) categoryValue = ui.convocCategory;
   ui.convocCategory = categoryValue;
 
-  const membersRaw = categoryValue==='all' ? data.members.filter(m=>!m.archived) : data.members.filter(m=>!m.archived && memberMatchesGroupedCategory(m, categoryValue));
+  // Cloisonné à la vue actuellement affichée (saison en cours / saison à venir), même logique que les
+  // Cotisations et Présences — une convocation ne concerne jamais les fiches de l'autre saison.
+  const convocNextView = isViewingNextSeason();
+  const membersRaw = categoryValue==='all'
+    ? data.members.filter(m=>!m.archived && !!m.forNextSeason===convocNextView)
+    : data.members.filter(m=>!m.archived && !!m.forNextSeason===convocNextView && memberMatchesGroupedCategory(m, categoryValue));
   const members = categoryValue==='all'
     ? sortMembersByCategoryThenName(membersRaw)
     : [...membersRaw].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
@@ -9635,6 +9857,7 @@ function renderConvocTab(){
   const expanded = !!ui.convocMembersExpanded;
 
   membersWrap.innerHTML = `
+    ${convocNextView ? nextSeasonBannerHtml() : ''}
     <h2 style="margin-bottom:10px;">Destinataires</h2>
     <div class="row" style="margin:0 0 10px;">
       <div style="flex:1">
@@ -9662,6 +9885,8 @@ function renderConvocTab(){
       </div>`;
     })) : ''}
   `;
+  const convocBackBtn = membersWrap.querySelector('[data-action="back-to-current-season"]');
+  if(convocBackBtn) convocBackBtn.addEventListener('click', ()=>{ ui.viewingSeasonId = null; renderActiveTab(); });
   const toggleMembersEl = membersWrap.querySelector('[data-action="toggle-convoc-members"]');
   if(toggleMembersEl){
     toggleMembersEl.addEventListener('click', ()=>{
@@ -10671,7 +10896,7 @@ function updateArchiveResultsButton(){
 }
 function renderArchivedEventResultsHtml(ev){
   const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
-  const presents = ev.recipients.filter(r=>r.response==='present');
+  const presents = recipientsInSeasonView(ev.recipients).filter(r=>r.response==='present');
   if(presents.length===0) return '<div class="empty">Aucun participant présent.</div>';
   const shiai = isShiaiEvent(ev.name);
   const { rows } = buildResultRowsHtml(presents, birthDateOf, shiai);
@@ -10782,6 +11007,18 @@ function renderResultsTab(){
   if(liveEl) liveEl.style.display = archive ? 'none' : '';
   if(archiveEl) archiveEl.style.display = archive ? '' : 'none';
   if(archive){ renderArchiveViewResultats(archive); return; }
+  const bannerEl = document.getElementById('resultats-season-banner');
+  if(bannerEl){
+    if(isViewingNextSeason()){
+      bannerEl.style.display = '';
+      bannerEl.innerHTML = nextSeasonBannerHtml();
+      const backBtn = bannerEl.querySelector('[data-action="back-to-current-season"]');
+      if(backBtn) backBtn.addEventListener('click', ()=>{ ui.viewingSeasonId = null; renderActiveTab(); });
+    } else {
+      bannerEl.style.display = 'none';
+      bannerEl.innerHTML = '';
+    }
+  }
   const sel = document.getElementById('resultsEventSel');
   if(!sel) return;
   renderResultsDashboard();
@@ -10884,7 +11121,7 @@ function renderStageForm(){
   input.addEventListener('input', ()=>{
     const q = input.value.trim().toLowerCase();
     if(!q){ wrap.innerHTML=''; wrap.classList.remove('show'); return; }
-    const matches = data.members.filter(m=>!m.archived && m.name.toLowerCase().includes(q)).slice(0,8);
+    const matches = data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,8);
     wrap.innerHTML = matches.map(m=>{
       const g = data.groups.find(x=>x.id===m.groupId);
       return `<div class="convoc-row" data-action="pick-stage-member" data-id="${m.id}" style="cursor:pointer;">
@@ -10973,7 +11210,7 @@ function renderStageHistory(){
   const card = document.getElementById('stage-history-card');
   if(!card) return;
   const hidden = loadStageHistoryHidden();
-  const validated = (data.stages||[]).filter(s=>s.validated).sort((a,b)=> (b.dateStart||'').localeCompare(a.dateStart||''));
+  const validated = (data.stages||[]).filter(s=>s.validated && stageInSeasonView(s)).sort((a,b)=> (b.dateStart||'').localeCompare(a.dateStart||''));
   if(!ui.stageHistoryExpanded) ui.stageHistoryExpanded = {};
   card.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -11155,7 +11392,7 @@ function initAddResultMemberAutocomplete(){
     ui.addResultMatchedMemberId = null;
     const q = input.value.trim().toLowerCase();
     if(!q){ wrap.innerHTML=''; wrap.classList.remove('show'); refreshAddResultWeightField(); refreshAddResultQualification(); return; }
-    const matches = data.members.filter(m=>!m.archived && m.name.toLowerCase().includes(q)).slice(0,8);
+    const matches = data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,8);
     wrap.innerHTML = matches.map(m=>{
       const g = data.groups.find(x=>x.id===m.groupId);
       return `<div class="convoc-row" data-action="pick-add-result-member" data-id="${m.id}" style="cursor:pointer;">
@@ -11291,7 +11528,7 @@ function renderResultsDashboard(){
   const events = (data.convocEvents||[]).filter(ev => (ev.date||'').startsWith(monthPrefix));
   let totalParticipants = 0, gold = 0, silver = 0, bronze = 0, competitionsWithMatch = 0;
   events.forEach(ev=>{
-    const presents = ev.recipients.filter(r=> r.response==='present' && activeCats.includes(groupedCategoryLabel(birthDateOfRecipient(r))));
+    const presents = recipientsInSeasonView(ev.recipients).filter(r=> r.response==='present' && activeCats.includes(groupedCategoryLabel(birthDateOfRecipient(r))));
     if(presents.length>0) competitionsWithMatch++;
     presents.forEach(r=>{
       totalParticipants++;
@@ -11334,7 +11571,7 @@ function renderResultsList(){
     wrap.innerHTML = `<div class="empty">Crée d'abord un événement depuis l'onglet Convocations.</div>`;
     return;
   }
-  const presents = ev.recipients.filter(r=>r.response==='present');
+  const presents = recipientsInSeasonView(ev.recipients).filter(r=>r.response==='present');
   const showQualif = isQualifyingCompetitionName(ev.name);
   if(!ui.qualifCheckedRows) ui.qualifCheckedRows = {};
   const missingBanner = eventHasMissingResults(ev)
@@ -11449,7 +11686,7 @@ function renderResultsSearchList(query){
   const listWrap = document.getElementById('results-search-list');
   if(!query){ listWrap.innerHTML = ''; return; }
   const q = query.toLowerCase();
-  const matches = data.members.filter(m=>m.name.toLowerCase().includes(q)).slice(0,8);
+  const matches = data.members.filter(m=>!!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,8);
   listWrap.innerHTML = matches.map(m=>`
     <div class="convoc-row" data-action="pick-member" data-id="${m.id}" style="cursor:pointer;">
       <div class="info"><div class="n">${nameWithBoldSurname(m.name)}</div></div>
@@ -12497,7 +12734,7 @@ async function generateSocialMediaVisual(eventId){
   }
   const ev = data.convocEvents.find(e=>e.id===eventId);
   if(!ev){ showToast('Choisis d’abord un événement'); return; }
-  const presents = ev.recipients.filter(r=>r.response==='present');
+  const presents = recipientsInSeasonView(ev.recipients).filter(r=>r.response==='present');
   if(presents.length===0){ showToast('Aucun participant présent pour cet événement'); return; }
   const btn = document.getElementById('shareSocialVisualBtn');
   if(btn) btn.disabled = true;
@@ -12526,7 +12763,7 @@ async function generateEventResultsPdfForId(eventId){
   }
   const ev = data.convocEvents.find(e=>e.id===eventId);
   if(!ev){ showToast('Choisis d’abord un événement'); return; }
-  const presents = ev.recipients.filter(r=>r.response==='present');
+  const presents = recipientsInSeasonView(ev.recipients).filter(r=>r.response==='present');
   if(presents.length===0){ showToast('Aucun participant présent pour cet événement'); return; }
 
   const btn = document.getElementById('downloadEventPdfBtn');
@@ -12592,7 +12829,7 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
   const birthDateOfRecipient = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
 
   const events = (data.convocEvents||[]).filter(ev => matchesDate(ev.date||''))
-    .map(ev => ({ ev, presents: ev.recipients.filter(r=> r.response==='present' && activeCats.includes(groupedCategoryLabel(birthDateOfRecipient(r)))) }))
+    .map(ev => ({ ev, presents: recipientsInSeasonView(ev.recipients).filter(r=> r.response==='present' && activeCats.includes(groupedCategoryLabel(birthDateOfRecipient(r)))) }))
     .filter(({presents}) => presents.length>0)
     .sort((a,b)=> (a.ev.date||'').localeCompare(b.ev.date||''));
 
@@ -12701,8 +12938,9 @@ function computeAGReportData(){
   const seasonYear = data.settings.seasonStartYear || autoSeasonStartYear();
 
   // Effectifs (élèves actuellement actifs uniquement — les élèves archivés en cours de saison
-  // restent comptabilisés dans les statistiques de présence ci-dessous, mais plus dans l'effectif)
-  const activeMembers = data.members.filter(m=>!m.archived);
+  // restent comptabilisés dans les statistiques de présence ci-dessous, mais plus dans l'effectif ;
+  // les fiches déjà préparées pour la saison SUIVANTE, elles, ne concernent pas encore cette saison-ci)
+  const activeMembers = data.members.filter(m=>!m.archived && !m.forNextSeason);
   const totalMembers = activeMembers.length;
   const byGroup = data.groups.map(g=>({ name:g.name, count: activeMembers.filter(m=>m.groupId===g.id).length }));
   const genderF = activeMembers.filter(m=>m.gender==='F').length;
@@ -13879,7 +14117,10 @@ function initGlobalSearch(){
   input.addEventListener('input', ()=>{
     const q = input.value.trim().toLowerCase();
     if(!q){ wrap.innerHTML=''; wrap.classList.remove('show'); return; }
-    const matches = data.members.filter(m=>!m.archived && m.name.toLowerCase().includes(q)).slice(0,10);
+    // Cloisonnement par saison (voir memberMatchesSeasonView) : la recherche globale ne doit jamais
+    // faire remonter une fiche de l'autre saison — on ne cherche que parmi les fiches de la vue
+    // actuellement affichée (saison en cours, ou saison à venir si ce bandeau est sélectionné).
+    const matches = data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,10);
     if(matches.length===0){
       wrap.innerHTML = '<div class="empty" style="padding:12px;">Aucun élève trouvé.</div>';
     } else {
@@ -13889,7 +14130,7 @@ function initGlobalSearch(){
         return `
         <div class="convoc-row" data-action="goto-member" data-id="${m.id}" data-group="${m.groupId||''}" style="cursor:pointer;">
           <div class="info">
-            <div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(cat)}</span>` : ''}${m.forNextSeason ? `<span class="tag" style="background:#E9F3FF; color:#1F4E85;">saison ${escapeHtml(schoolYearLabel(activeNextSeasonYear()))}</span>` : ''}</div>
+            <div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(cat)}</span>` : ''}</div>
             <div class="e">${g ? escapeHtml(g.name) : 'Sans cours'}${m.email ? ' · '+escapeHtml(m.email) : ''}</div>
           </div>
         </div>`;
@@ -13935,9 +14176,9 @@ function goToMemberFiche(memberId, groupId){
   ui.memberFicheExpanded[memberId] = true;
   document.getElementById('globalSearchResults').classList.remove('show');
   document.getElementById('globalSearchInput').value = '';
-  // Une fiche "saison à venir" (voir prepareNextSeasonLicenses) n'est visible que dans la vue
-  // Cours filtrée sur cette saison — on bascule le sélecteur en haut à gauche en conséquence pour
-  // que la fiche trouvée soit effectivement affichée, quelle que soit la saison consultée avant.
+  // La recherche globale (voir initGlobalSearch) ne remonte déjà que des fiches de la vue
+  // actuellement affichée — on force quand même le sélecteur de saison ici en garde-fou, au cas où
+  // il aurait changé entre la saisie et le clic sur un résultat.
   const targetMember = data.members.find(x=>x.id===memberId);
   ui.viewingSeasonId = (targetMember && targetMember.forNextSeason) ? 'next' : null;
   // La recherche est accessible depuis n'importe quel onglet — on bascule vers Cours pour
