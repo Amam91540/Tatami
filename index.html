@@ -8255,7 +8255,11 @@ async function buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsFor
       // Totaux fusionnés au niveau famille (comme avant) pour les colonnes de mode de paiement.
       let ancv=0, especes=0, cheque=0;
       const chequeOwners = new Set();
-      const chequeMonthEntries = [];
+      // Un mois = une seule case Date 1/2/3 : tous les chèques encaissables le même mois pour cette
+      // famille voient leur montant CUMULÉ dans cette case unique (ex: "SEPT 40,00 €"), jamais deux
+      // mois mélangés dans une même case — s'il y a plus de 3 mois différents, seuls les 3 premiers
+      // (chronologiquement) sont affichés.
+      const chequeMonthTotals = {};
       g.payments.forEach(p=>{
         const diversAmt = p.diversEnabled ? (Number(p.diversAmount)||0) : 0;
         const methodAmount = Math.round((p.amountTotal + diversAmt)*100)/100;
@@ -8264,11 +8268,17 @@ async function buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsFor
         else if(p.method==='cheque'){
           cheque += methodAmount;
           if(p.payerName && p.payerName.trim()) chequeOwners.add(p.payerName.trim());
-          if(p.cashDate) chequeMonthEntries.push({ date: p.cashDate, label: cashPeriodShortMonth(p.cashDate) });
+          if(p.cashDate){
+            const label = cashPeriodShortMonth(p.cashDate);
+            if(!chequeMonthTotals[label]) chequeMonthTotals[label] = { amount:0, firstDate:p.cashDate };
+            chequeMonthTotals[label].amount = Math.round((chequeMonthTotals[label].amount+methodAmount)*100)/100;
+            if(p.cashDate < chequeMonthTotals[label].firstDate) chequeMonthTotals[label].firstDate = p.cashDate;
+          }
         }
       });
-      chequeMonthEntries.sort((a,b)=> a.date.localeCompare(b.date));
-      const monthsSorted = [...new Set(chequeMonthEntries.map(e=>e.label))];
+      const monthsSorted = Object.keys(chequeMonthTotals)
+        .sort((a,b)=> chequeMonthTotals[a].firstDate.localeCompare(chequeMonthTotals[b].firstDate))
+        .map(label=> `${label} ${fmtEuro(chequeMonthTotals[label].amount)}`);
       totAncv += ancv; totEspeces += especes; totCheque += cheque;
       // Une ligne par adhérent distinct concerné par au moins un paiement de cette famille — Inscription
       // = somme de sa part (allocation.amount) sur ces paiements. Le "Divers" d'un paiement est
