@@ -448,7 +448,16 @@
 
   #duplicate-members-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:120; padding:16px; overflow:auto; }
   #duplicate-members-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
+  #family-suggestions-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:120; padding:16px; overflow:auto; }
+  #family-suggestions-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
+  #payment-form-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:130; padding:16px; overflow:auto; }
+  #payment-form-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
+  #member-cotisation-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:120; padding:16px; overflow:auto; }
+  #member-cotisation-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
   #duplicate-members-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:560px; width:100%; margin-top:5vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
+  #family-suggestions-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:560px; width:100%; margin-top:5vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
+  #payment-form-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:480px; width:100%; margin-top:5vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
+  #member-cotisation-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:520px; width:100%; margin-top:5vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
 
   #convoc-whatsapp-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:120; padding:16px; overflow:auto; }
   #convoc-whatsapp-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
@@ -684,6 +693,15 @@
             </div>
           </div>
           <div id="suivi-content"></div>
+        </div>
+      </div>
+      <div class="section-group" data-group="suivi-cotisations">
+        <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="suivi-cotisations">
+          <span>💰 Cotisations</span>
+          <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="section-group-body">
+          <div id="cotisations-card"></div>
         </div>
       </div>
       <div class="section-group" data-group="suivi-calendrier">
@@ -948,6 +966,17 @@
       </div>
     </div>
 
+    <div class="section-group" data-group="param-cotisations" data-default-open>
+      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="param-cotisations">
+        <span>👨‍👩‍👧 Familles &amp; cotisations</span>
+        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="section-group-body">
+        <div id="family-suggestions-card"></div>
+        <div id="family-groups-card"></div>
+      </div>
+    </div>
+
     <div class="section-group" data-group="param-importexport">
       <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="param-importexport">
         <span>📂 Import &amp; export</span>
@@ -1002,6 +1031,9 @@
 <div id="quick-add-overlay"></div>
 <div id="report-issue-overlay"></div>
 <div id="duplicate-members-overlay"></div>
+<div id="family-suggestions-overlay"></div>
+<div id="payment-form-overlay"></div>
+<div id="member-cotisation-overlay"></div>
 <div id="convoc-whatsapp-overlay"></div>
 <div id="birthday-overlay"></div>
 <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" style="display:none">
@@ -1335,13 +1367,26 @@ function ensureSettings(){
   if(!data.settings.competitionProfiles) data.settings.competitionProfiles = {};
   data.convocEvents.forEach(ev=>{ if(ev.archived===undefined) ev.archived = false; });
   data.groups.forEach(g=>{ g.recurrence ||= []; });
+  // Cotisations : carnet de paiements (data.payments) + familles détectées/validées manuellement
+  // (data.settings.familyGroups) + suggestions de rapprochement ignorées par le club, pour ne plus
+  // les reproposer (data.settings.dismissedFamilySuggestions). Chaque élève garde son rang familial
+  // (feeRank, attribué automatiquement à la validation d'une famille mais modifiable) et un montant
+  // attendu éditable (feeOverrideAmount) qui prime sur le calcul automatique via la grille tarifaire.
+  if(!data.payments) data.payments = [];
+  if(!data.settings.familyGroups || typeof data.settings.familyGroups !== 'object') data.settings.familyGroups = {};
+  if(!data.settings.dismissedFamilySuggestions) data.settings.dismissedFamilySuggestions = [];
+  data.members.forEach(m=>{
+    if(m.familyId===undefined) m.familyId = null;
+    if(m.feeRank===undefined) m.feeRank = null;
+    if(m.feeOverrideAmount===undefined) m.feeOverrideAmount = null;
+  });
   // Suivi des suppressions à répercuter sur le classeur Google Sheets : depuis que la sauvegarde
   // en ligne fusionne au lieu d'écraser (pour ne pas perdre les données saisies en parallèle par
   // un autre appareil), une ligne supprimée localement ne disparaît plus jamais du classeur toute
   // seule — il faut explicitement lui dire quels ids supprimer. Cette liste est envoyée à chaque
   // sauvegarde puis vidée une fois l'envoi réussi.
   if(!data.deletedIds || typeof data.deletedIds !== 'object') data.deletedIds = {};
-  ['groups','members','sessions','beltPassages','calendarEvents','convocEvents','archivedSeasons','stages'].forEach(k=>{
+  ['groups','members','sessions','beltPassages','calendarEvents','convocEvents','archivedSeasons','stages','payments'].forEach(k=>{
     if(!Array.isArray(data.deletedIds[k])) data.deletedIds[k] = [];
   });
 }
@@ -1730,7 +1775,7 @@ let savePendingAfter = false;
 let syncedSnapshot = null;
 function cloneArr(arr){ return JSON.parse(JSON.stringify(arr||[])); }
 function cloneObj(obj){ return JSON.parse(JSON.stringify(obj||{})); }
-const SYNCED_SNAPSHOT_COLLECTIONS = ['groups','members','sessions','stages','beltPassages','calendarEvents','convocEvents','archivedSeasons'];
+const SYNCED_SNAPSHOT_COLLECTIONS = ['groups','members','sessions','stages','beltPassages','calendarEvents','convocEvents','archivedSeasons','payments'];
 function snapshotFrom(source){
   const snap = {};
   SYNCED_SNAPSHOT_COLLECTIONS.forEach(k=> snap[k] = cloneArr(source[k]));
@@ -2043,6 +2088,9 @@ function renderAll(){
   renderIncompleteFichesSection();
   renderDuplicateGroupsCard();
   renderDuplicateMembersCard();
+  renderFamilySuggestionsCard();
+  renderFamilyGroupsCard();
+  renderCotisationsCard();
   renderBeltPassageSection();
   renderBeltDiplomasSection();
   renderBeltValidatedSection();
@@ -2072,10 +2120,10 @@ function renderAll(){
 const TAB_RENDER_FNS = {
   presences: [renderPresencesTab],
   groupes: [renderGroupsTab, renderIncompleteFichesSection, renderBeltPassageSection, renderBeltDiplomasSection, renderBeltValidatedSection],
-  suivi: [renderSuiviTab, renderSuiviAlerts, renderCompetitionsCalendarCard],
+  suivi: [renderSuiviTab, renderSuiviAlerts, renderCompetitionsCalendarCard, renderCotisationsCard],
   convoc: [renderConvocTab],
   resultats: [renderResultsTab],
-  param: [renderDuplicateGroupsCard, renderDuplicateMembersCard, renderAgeSettings, renderMembershipFeesSettings, renderAttestationSettings, renderImportedCompetitionsSettings, renderBackendSettings, renderLicensePendingCard, renderArchiveCard, renderBirthdaysCard, renderExportCard]
+  param: [renderDuplicateGroupsCard, renderDuplicateMembersCard, renderFamilySuggestionsCard, renderFamilyGroupsCard, renderAgeSettings, renderMembershipFeesSettings, renderAttestationSettings, renderImportedCompetitionsSettings, renderBackendSettings, renderLicensePendingCard, renderArchiveCard, renderBirthdaysCard, renderExportCard]
 };
 function renderActiveTab(){
   if(!ready) return;
@@ -2194,6 +2242,7 @@ function renderGroupsTab(){
                 <div style="margin-top:8px;"><span class="field-label">Certificat médical</span><div>${m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">N° de licence</span><div>${m.licenseNumber ? escapeHtml(m.licenseNumber) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Cours</span><div>${curGroup ? escapeHtml(curGroup.name) : '—'}</div></div>
+                <div style="margin-top:8px;"><span class="field-label">Cotisation</span><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">${memberDueBadgeHtml(m)}<button class="ghost" data-action="open-member-cotisation" data-id="${m.id}" style="padding:4px 10px; font-size:12px;">Détail &amp; paiements</button></div></div>
                 ${committee ? `<div style="margin-top:8px;"><span class="field-label">Fonction</span><div>${m.committeeRole ? escapeHtml(m.committeeRole) : '—'}</div></div>` : ''}
                 ${m.note ? `<div style="margin-top:8px;"><span class="field-label">Note</span><div style="white-space:pre-wrap;">${escapeHtml(m.note)}</div></div>` : ''}
                 ${(m.linkedMemberId && !isLicensePendingGroup(curGroup)) ? `<div style="margin-top:8px; color:var(--ink-dim); font-size:12.5px;">🔗 Fiche liée déjà créée dans « Licence à prendre » pour la saison prochaine — synchronisée automatiquement.</div>` : ''}
@@ -2650,6 +2699,8 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
       saveData(); renderActiveTab();
       showToast(`${m.name} inscrit(e) dans « ${targetGroup.name} »`);
     }
+  } else if(action==='open-member-cotisation'){
+    openMemberCotisationOverlay(btn.dataset.id);
   }
 });
 
@@ -3622,6 +3673,9 @@ function fmtDateLong(s){
 // ne donne que le total licence+adhésion+cours compris) : on le déduit par soustraction, exactement
 // comme le détail de l'attestation elle-même (total = adhésion + licence + cours).
 const FAMILY_RANK_LABELS = { p1: '1ère personne de la famille', p2: '2ème personne de la même famille', p3: '3ème personne de la même famille', p4: 'À partir de la 4ème personne de la même famille' };
+// Étiquette courte pour les badges (le 1er mot de FAMILY_RANK_LABELS ne marche que pour p1-p3 —
+// pour p4 la phrase commence par "À partir de..." et donnait un badge illisible du genre "(à)").
+const FAMILY_RANK_SHORT_LABELS = { p1: '1ère', p2: '2ème', p3: '3ème', p4: '4ème+' };
 function memberFeeDetails(m, familyRank){
   const fees = data.settings.membershipFees;
   if(!fees) return { error: "Grille tarifaire introuvable dans Réglages" };
@@ -3632,9 +3686,15 @@ function memberFeeDetails(m, familyRank){
   const disc = courseDisciplineKey(group.name);
   if(!disc || !fees.disciplines.includes(disc)) return { error: `Discipline non reconnue pour le cours « ${group.name} »` };
   const applicable = fees.applicableTiers[disc] || [];
+  // Un élève inscrit dans un cours "Baby" (Baby Judo / Baby Karaté) paie toujours le tarif Baby,
+  // même si son âge dépasse le seuil habituel de 6 ans (ces cours accueillent parfois des enfants un
+  // peu plus âgés) — c'est le cours suivi qui détermine le tarif, pas uniquement l'âge.
+  const isBabyCourse = /baby/i.test(group.name);
   let tier = null;
   if(applicable.length===1){
     tier = applicable[0];
+  } else if(isBabyCourse && applicable.includes('BABY')){
+    tier = 'BABY';
   } else {
     const age = ageAtDate(m.birthDate, todayStr());
     if(age===null) return { error: 'Date de naissance invalide' };
@@ -3657,6 +3717,838 @@ function memberFeeDetails(m, familyRank){
     total, license, adhesion, course, groupName: group.name
   };
 }
+/* ---------------- COTISATIONS : familles, rangs, paiements ---------------- */
+// Nom de famille approximatif d'un élève, déduit du champ "Prénom Nom" (même logique que
+// reverseNameOrder côté Code.gs) : le prénom est le premier mot, le nom de famille tout le reste.
+function memberLastName(m){
+  const parts = String(m.name||'').trim().split(/\s+/);
+  return parts.length>1 ? parts.slice(1).join(' ') : '';
+}
+function memberAddressKey(m){
+  const addr = normalizeForMatch(m.address);
+  const cp = normalizeForMatch(m.postalCode);
+  if(!addr) return '';
+  return `${addr}|${cp}`;
+}
+function familySuggestionKey(memberIds){
+  return [...memberIds].sort().join(',');
+}
+// Repère des groupes d'élèves probablement de la même famille (même nom de famille, et/ou même
+// adresse), en excluant ceux déjà rattachés à une famille validée et les suggestions déjà ignorées.
+// Ne valide RIEN automatiquement — chaque groupe doit être confirmé (ou corrigé) à la main.
+function findFamilySuggestions(){
+  const dismissed = new Set(data.settings.dismissedFamilySuggestions||[]);
+  const candidates = data.members.filter(m=>!m.archived && !m.familyId);
+  const byLastName = {};
+  const byAddress = {};
+  candidates.forEach(m=>{
+    const ln = normalizeForMatch(memberLastName(m));
+    if(ln){ (byLastName[ln] ||= []).push(m); }
+    const ak = memberAddressKey(m);
+    if(ak){ (byAddress[ak] ||= []).push(m); }
+  });
+  const groupsByKey = {};
+  const addGroup = (list, matchType)=>{
+    if(list.length<2) return;
+    const ids = list.map(m=>m.id);
+    const key = familySuggestionKey(ids);
+    if(dismissed.has(key)) return;
+    if(!groupsByKey[key]) groupsByKey[key] = { key, memberIds: ids.slice(), matchTypes: new Set() };
+    groupsByKey[key].matchTypes.add(matchType);
+  };
+  Object.values(byLastName).forEach(list=> addGroup(list, 'nom'));
+  Object.values(byAddress).forEach(list=> addGroup(list, 'adresse'));
+  return Object.values(groupsByKey).map(g=>({ key: g.key, memberIds: g.memberIds, matchTypes: [...g.matchTypes] }));
+}
+function dismissFamilySuggestion(memberIds){
+  const key = familySuggestionKey(memberIds);
+  if(!data.settings.dismissedFamilySuggestions) data.settings.dismissedFamilySuggestions = [];
+  if(!data.settings.dismissedFamilySuggestions.includes(key)) data.settings.dismissedFamilySuggestions.push(key);
+}
+// Calcule, pour un groupe de membres d'une même famille, la répartition des rangs (p1..p4, tous les
+// rangs au-delà de la 4ème personne utilisant le même tarif p4) qui minimise le total payé par la
+// famille : on essaie toutes les affectations possibles et on garde la moins chère. Une famille
+// comptant en pratique 2 à 6 personnes, un essai exhaustif reste instantané.
+function optimalFamilyRankAssignment(members){
+  const n = members.length;
+  if(n===0) return [];
+  if(n===1) return [{ memberId: members[0].id, feeRank: 'p1' }];
+  const rankFor = (idx)=> idx<3 ? `p${idx+1}` : 'p4';
+  const costFor = (m, rank)=>{
+    const details = memberFeeDetails(m, rank);
+    return details.error ? 0 : details.total; // un élève sans tarif calculable ne pèse pas dans l'optimisation
+  };
+  const permute = (arr)=>{
+    if(arr.length<=1) return [arr];
+    const out = [];
+    arr.forEach((item,i)=>{
+      const rest = arr.slice(0,i).concat(arr.slice(i+1));
+      permute(rest).forEach(p=> out.push([item, ...p]));
+    });
+    return out;
+  };
+  // Au-delà de 7 membres l'exhaustif deviendrait coûteux : on retombe alors sur un tri simple par
+  // tarif de base (rang p1) croissant, très proche de l'optimum dans les cas réels.
+  if(n>7){
+    const sorted = [...members].sort((a,b)=> costFor(a,'p1') - costFor(b,'p1'));
+    return sorted.map((m,idx)=> ({ memberId: m.id, feeRank: rankFor(idx) }));
+  }
+  let best = null, bestTotal = Infinity;
+  permute(members).forEach(order=>{
+    const total = order.reduce((sum,m,idx)=> sum + costFor(m, rankFor(idx)), 0);
+    if(total < bestTotal){ bestTotal = total; best = order; }
+  });
+  return best.map((m,idx)=> ({ memberId: m.id, feeRank: rankFor(idx) }));
+}
+// Valide un groupe de membres comme famille : crée l'entrée dans data.settings.familyGroups et
+// attribue automatiquement le rang optimal à chacun (modifiable ensuite à la main sur chaque fiche).
+function validateFamilyGroup(memberIds){
+  const members = memberIds.map(id=> data.members.find(m=>m.id===id)).filter(Boolean);
+  if(members.length<2) return null;
+  const familyId = uid();
+  const assignment = optimalFamilyRankAssignment(members);
+  members.forEach(m=>{
+    m.familyId = familyId;
+    const a = assignment.find(x=>x.memberId===m.id);
+    if(a) m.feeRank = a.feeRank;
+  });
+  if(!data.settings.familyGroups) data.settings.familyGroups = {};
+  data.settings.familyGroups[familyId] = { id: familyId, memberIds: members.map(m=>m.id), createdAt: new Date().toISOString() };
+  return familyId;
+}
+function familyMembers(familyId){
+  if(!familyId) return [];
+  return data.members.filter(m=>m.familyId===familyId && !m.archived);
+}
+// Retire un membre de sa famille (dissociation) sans toucher aux autres membres de cette famille.
+function removeMemberFromFamily(memberId){
+  const m = data.members.find(x=>x.id===memberId);
+  if(!m || !m.familyId) return;
+  const fam = data.settings.familyGroups && data.settings.familyGroups[m.familyId];
+  if(fam) fam.memberIds = (fam.memberIds||[]).filter(id=>id!==memberId);
+  m.familyId = null;
+  m.feeRank = null;
+}
+
+/* ---------------- COTISATIONS : montant attendu et reste dû ---------------- */
+// Montant attendu pour un élève sur la saison : priorité au montant forcé à la main
+// (feeOverrideAmount, pour absorber les cas particuliers non couverts par la grille), sinon calcul
+// automatique via la grille tarifaire et le rang familial de l'élève.
+function memberExpectedFee(m){
+  if(m.feeOverrideAmount!==null && m.feeOverrideAmount!==undefined && m.feeOverrideAmount!==''){
+    return { amount: Number(m.feeOverrideAmount), source:'override' };
+  }
+  const details = memberFeeDetails(m, m.feeRank||'p1');
+  if(details.error) return { amount: null, source:'error', error: details.error };
+  return { amount: details.total, source:'grille', details };
+}
+// Paiements enregistrés concernant un membre donné (un même paiement peut être réparti entre
+// plusieurs membres — on ne retient ici que la part qui le concerne, lui).
+function paymentsForMember(memberId){
+  return (data.payments||[]).filter(p=> (p.allocations||[]).some(a=>a.memberId===memberId));
+}
+function memberAmountAllocated(p, memberId){
+  const a = (p.allocations||[]).find(a=>a.memberId===memberId);
+  return a ? (Number(a.amount)||0) : 0;
+}
+// Total déjà compté pour un membre : les paiements encaissés ET ceux en attente d'encaissement
+// (chèque déjà remis mais pas encore déposé) comptent comme acquis pour le reste dû — seul un
+// chèque rejeté ou un paiement annulé ne compte plus.
+function memberPaidTotal(memberId){
+  return paymentsForMember(memberId)
+    .filter(p=> p.status==='encaisse' || p.status==='attente')
+    .reduce((sum,p)=> sum + memberAmountAllocated(p, memberId), 0);
+}
+function memberRemainingDue(m){
+  const expected = memberExpectedFee(m);
+  if(expected.amount===null) return { remaining: null, expected, paid: 0 };
+  const paid = memberPaidTotal(m.id);
+  return { remaining: Math.round((expected.amount - paid)*100)/100, expected, paid };
+}
+const PAYMENT_METHOD_LABELS = { especes:'Espèces', cheque:'Chèque', virement:'Virement', chequesport:'Chèque Sport Mennecy', autre:'Autre' };
+const PAYMENT_STATUS_LABELS = { attente:'À encaisser', encaisse:'Encaissé', rejete:'Rejeté (sans provision)', annule:'Annulé' };
+// Ordre d'affichage du carrousel "Paiements encaissés" (Suivi annuel) : demandé explicitement
+// chèque, espèces, chèque sport, puis les autres méthodes.
+const PAYMENT_METHOD_CAROUSEL_ORDER = ['cheque', 'especes', 'chequesport', 'virement', 'autre'];
+function fmtEuro(v){
+  return (v===null || v===undefined || v==='' || isNaN(Number(v))) ? '—' : Number(v).toFixed(2).replace('.',',') + ' €';
+}
+// Nom à afficher pour un paiement : le nom du "propriétaire" du chèque (saisi manuellement quand il
+// diffère de l'adhérent, ex. un chèque signé par un grand-parent) prime toujours sur les noms des
+// personnes concernées par le paiement.
+function paymentDisplayName(p){
+  if(p.payerName && p.payerName.trim()) return p.payerName.trim();
+  return (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?om.name:'?'; }).join(', ');
+}
+// "Périodes" d'encaissement de chèque (Début / Mi / Fin de mois) au lieu d'une date exacte à saisir :
+// on stocke quand même une date ISO canonique (1er / 15 / dernier jour du mois) pour que le tri
+// chronologique, le regroupement et les anciens enregistrements (dates exactes saisies avant cette
+// fonctionnalité) continuent de fonctionner sans migration — on "arrondit" simplement toute date au
+// tiers de mois auquel elle appartient.
+const CASH_PERIOD_LABELS = { debut:'Début', mi:'Mi', fin:'Fin' };
+function cashPeriodBucket(day){
+  if(day<=10) return 'debut';
+  if(day<=20) return 'mi';
+  return 'fin';
+}
+function cashPeriodCanonicalDate(year, monthIndex0, bucket){
+  if(bucket==='debut') return `${year}-${String(monthIndex0+1).padStart(2,'0')}-01`;
+  if(bucket==='mi') return `${year}-${String(monthIndex0+1).padStart(2,'0')}-15`;
+  const lastDay = new Date(year, monthIndex0+1, 0).getDate();
+  return `${year}-${String(monthIndex0+1).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+}
+function snapToCashPeriodValue(dateStr){
+  if(!dateStr) return '';
+  const d = new Date(dateStr+'T00:00:00');
+  if(isNaN(d.getTime())) return dateStr;
+  return cashPeriodCanonicalDate(d.getFullYear(), d.getMonth(), cashPeriodBucket(d.getDate()));
+}
+function cashPeriodLabel(dateStr){
+  if(!dateStr) return '—';
+  const d = new Date(dateStr+'T00:00:00');
+  if(isNaN(d.getTime())) return '—';
+  const bucket = cashPeriodBucket(d.getDate());
+  const monthLabel = d.toLocaleDateString('fr-FR', { month:'long', year:'numeric' });
+  return `${CASH_PERIOD_LABELS[bucket]} ${monthLabel}`;
+}
+// Options du sélecteur de période dans le formulaire de paiement : fenêtre glissante d'un mois avant
+// aujourd'hui à 12 mois après (couvre un échéancier de chèques sur une saison sportive), étendue au
+// besoin pour inclure le mois du paiement en cours d'édition s'il est plus ancien/lointain.
+function cashPeriodSelectOptions(extraDateStr){
+  const now = new Date();
+  let minOffset = -1, maxOffset = 12;
+  if(extraDateStr){
+    const d = new Date(extraDateStr+'T00:00:00');
+    if(!isNaN(d.getTime())){
+      const offset = (d.getFullYear()-now.getFullYear())*12 + (d.getMonth()-now.getMonth());
+      minOffset = Math.min(minOffset, offset);
+      maxOffset = Math.max(maxOffset, offset);
+    }
+  }
+  const options = [];
+  for(let offset=minOffset; offset<=maxOffset; offset++){
+    const d = new Date(now.getFullYear(), now.getMonth()+offset, 1);
+    const monthLabel = d.toLocaleDateString('fr-FR', { month:'long', year:'numeric' });
+    // Le libellé de chaque option inclut le mois complet (pas juste "Début"/"Mi"/"Fin") : c'est ce
+    // texte-là qui reste visible dans la barre du menu une fois une période sélectionnée.
+    options.push({ month: monthLabel, items: ['debut','mi','fin'].map(b=>({ value: cashPeriodCanonicalDate(d.getFullYear(), d.getMonth(), b), label: `${CASH_PERIOD_LABELS[b]} ${monthLabel}` })) });
+  }
+  return options;
+}
+
+/* ---------------- COTISATIONS : familles — carte de suggestions + validation ---------------- */
+// Suggestions d'ajout à une famille DÉJÀ validée : un élève non rattaché qui partage le nom de
+// famille ou l'adresse d'un membre d'une famille existante — typiquement un parent au nom
+// différent (remariage, nom de jeune fille...) découvert après la validation initiale de la
+// famille, ou une fiche ajoutée plus tard. Sans ça, une personne ratée à la 1ère détection ne
+// pouvait plus jamais être proposée : dès que les autres membres sont validés, il ne reste plus
+// qu'elle seule côté "non rattachés", donc plus aucun groupe d'au moins 2 personnes à suggérer.
+function findFamilyMergeSuggestions(){
+  const dismissed = new Set(data.settings.dismissedFamilySuggestions||[]);
+  const unlinked = data.members.filter(m=>!m.archived && !m.familyId);
+  const families = Object.values(data.settings.familyGroups||{});
+  const suggestions = [];
+  unlinked.forEach(m=>{
+    const ln = normalizeForMatch(memberLastName(m));
+    const ak = memberAddressKey(m);
+    families.forEach(fam=>{
+      const famMembers = familyMembers(fam.id);
+      if(famMembers.length===0) return;
+      const nameMatch = !!ln && famMembers.some(fm=> normalizeForMatch(memberLastName(fm))===ln);
+      const addrMatch = !!ak && famMembers.some(fm=> memberAddressKey(fm)===ak);
+      if(!nameMatch && !addrMatch) return;
+      const key = `merge:${fam.id}:${m.id}`;
+      if(dismissed.has(key)) return;
+      suggestions.push({ key, memberId: m.id, familyId: fam.id, matchTypes: [nameMatch?'nom':null, addrMatch?'adresse':null].filter(Boolean) });
+    });
+  });
+  return suggestions;
+}
+function addMemberToFamily(memberId, familyId){
+  const m = data.members.find(x=>x.id===memberId);
+  const fam = data.settings.familyGroups && data.settings.familyGroups[familyId];
+  if(!m || !fam) return false;
+  m.familyId = familyId;
+  if(!fam.memberIds.includes(memberId)) fam.memberIds.push(memberId);
+  // L'ajout d'une personne change potentiellement la répartition optimale de toute la famille.
+  const members = familyMembers(familyId);
+  const assignment = optimalFamilyRankAssignment(members);
+  members.forEach(mm=>{
+    const a = assignment.find(x=>x.memberId===mm.id);
+    if(a) mm.feeRank = a.feeRank;
+  });
+  return true;
+}
+function renderFamilySuggestionsCard(){
+  const wrap = document.getElementById('family-suggestions-card');
+  if(!wrap) return;
+  const suggestions = findFamilySuggestions();
+  const mergeSuggestions = findFamilyMergeSuggestions();
+  const total = suggestions.length + mergeSuggestions.length;
+  if(total===0){ wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `
+    <div class="card" style="border:1px solid #4C8C4A; background:rgba(76,140,74,0.08);">
+      <h2 style="margin-top:0;">👨‍👩‍👧 Familles probables détectées</h2>
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">
+        ${suggestions.length ? `${suggestions.length} nouveau${suggestions.length===1?'':'x'} groupe${suggestions.length===1?'':'s'} d'élèves` : ''}${suggestions.length && mergeSuggestions.length ? ' et ' : ''}${mergeSuggestions.length ? `${mergeSuggestions.length} rattachement${mergeSuggestions.length===1?'':'s'} probable${mergeSuggestions.length===1?'':'s'} à une famille déjà validée` : ''}. Rien n'est validé automatiquement — vérifie chaque suggestion avant de la confirmer.
+      </p>
+      <button class="primary" id="openFamilySuggestionsBtn" style="width:100%;">Examiner les familles probables</button>
+    </div>`;
+  document.getElementById('openFamilySuggestionsBtn').addEventListener('click', openFamilySuggestionsOverlay);
+}
+function closeFamilySuggestionsOverlay(){
+  const overlay = document.getElementById('family-suggestions-overlay');
+  if(!overlay) return;
+  overlay.classList.remove('show');
+  overlay.innerHTML = '';
+}
+function openFamilySuggestionsOverlay(){
+  const overlay = document.getElementById('family-suggestions-overlay');
+  if(!overlay) return;
+  function render(){
+    const suggestions = findFamilySuggestions();
+    const mergeSuggestions = findFamilyMergeSuggestions();
+    if(suggestions.length===0 && mergeSuggestions.length===0){ closeFamilySuggestionsOverlay(); return; }
+    const rows = suggestions.map(s=>{
+      const members = s.memberIds.map(id=>data.members.find(m=>m.id===id)).filter(Boolean);
+      const membersHtml = members.map(m=>`
+        <label style="display:flex; align-items:center; gap:8px; padding:3px 0; font-size:13px;">
+          <input type="checkbox" data-id="${m.id}" checked>
+          <span>${escapeHtml(m.name)}${m.address?` <span style="color:var(--ink-dim); font-size:11.5px;">— ${escapeHtml(m.address)}${m.city?', '+escapeHtml(m.city):''}</span>`:''}</span>
+        </label>`).join('');
+      const matchLabel = s.matchTypes.map(t=> t==='nom' ? 'même nom de famille' : 'même adresse').join(' + ');
+      return `
+      <div class="group-block" style="margin-top:10px;" data-suggestion-key="${escapeHtml(s.key)}">
+        <div style="font-weight:600; font-size:13px;">${matchLabel}</div>
+        <div style="margin-top:4px;">${membersHtml}</div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="primary" data-action="fam-validate" data-key="${escapeHtml(s.key)}" style="flex:1; font-size:12.5px;">✓ Confirmer cette famille</button>
+          <button class="ghost" data-action="fam-dismiss" data-key="${escapeHtml(s.key)}" style="flex:1; font-size:12.5px;">Ignorer</button>
+        </div>
+      </div>`;
+    }).join('');
+    const mergeRows = mergeSuggestions.map(s=>{
+      const m = data.members.find(x=>x.id===s.memberId);
+      const fam = familyMembers(s.familyId);
+      if(!m || fam.length===0) return '';
+      const matchLabel = s.matchTypes.map(t=> t==='nom' ? 'même nom de famille' : 'même adresse').join(' + ');
+      return `
+      <div class="group-block" style="margin-top:10px;">
+        <div style="font-weight:600; font-size:13px;">${escapeHtml(m.name)} — ${matchLabel} que ${fam.map(fm=>escapeHtml(fm.name)).join(', ')}</div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="primary" data-action="fam-merge-confirm" data-key="${escapeHtml(s.key)}" data-member="${m.id}" data-family="${s.familyId}" style="flex:1; font-size:12.5px;">✓ Rattacher à cette famille</button>
+          <button class="ghost" data-action="fam-merge-dismiss" data-key="${escapeHtml(s.key)}" style="flex:1; font-size:12.5px;">Ignorer</button>
+        </div>
+      </div>`;
+    }).join('');
+    overlay.innerHTML = `
+      <div class="rio-card">
+        <h2 style="margin-top:0;">Familles probables</h2>
+        ${suggestions.length ? `
+        <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">
+          Décoche une personne si elle ne fait pas partie de cette famille avant de confirmer. Le rang (1ère, 2ème... personne) est attribué automatiquement pour minimiser le total payé par la famille — modifiable ensuite sur chaque fiche.
+        </p>
+        ${rows}` : ''}
+        ${mergeSuggestions.length ? `
+        <h2 style="margin-top:${suggestions.length?'18':'0'}px; font-size:15px;">Rattachement à une famille déjà validée</h2>
+        <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">
+          Ces personnes n'étaient pas dans le groupe au moment de la validation initiale (souvent un parent avec un nom différent).
+        </p>
+        ${mergeRows}` : ''}
+        <button class="ghost" id="closeFamilySuggestionsOverlayBtn" style="width:100%; margin-top:14px;">Fermer</button>
+      </div>`;
+    overlay.querySelectorAll('[data-action="fam-validate"]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const key = btn.dataset.key;
+        const block = overlay.querySelector(`[data-suggestion-key="${cssEscapeAttr(key)}"]`);
+        const checked = block ? [...block.querySelectorAll('input[type="checkbox"]:checked')].map(cb=>cb.dataset.id) : [];
+        if(checked.length<2){ showToast('Il faut au moins 2 personnes pour former une famille'); return; }
+        validateFamilyGroup(checked);
+        saveData(); renderFamilySuggestionsCard(); renderFamilyGroupsCard(); renderActiveTab();
+        showToast('Famille confirmée');
+        render();
+      });
+    });
+    overlay.querySelectorAll('[data-action="fam-dismiss"]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        dismissFamilySuggestion(btn.dataset.key.split(','));
+        saveData(); renderFamilySuggestionsCard();
+        render();
+      });
+    });
+    overlay.querySelectorAll('[data-action="fam-merge-confirm"]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        addMemberToFamily(btn.dataset.member, btn.dataset.family);
+        saveData(); renderFamilySuggestionsCard(); renderFamilyGroupsCard(); renderActiveTab();
+        showToast('Personne rattachée à la famille');
+        render();
+      });
+    });
+    overlay.querySelectorAll('[data-action="fam-merge-dismiss"]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        if(!data.settings.dismissedFamilySuggestions) data.settings.dismissedFamilySuggestions = [];
+        if(!data.settings.dismissedFamilySuggestions.includes(btn.dataset.key)) data.settings.dismissedFamilySuggestions.push(btn.dataset.key);
+        saveData(); renderFamilySuggestionsCard();
+        render();
+      });
+    });
+    const closeBtn = document.getElementById('closeFamilySuggestionsOverlayBtn');
+    if(closeBtn) closeBtn.addEventListener('click', closeFamilySuggestionsOverlay);
+  }
+  render();
+  overlay.classList.add('show');
+}
+// querySelector n'accepte pas certains caractères bruts dans un attribut (ex: virgules d'une clé de
+// suggestion) — échappement minimal suffisant ici (CSS.escape n'est pas disponible partout).
+function cssEscapeAttr(s){
+  return String(s).replace(/["\\]/g, '\\$&');
+}
+function dissolveFamily(familyId){
+  data.members.forEach(m=>{ if(m.familyId===familyId){ m.familyId = null; m.feeRank = null; } });
+  if(data.settings.familyGroups) delete data.settings.familyGroups[familyId];
+}
+function renderFamilyGroupsCard(){
+  const wrap = document.getElementById('family-groups-card');
+  if(!wrap) return;
+  const families = Object.values(data.settings.familyGroups||{}).filter(f=>familyMembers(f.id).length>0);
+  if(families.length===0){ wrap.innerHTML = ''; return; }
+  const addableMembers = data.members.filter(m=>!m.archived && !m.familyId).sort((a,b)=> a.name.localeCompare(b.name));
+  const rows = families.map(f=>{
+    const members = familyMembers(f.id).sort((a,b)=> (a.feeRank||'p1').localeCompare(b.feeRank||'p1'));
+    const membersHtml = members.map(m=>{
+      const due = memberRemainingDue(m);
+      return `<div style="display:flex; justify-content:space-between; gap:8px; padding:3px 0; font-size:13px;">
+        <span>${escapeHtml(m.name)} <span class="tag">${escapeHtml(FAMILY_RANK_SHORT_LABELS[m.feeRank||'p1']||'')}</span></span>
+        <span style="color:var(--ink-dim);">${fmtEuro(due.expected.amount)}</span>
+      </div>`;
+    }).join('');
+    return `
+    <div class="group-block" style="margin-top:10px;">
+      <div style="margin-top:4px;">${membersHtml}</div>
+      ${addableMembers.length ? `
+      <div class="row" style="margin-top:8px; position:relative;">
+        <input type="text" data-action="fam-add-search" data-family="${f.id}" placeholder="+ Ajouter un membre manquant… (rechercher un nom)" autocomplete="off" style="flex:1;">
+        <div class="archived-suggest" data-family-suggest="${f.id}"></div>
+      </div>` : ''}
+      <button class="ghost" data-action="fam-dissolve" data-id="${f.id}" style="width:100%; margin-top:8px; font-size:12.5px;">Dissoudre cette famille</button>
+    </div>`;
+  }).join('');
+  wrap.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Familles validées</h2>
+      ${rows}
+    </div>`;
+  wrap.querySelectorAll('[data-action="fam-add-search"]').forEach(input=>{
+    const familyId = input.dataset.family;
+    const suggestDiv = wrap.querySelector(`[data-family-suggest="${familyId}"]`);
+    if(!suggestDiv) return;
+    function pickMember(memberId){
+      addMemberToFamily(memberId, familyId);
+      saveData(); renderFamilyGroupsCard(); renderFamilySuggestionsCard(); renderActiveTab();
+      const m = data.members.find(x=>x.id===memberId);
+      showToast(`${m?m.name:'Membre'} ajouté à la famille`);
+    }
+    input.addEventListener('input', ()=>{
+      const q = input.value.trim().toLowerCase();
+      if(!q){ suggestDiv.classList.remove('show'); suggestDiv.innerHTML=''; return; }
+      const matches = addableMembers.filter(m=> m.name.toLowerCase().includes(q)).slice(0,8);
+      if(matches.length===0){
+        suggestDiv.innerHTML = `<div class="archived-suggest-item" style="cursor:default;"><span>Aucun résultat</span></div>`;
+      } else {
+        suggestDiv.innerHTML = matches.map(m=>`<div class="archived-suggest-item" data-member="${m.id}"><strong>${escapeHtml(m.name)}</strong></div>`).join('');
+        suggestDiv.querySelectorAll('.archived-suggest-item[data-member]').forEach(item=>{
+          item.addEventListener('click', ()=> pickMember(item.dataset.member));
+        });
+      }
+      suggestDiv.classList.add('show');
+    });
+    input.addEventListener('focus', ()=>{ if(input.value.trim()) suggestDiv.classList.add('show'); });
+    input.addEventListener('blur', ()=> setTimeout(()=> suggestDiv.classList.remove('show'), 150));
+  });
+  wrap.querySelectorAll('[data-action="fam-dissolve"]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!(await confirmDialog('Dissoudre cette famille ? Chaque membre repassera en tarif 1ère personne (modifiable ensuite à la main sur sa fiche).', { danger:true, confirmLabel:'Dissoudre' }))) return;
+      dissolveFamily(btn.dataset.id);
+      saveData(); renderActiveTab(); renderFamilySuggestionsCard();
+      showToast('Famille dissoute');
+    });
+  });
+}
+
+/* ---------------- COTISATIONS : formulaire de paiement (ajout/édition) ---------------- */
+function closePaymentFormOverlay(){
+  const overlay = document.getElementById('payment-form-overlay');
+  if(!overlay) return;
+  overlay.classList.remove('show');
+  overlay.innerHTML = '';
+}
+// opts.paymentId (édition) ou opts.presetMemberId (ajout pré-rempli pour un élève) ; opts.onSaved
+// optionnel, rappelé après enregistrement (ex: pour rafraîchir une fiche élève ouverte).
+function openPaymentFormOverlay(opts){
+  opts = opts || {};
+  const overlay = document.getElementById('payment-form-overlay');
+  if(!overlay) return;
+  const editing = opts.paymentId ? (data.payments||[]).find(p=>p.id===opts.paymentId) : null;
+  // Tous les champs libres (montant, période/date, N° chèque, banque, note) vivent dans draft et sont
+  // resynchronisés à chaque frappe (voir les listeners 'input' plus bas) : sans ça, un re-render
+  // déclenché par une autre action du formulaire (cocher "pas au nom de l'adhérent", changer de
+  // méthode, ajouter la famille...) reconstruit le HTML à partir des seules valeurs initiales et
+  // efface tout ce que l'utilisateur avait déjà saisi.
+  const draft = editing
+    ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(editing.amountTotal) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '' }
+    : { method: 'especes', status: 'encaisse', allocations: opts.presetMemberId ? [{ memberId: opts.presetMemberId, amount: null }] : [], payerNameOverride: false, payerName: '', amountTotal: '', cashDate: '', chequeNumber: '', chequeBank: '', note: '' };
+  function memberOptionsHtml(excludeIds){
+    return data.members.filter(m=>!m.archived && !excludeIds.includes(m.id))
+      .sort((a,b)=> a.name.localeCompare(b.name))
+      .map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+  }
+  function render(){
+    const method = draft.method;
+    const isCheque = method==='cheque';
+    const allocIds = draft.allocations.map(a=>a.memberId);
+    const singleRecipient = draft.allocations.length===1;
+    // Total dû (créances en cours) pour l'ensemble des personnes déjà sélectionnées — utile quand on
+    // règle plusieurs membres d'une même famille en une fois (ex: espèces) pour voir tout de suite
+    // combien la famille doit au total avant de saisir le montant payé.
+    const totalDueSelected = draft.allocations.reduce((s,a)=>{
+      const m = data.members.find(x=>x.id===a.memberId);
+      const due = m ? memberRemainingDue(m) : null;
+      return s + (due && due.remaining!==null && due.remaining>0 ? due.remaining : 0);
+    }, 0);
+    // Famille détectée parmi les personnes déjà sélectionnées : propose d'un clic d'ajouter les
+    // membres manquants de cette même famille plutôt que de les chercher un par un.
+    const currentFamilyIds = [...new Set(draft.allocations.map(a=>{
+      const m = data.members.find(x=>x.id===a.memberId);
+      return m && m.familyId ? m.familyId : null;
+    }).filter(Boolean))];
+    const missingFamilyMembers = currentFamilyIds.length===1
+      ? familyMembers(currentFamilyIds[0]).filter(fm=>!fm.archived && !allocIds.includes(fm.id))
+      : [];
+    const allocRowsHtml = draft.allocations.map((a,idx)=>{
+      const m = data.members.find(x=>x.id===a.memberId);
+      const due = m ? memberRemainingDue(m) : null;
+      if(singleRecipient){
+        // Une seule personne : pas de répartition à saisir, le montant total lui revient
+        // intégralement (calculé automatiquement à l'enregistrement).
+        return `<div class="row" style="margin:4px 0; align-items:center;">
+          <span style="flex:1; font-size:13px;">${m?escapeHtml(m.name):'—'}${due && due.remaining!==null ? ` <span style="color:var(--ink-dim); font-size:11.5px;">(reste dû ${fmtEuro(due.remaining)})</span>` : ''}</span>
+        </div>`;
+      }
+      const suggested = (a.amount!==null && a.amount!==undefined && a.amount!=='') ? a.amount : (due && due.remaining!==null ? due.remaining : '');
+      return `<div class="row" style="margin:4px 0; align-items:center;">
+        <span style="flex:1; font-size:13px;">${m?escapeHtml(m.name):'—'}${due && due.remaining!==null ? ` <span style="color:var(--ink-dim); font-size:11.5px;">(reste dû ${fmtEuro(due.remaining)})</span>` : ''}</span>
+        <input type="number" step="0.01" style="width:90px;" data-alloc-amount="${idx}" value="${escapeHtml(suggested)}">
+        <button type="button" class="ghost icon-btn" data-action="remove-alloc" data-idx="${idx}" style="padding:4px 8px;">✕</button>
+      </div>`;
+    }).join('') || '<div class="empty" style="font-size:12.5px;">Aucun destinataire — ajoute au moins une personne.</div>';
+    overlay.innerHTML = `
+      <div class="rio-card">
+        <h2 style="margin-top:0;">${editing ? 'Modifier le paiement' : 'Ajouter un paiement'}</h2>
+        <div class="row">
+          <div style="flex:1;">
+            <span class="field-label">Méthode</span>
+            <select id="pf-method">
+              ${Object.entries(PAYMENT_METHOD_LABELS).map(([k,l])=>`<option value="${k}" ${method===k?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+            </select>
+          </div>
+          <div style="flex:1;">
+            <span class="field-label">Montant total (€)</span>
+            <input type="number" step="0.01" id="pf-amount" value="${escapeHtml(String(draft.amountTotal!==null && draft.amountTotal!=='' ? draft.amountTotal : (draft.allocations.reduce((s,a)=> s+(Number(a.amount)||0),0) || (singleRecipient && data.members.find(x=>x.id===draft.allocations[0].memberId) ? (memberRemainingDue(data.members.find(x=>x.id===draft.allocations[0].memberId)).remaining || '') : ''))))}">
+          </div>
+        </div>
+        <div>
+          <span class="field-label">${isCheque ? "Période d'encaissement prévue" : 'Date de réception'}</span>
+          ${isCheque ? (()=>{
+            const selectedPeriodValue = snapToCashPeriodValue(draft.cashDate || todayStr());
+            return `<select id="pf-date">${cashPeriodSelectOptions(draft.cashDate||null).map(g=>`<optgroup label="${escapeHtml(g.month)}">${g.items.map(it=>`<option value="${it.value}" ${selectedPeriodValue===it.value?'selected':''}>${escapeHtml(it.label)}</option>`).join('')}</optgroup>`).join('')}</select>`;
+          })() : `<input type="date" id="pf-date" value="${escapeHtml(draft.cashDate || todayStr())}">`}
+        </div>
+        ${isCheque ? `
+        <div class="row">
+          <div style="flex:1;"><span class="field-label">N° chèque</span><input type="text" id="pf-chequenumber" value="${escapeHtml(draft.chequeNumber||'')}"></div>
+          <div style="flex:1;"><span class="field-label">Banque</span><input type="text" id="pf-chequebank" value="${escapeHtml(draft.chequeBank||'')}"></div>
+        </div>
+        ${editing ? (()=>{
+          const st = editing.status;
+          const bg = st==='encaisse' ? 'var(--tatami-dim)' : ((st==='rejete'||st==='annule') ? 'var(--clay-dim)' : '#EEE');
+          const fg = st==='encaisse' ? 'var(--tatami)' : ((st==='rejete'||st==='annule') ? 'var(--clay)' : '#888');
+          return `<div><span class="field-label">Statut</span><div><span class="tag" style="background:${bg}; color:${fg};">${escapeHtml(PAYMENT_STATUS_LABELS[st]||st)}</span>${st==='attente' ? ` <span style="font-size:11.5px; color:var(--ink-dim);">— à valider depuis « Chèques à encaisser »</span>` : ''}</div></div>`;
+        })() : ''}
+        <div class="row" style="align-items:center; gap:6px; margin-top:8px;">
+          <input type="checkbox" id="pf-payername-toggle" ${draft.payerNameOverride?'checked':''} style="width:auto;">
+          <label for="pf-payername-toggle" style="font-size:12.5px; cursor:pointer; margin:0;">Le chèque n'est pas au nom de l'adhérent</label>
+        </div>
+        ${draft.payerNameOverride ? `<div><span class="field-label">Nom sur le chèque</span><input type="text" id="pf-payername" value="${escapeHtml(draft.payerName||'')}" placeholder="Nom exact figurant sur le chèque"></div>` : ''}` : ''}
+        <div>
+          <span class="field-label">Note (optionnel)</span>
+          <input type="text" id="pf-note" value="${escapeHtml(draft.note||'')}">
+        </div>
+        <div style="margin-top:6px;">
+          <span class="field-label">Réparti entre</span>
+          ${!singleRecipient && draft.allocations.length>0 ? `<div class="row" style="align-items:center; justify-content:space-between; gap:8px; font-size:12.5px; margin:2px 0 6px; color:var(--ink-dim);">
+            <span>Total dû pour ces personnes : <strong style="color:var(--clay);">${fmtEuro(totalDueSelected)}</strong></span>
+            <button type="button" class="ghost" id="pf-auto-allocate" style="padding:3px 9px; font-size:11.5px; white-space:nowrap;">↻ Répartir selon les créances</button>
+          </div>` : ''}
+          ${allocRowsHtml}
+          ${missingFamilyMembers.length ? `<div class="row" style="margin-top:4px;">
+            <button type="button" class="ghost" id="pf-add-family" style="padding:4px 10px; font-size:12px;">+ Ajouter ${missingFamilyMembers.length>1 ? `les ${missingFamilyMembers.length} autres membres de la famille` : 'le membre manquant de la famille'}</button>
+          </div>` : ''}
+          <div class="row" style="margin-top:6px;">
+            <select id="pf-add-member" style="flex:1;">
+              <option value="">+ Ajouter une personne (paiement partagé)…</option>
+              ${memberOptionsHtml(allocIds)}
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px;">
+          <button class="primary" id="pf-save" style="flex:1;">✓ Enregistrer</button>
+          <button class="ghost" id="pf-cancel" style="flex:1;">Annuler</button>
+        </div>
+      </div>`;
+    document.getElementById('pf-method').addEventListener('change', e=>{ draft.method = e.target.value; if(draft.method!=='cheque') draft.status='encaisse'; render(); });
+    // Resynchronise chaque champ libre dans draft à chaque frappe, pour qu'un re-render déclenché par
+    // ailleurs (case à cocher, changement de méthode, ajout de la famille...) ne perde jamais ce qui a
+    // déjà été saisi.
+    const amountInput = document.getElementById('pf-amount');
+    if(amountInput) amountInput.addEventListener('input', e=>{ draft.amountTotal = e.target.value; });
+    const dateField = document.getElementById('pf-date');
+    if(dateField){ dateField.addEventListener('input', e=>{ draft.cashDate = e.target.value; }); dateField.addEventListener('change', e=>{ draft.cashDate = e.target.value; }); }
+    const chequeNumberInput = document.getElementById('pf-chequenumber');
+    if(chequeNumberInput) chequeNumberInput.addEventListener('input', e=>{ draft.chequeNumber = e.target.value; });
+    const chequeBankInput = document.getElementById('pf-chequebank');
+    if(chequeBankInput) chequeBankInput.addEventListener('input', e=>{ draft.chequeBank = e.target.value; });
+    const noteInput = document.getElementById('pf-note');
+    if(noteInput) noteInput.addEventListener('input', e=>{ draft.note = e.target.value; });
+    const payerToggle = document.getElementById('pf-payername-toggle');
+    if(payerToggle) payerToggle.addEventListener('change', e=>{ draft.payerNameOverride = e.target.checked; render(); });
+    const payerNameInput = document.getElementById('pf-payername');
+    if(payerNameInput) payerNameInput.addEventListener('input', e=>{ draft.payerName = e.target.value; });
+    document.getElementById('pf-add-member').addEventListener('change', e=>{
+      const id = e.target.value;
+      if(id){ draft.allocations.push({ memberId:id, amount:null }); render(); }
+    });
+    const addFamilyBtn = document.getElementById('pf-add-family');
+    if(addFamilyBtn) addFamilyBtn.addEventListener('click', ()=>{
+      missingFamilyMembers.forEach(fm=> draft.allocations.push({ memberId: fm.id, amount: null }));
+      render();
+    });
+    const autoAllocateBtn = document.getElementById('pf-auto-allocate');
+    if(autoAllocateBtn) autoAllocateBtn.addEventListener('click', ()=>{
+      const amountTotal = Number(document.getElementById('pf-amount').value);
+      if(!amountTotal || amountTotal<=0){ showToast('Renseigne d’abord le montant total payé'); return; }
+      if(draft.allocations.length===0) return;
+      // Ordre de déduction des créances : rang familial (1er membre → 4ème+) quand il est connu, sinon
+      // l'ordre d'ajout dans le formulaire — ex: si la famille doit 100€ + 80€ + 60€ et qu'on saisit
+      // 150€ payés, le 1er membre est soldé (100€), le 2ème reçoit le reste (50€ sur 80€ dû), le 3ème
+      // garde tout son dû (0€ affecté).
+      const rankOrder = { p1:0, p2:1, p3:2, p4:3 };
+      const order = draft.allocations.map((a,idx)=>idx).sort((ix,iy)=>{
+        const mx = data.members.find(m=>m.id===draft.allocations[ix].memberId);
+        const my = data.members.find(m=>m.id===draft.allocations[iy].memberId);
+        const rx = (mx && mx.feeRank && rankOrder[mx.feeRank]!==undefined) ? rankOrder[mx.feeRank] : 99;
+        const ry = (my && my.feeRank && rankOrder[my.feeRank]!==undefined) ? rankOrder[my.feeRank] : 99;
+        if(rx!==ry) return rx-ry;
+        return ix-iy;
+      });
+      let pot = Math.round(amountTotal*100)/100;
+      order.forEach(idx=>{
+        const m = data.members.find(x=>x.id===draft.allocations[idx].memberId);
+        const due = m ? memberRemainingDue(m) : null;
+        const owed = (due && due.remaining!==null && due.remaining>0) ? Math.round(due.remaining*100)/100 : 0;
+        const applied = Math.max(0, Math.min(pot, owed));
+        draft.allocations[idx].amount = applied;
+        pot = Math.round((pot-applied)*100)/100;
+      });
+      if(pot>0.009 && order.length){
+        // Versement supérieur au total dû : le surplus est affecté à la dernière personne de l'ordre
+        // (plutôt que de le laisser non affecté et bloquer l'enregistrement).
+        const lastIdx = order[order.length-1];
+        draft.allocations[lastIdx].amount = Math.round(((Number(draft.allocations[lastIdx].amount)||0)+pot)*100)/100;
+      }
+      render();
+      showToast('Montant réparti selon les créances de chaque personne');
+    });
+    overlay.querySelectorAll('[data-alloc-amount]').forEach(inp=>{
+      inp.addEventListener('input', e=>{ draft.allocations[Number(e.target.dataset.allocAmount)].amount = e.target.value; });
+    });
+    overlay.querySelectorAll('[data-action="remove-alloc"]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{ draft.allocations.splice(Number(btn.dataset.idx),1); render(); });
+    });
+    document.getElementById('pf-cancel').addEventListener('click', closePaymentFormOverlay);
+    document.getElementById('pf-save').addEventListener('click', ()=>{
+      const amountTotal = Number(document.getElementById('pf-amount').value);
+      if(!amountTotal || amountTotal<=0){ showToast('Montant invalide'); return; }
+      if(draft.allocations.length===0){ showToast('Ajoute au moins un destinataire'); return; }
+      // Un seul destinataire : pas de répartition à vérifier, le montant total lui revient entièrement.
+      if(draft.allocations.length===1){
+        draft.allocations[0].amount = amountTotal;
+      } else {
+        const allocSum = draft.allocations.reduce((s,a)=> s+(Number(a.amount)||0), 0);
+        if(Math.abs(allocSum - amountTotal) > 0.01){
+          showToast(`La répartition (${fmtEuro(allocSum)}) ne correspond pas au montant total (${fmtEuro(amountTotal)})`);
+          return;
+        }
+      }
+      // Plus de sélecteur de statut pour les chèques : un nouveau chèque part toujours "à encaisser"
+      // et ne passe "encaissé" qu'en le validant depuis « Chèques à encaisser » (icône ✅). En édition,
+      // on préserve le statut existant (ne pas écraser un chèque déjà encaissé/rejeté/annulé).
+      const newStatus = draft.method==='cheque' ? (editing ? editing.status : 'attente') : 'encaisse';
+      // On horodate le passage à "encaissé" la première fois qu'il se produit (création directe en
+      // encaissé, ou bascule depuis un autre statut) — c'est cette date-là qui doit apparaître dans le
+      // bloc "Paiements encaissés", pas la date d'encaissement prévue ni la date de création.
+      let encaissedAt = editing ? (editing.encaissedAt || null) : null;
+      if(newStatus==='encaisse' && !(editing && editing.status==='encaisse')) encaissedAt = todayStr();
+      const payerNameEl = document.getElementById('pf-payername');
+      const payerName = (draft.method==='cheque' && draft.payerNameOverride && payerNameEl) ? payerNameEl.value.trim() : '';
+      const payload = {
+        id: editing ? editing.id : uid(),
+        method: draft.method,
+        amountTotal,
+        cashDate: document.getElementById('pf-date').value || '',
+        chequeNumber: draft.method==='cheque' ? document.getElementById('pf-chequenumber').value.trim() : '',
+        chequeBank: draft.method==='cheque' ? document.getElementById('pf-chequebank').value.trim() : '',
+        payerName,
+        status: newStatus,
+        encaissedAt,
+        note: document.getElementById('pf-note').value.trim(),
+        allocations: draft.allocations.map(a=>({ memberId:a.memberId, amount: Math.round((Number(a.amount)||0)*100)/100 })),
+        season: editing ? editing.season : (data.settings.seasonStartYear || autoSeasonStartYear()),
+        createdAt: editing ? editing.createdAt : new Date().toISOString()
+      };
+      if(!data.payments) data.payments = [];
+      const idx = data.payments.findIndex(p=>p.id===payload.id);
+      if(idx>=0) data.payments[idx] = payload; else data.payments.push(payload);
+      saveData();
+      closePaymentFormOverlay();
+      renderActiveTab();
+      if(typeof opts.onSaved === 'function') opts.onSaved();
+      showToast('Paiement enregistré');
+    });
+  }
+  render();
+  overlay.classList.add('show');
+}
+async function deletePayment(paymentId, onDeleted){
+  if(!(await confirmDialog('Supprimer ce paiement ? Cette action est définitive.', { danger:true, confirmLabel:'Supprimer' }))) return;
+  markDeleted('payments', paymentId);
+  data.payments = (data.payments||[]).filter(p=>p.id!==paymentId);
+  saveData();
+  renderActiveTab();
+  if(typeof onDeleted === 'function') onDeleted();
+  showToast('Paiement supprimé');
+}
+
+function memberDueBadgeHtml(m){
+  const due = memberRemainingDue(m);
+  if(due.remaining===null) return `<span class="tag" style="background:#EEE; color:#888;">Tarif non calculable</span>`;
+  if(due.remaining<=0.01) return `<span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Soldé</span>`;
+  return `<span class="tag" style="background:var(--clay-dim); color:var(--clay);">Reste dû : ${fmtEuro(due.remaining)}</span>`;
+}
+function closeMemberCotisationOverlay(){
+  const overlay = document.getElementById('member-cotisation-overlay');
+  if(!overlay) return;
+  overlay.classList.remove('show');
+  overlay.innerHTML = '';
+}
+function openMemberCotisationOverlay(memberId){
+  const overlay = document.getElementById('member-cotisation-overlay');
+  if(!overlay) return;
+  renderMemberCotisationOverlay(memberId);
+  overlay.classList.add('show');
+}
+function renderMemberCotisationOverlay(memberId){
+  const overlay = document.getElementById('member-cotisation-overlay');
+  if(!overlay) return;
+  const m = data.members.find(x=>x.id===memberId);
+  if(!m){ closeMemberCotisationOverlay(); return; }
+  const due = memberRemainingDue(m);
+  const fam = m.familyId ? familyMembers(m.familyId) : [];
+  const famRemainingTotal = fam.length>1 ? fam.reduce((sum,fm)=>{
+    const d = memberRemainingDue(fm);
+    return sum + (d.remaining!==null && d.remaining>0 ? d.remaining : 0);
+  }, 0) : 0;
+  // Historique : les paiements où CE membre a une part (même 0€, ex: sa cotisation était déjà
+  // soldée au moment d'un paiement groupé pour le reste de la famille), + les paiements qui
+  // concernent sa famille sans le citer explicitement dans les allocations — on les affiche quand
+  // même (à 0€) pour la traçabilité, plutôt que de les faire disparaître de sa fiche.
+  const directPayments = paymentsForMember(memberId);
+  const directIds = new Set(directPayments.map(p=>p.id));
+  const familyOnlyPayments = fam.length>1
+    ? (data.payments||[]).filter(p=> !directIds.has(p.id) && (p.allocations||[]).some(a=> fam.some(fm=>fm.id===a.memberId)))
+    : [];
+  const payments = [...directPayments, ...familyOnlyPayments].sort((a,b)=> String(b.cashDate||'').localeCompare(String(a.cashDate||'')));
+  const paymentsHtml = payments.map(p=>{
+    const others = (p.allocations||[]).filter(a=>a.memberId!==memberId).map(a=>{
+      const om = data.members.find(x=>x.id===a.memberId);
+      return om ? `${escapeHtml(om.name)} (${fmtEuro(a.amount)})` : null;
+    }).filter(Boolean);
+    const myShare = memberAmountAllocated(p, memberId);
+    const isFamilyOnly = !directIds.has(p.id);
+    const statusColor = p.status==='rejete' ? 'var(--clay)' : (p.status==='attente' ? '#B08A2E' : 'var(--tatami)');
+    return `
+    <div class="group-block" style="margin-top:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+        <div>
+          <div style="font-weight:600; font-size:13px;">${escapeHtml(PAYMENT_METHOD_LABELS[p.method]||p.method)} — ${fmtEuro(myShare)}${others.length ? `<span style="font-weight:400; color:var(--ink-dim); font-size:11.5px;"> (${p.method==='cheque'?'chèque':'paiement'} partagé avec ${others.join(', ')}, total ${fmtEuro(p.amountTotal)})</span>` : ''}${isFamilyOnly ? ' <span style="font-weight:400; color:var(--ink-dim); font-size:11.5px; font-style:italic;">— concerne la famille, sans part pour cet adhérent</span>' : ''}</div>
+          <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${p.cashDate?fmtDate(p.cashDate):'—'}${p.method==='cheque' && p.chequeNumber ? ' · N° '+escapeHtml(p.chequeNumber) : ''}${p.note?' · '+escapeHtml(p.note):''}</div>
+        </div>
+        <span class="tag" style="background:transparent; border:1px solid ${statusColor}; color:${statusColor}; flex-shrink:0;">${escapeHtml(PAYMENT_STATUS_LABELS[p.status]||p.status)}</span>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button class="ghost" data-action="edit-payment" data-id="${p.id}" style="flex:1; font-size:12px;">✏️ Modifier</button>
+        <button class="ghost" data-action="delete-payment" data-id="${p.id}" style="flex:1; font-size:12px;">✕ Supprimer</button>
+      </div>
+    </div>`;
+  }).join('') || '<div class="empty" style="font-size:12.5px;">Aucun paiement enregistré pour l\'instant.</div>';
+  overlay.innerHTML = `
+    <div class="rio-card">
+      <h2 style="margin-top:0;">Cotisation — ${escapeHtml(m.name)}</h2>
+      ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
+      <div class="row">
+        <div style="flex:1;">
+          <span class="field-label">Rang familial</span>
+          <select id="mc-feerank">
+            ${Object.entries(FAMILY_RANK_LABELS).map(([k,l])=>`<option value="${k}" ${(m.feeRank||'p1')===k?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div style="flex:1;">
+          <span class="field-label">Montant attendu (€)${due.expected.source==='grille' ? ' — calculé automatiquement, modifiable' : ''}</span>
+          <input type="number" step="0.01" id="mc-override" placeholder="${due.expected.source==='grille' ? String(due.expected.amount) : '0,00'}" value="${m.feeOverrideAmount!==null && m.feeOverrideAmount!==undefined ? escapeHtml(String(m.feeOverrideAmount)) : ''}">
+        </div>
+      </div>
+      ${due.expected.source==='error' ? `<p style="font-size:12px; color:var(--clay); margin:4px 0 0;">${escapeHtml(due.expected.error)} — renseigne un montant à la main ci-dessus.</p>` : ''}
+      <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+        ${memberDueBadgeHtml(m)}
+        <span style="font-size:12px; color:var(--ink-dim);">${fmtEuro(due.paid)} enregistré sur ${fmtEuro(due.expected.amount)} attendu</span>
+      </div>
+      <button class="primary" id="mc-add-payment" style="width:100%; margin-top:12px;">+ Ajouter un paiement</button>
+      <div style="margin-top:6px;">${paymentsHtml}</div>
+      <button class="ghost" id="mc-close" style="width:100%; margin-top:14px;">Fermer</button>
+    </div>`;
+  document.getElementById('mc-feerank').addEventListener('change', e=>{
+    m.feeRank = e.target.value; saveData(); renderMemberCotisationOverlay(memberId); renderActiveTab();
+  });
+  document.getElementById('mc-override').addEventListener('change', e=>{
+    const v = e.target.value.trim();
+    m.feeOverrideAmount = v==='' ? null : Number(v);
+    saveData(); renderMemberCotisationOverlay(memberId); renderActiveTab();
+  });
+  document.getElementById('mc-add-payment').addEventListener('click', ()=>{
+    openPaymentFormOverlay({ presetMemberId: memberId, onSaved: ()=> renderMemberCotisationOverlay(memberId) });
+  });
+  overlay.querySelectorAll('[data-action="edit-payment"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      openPaymentFormOverlay({ paymentId: btn.dataset.id, onSaved: ()=> renderMemberCotisationOverlay(memberId) });
+    });
+  });
+  overlay.querySelectorAll('[data-action="delete-payment"]').forEach(btn=>{
+    btn.addEventListener('click', ()=> deletePayment(btn.dataset.id, ()=> renderMemberCotisationOverlay(memberId)));
+  });
+  document.getElementById('mc-close').addEventListener('click', closeMemberCotisationOverlay);
+}
+
 const attestationVisibility = cardVisibility('attestation', false);
 function loadAttestationHidden(){ return attestationVisibility.get(); }
 function saveAttestationHidden(val){ attestationVisibility.set(val); }
@@ -6621,6 +7513,438 @@ function buildCalendarTimelineHtml(entries){
     renderGroup(passed);
   }
   return html;
+}
+function renderCotisationsCard(){
+  const wrap = document.getElementById('cotisations-card');
+  if(!wrap) return;
+  const activeMembers = data.members.filter(m=>!m.archived);
+  let totalExpected = 0, totalEncaisse = 0, totalAttente = 0, totalRemaining = 0;
+  const byMethod = {};
+  const dueList = [];
+  activeMembers.forEach(m=>{
+    const due = memberRemainingDue(m);
+    if(due.expected.amount!==null) totalExpected += due.expected.amount;
+    if(due.remaining!==null && due.remaining>0.01){ totalRemaining += due.remaining; dueList.push({ m, remaining: due.remaining }); }
+  });
+  (data.payments||[]).forEach(p=>{
+    if(p.status==='encaisse') totalEncaisse += p.amountTotal;
+    else if(p.status==='attente') totalAttente += p.amountTotal;
+    if(p.status==='encaisse' || p.status==='attente') byMethod[p.method] = (byMethod[p.method]||0) + p.amountTotal;
+  });
+  dueList.sort((a,b)=> memberSurname(a.m.name).localeCompare(memberSurname(b.m.name), 'fr'));
+  const allChequesToCash = (data.payments||[]).filter(p=>p.method==='cheque' && p.status==='attente' && p.cashDate);
+  // Périodes disponibles pour le filtre (calculées sur l'ensemble des chèques en attente, pas
+  // seulement ceux déjà filtrés, pour que la liste déroulante reste complète quel que soit le filtre
+  // actif).
+  const periodOptionsMap = {};
+  allChequesToCash.forEach(p=>{ periodOptionsMap[snapToCashPeriodValue(p.cashDate)] = cashPeriodLabel(p.cashDate); });
+  const periodOptionValues = Object.keys(periodOptionsMap).sort();
+  const activePeriodFilter = ui.chequesToCashPeriodFilter || '';
+  const chequesToCash = activePeriodFilter ? allChequesToCash.filter(p=> snapToCashPeriodValue(p.cashDate)===activePeriodFilter) : allChequesToCash;
+  const byPeriod = {};
+  chequesToCash.forEach(p=>{ (byPeriod[snapToCashPeriodValue(p.cashDate)] ||= []).push(p); });
+  const periodKeys = Object.keys(byPeriod).sort();
+
+  const methodRowsHtml = Object.entries(PAYMENT_METHOD_LABELS).map(([k,l])=>{
+    const total = byMethod[k]||0;
+    if(total<=0) return '';
+    return `<div style="display:flex; justify-content:space-between; font-size:13px; padding:2px 0;"><span>${escapeHtml(l)}</span><span>${fmtEuro(total)}</span></div>`;
+  }).join('');
+
+  function buildDueRowsHtml(list, searchActive){
+    return list.slice(0,30).map(({m,remaining})=>`
+      <div class="convoc-row" data-action="cc-open-member" data-id="${m.id}" style="cursor:pointer;">
+        <div class="info"><div class="n">${escapeHtml(m.name)}</div></div>
+        <span class="tag" style="background:var(--clay-dim); color:var(--clay); flex-shrink:0;">${fmtEuro(remaining)}</span>
+      </div>`).join('') || (searchActive ? '<div class="empty">Aucun élève ne correspond à cette recherche.</div>' : '<div class="empty">Aucun reste dû 🎉</div>');
+  }
+  function wireDueRows(container){
+    container.querySelectorAll('[data-action="cc-open-member"]').forEach(row=>{
+      row.addEventListener('click', ()=> openMemberCotisationOverlay(row.dataset.id));
+    });
+  }
+  const initialSearch = (ui.cotisationsDueSearch||'').trim().toLowerCase();
+  const initialFiltered = initialSearch ? dueList.filter(({m})=> String(m.name||'').toLowerCase().includes(initialSearch)) : dueList;
+  const dueRowsHtml = buildDueRowsHtml(initialFiltered, !!initialSearch);
+
+  // Groupe(s)/cours pratiqué(s) associé(s) aux destinataires d'un paiement (le plus souvent un seul,
+  // mais un chèque peut couvrir plusieurs membres de cours différents).
+  function paymentGroupNames(p){
+    return [...new Set((p.allocations||[]).map(a=>{
+      const om = data.members.find(x=>x.id===a.memberId);
+      const g = om ? data.groups.find(x=>x.id===om.groupId) : null;
+      return g ? g.name : null;
+    }).filter(Boolean))];
+  }
+  const periodsHtml = periodKeys.map(pk=>{
+    const label = cashPeriodLabel(pk);
+    const rows = byPeriod[pk].map(p=>{
+      const memberNames = (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?om.name:'?'; }).join(', ');
+      const groupLabel = paymentGroupNames(p).join(' / ');
+      // Nom du chèque (propriétaire, si différent de l'adhérent) – Nom du/des adhérent(s) concerné(s) –
+      // Cours, dans cet ordre, séparés par des tirets ; le nom du chèque n'apparaît que s'il a été
+      // saisi (case "Le chèque n'est pas au nom de l'adhérent" cochée), sinon on ne le répète pas.
+      const parts = [];
+      if(p.payerName && p.payerName.trim()) parts.push(`<strong>${escapeHtml(p.payerName.trim())}</strong>`);
+      parts.push(escapeHtml(memberNames));
+      if(groupLabel) parts.push(escapeHtml(groupLabel));
+      const lineHtml = parts.join(' <span style="color:var(--ink-dim);">–</span> ');
+      return `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12.5px; padding:2px 0;">
+        <span style="flex:1; min-width:0;">${lineHtml}</span>
+        <span style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+          <span>${fmtEuro(p.amountTotal)}</span>
+          <button type="button" class="ghost" data-action="cheque-mark-encaisse" data-id="${p.id}" title="Marquer ce chèque comme encaissé" style="padding:1px 6px; font-size:13px; line-height:1.4;">✅</button>
+        </span>
+      </div>`;
+    }).join('');
+    return `<div style="margin-top:8px;"><div style="font-weight:600; font-size:13px; text-transform:capitalize;">${escapeHtml(label)}</div>${rows}</div>`;
+  }).join('') || (activePeriodFilter ? '<div class="empty">Aucun chèque pour cette période.</div>' : '<div class="empty">Aucun chèque en attente d\'encaissement.</div>');
+
+  // Carrousel "Paiements encaissés" : parcourt PAYMENT_METHOD_CAROUSEL_ORDER (chèque, espèces, chèque
+  // sport, virement, autre) via les flèches ‹ › pour retrouver tous les encaissements faits, méthode
+  // par méthode.
+  function buildEncaissedBlockHtml(){
+    if(!ui.encaissedMethodIndex) ui.encaissedMethodIndex = 0;
+    const method = PAYMENT_METHOD_CAROUSEL_ORDER[ui.encaissedMethodIndex % PAYMENT_METHOD_CAROUSEL_ORDER.length];
+    const list = (data.payments||[]).filter(p=>p.status==='encaisse' && p.method===method)
+      // Date réelle d'encaissement (jour où le chèque/paiement a été validé), pas la date/période
+      // prévue ni la date de création.
+      .sort((a,b)=> (b.encaissedAt||b.createdAt||'').localeCompare(a.encaissedAt||a.createdAt||''));
+    const total = list.reduce((s,p)=>s+p.amountTotal,0);
+    const rows = list.map(p=>{
+      const displayName = paymentDisplayName(p);
+      const dateLabel = p.encaissedAt ? fmtDateShort(p.encaissedAt) : (p.createdAt ? fmtDateShort(p.createdAt.slice(0,10)) : '—');
+      return `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12.5px; padding:3px 0; border-bottom:1px solid var(--line);">
+        <span data-action="encaissed-open" data-id="${p.id}" style="flex:1; min-width:0; cursor:pointer; text-decoration:underline dotted; text-decoration-color:var(--ink-dim);" title="Voir le récapitulatif de ce paiement">${escapeHtml(displayName)}</span>
+        <span style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+          <span style="color:var(--ink-dim);">${dateLabel}</span>
+          <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">${fmtEuro(p.amountTotal)}</span>
+        </span>
+      </div>`;
+    }).join('') || '<div class="empty">Aucun paiement encaissé pour cette méthode.</div>';
+    return `<div style="text-align:center; font-size:12px; color:var(--ink-dim); margin-bottom:6px;">${list.length} paiement${list.length>1?'s':''} · ${fmtEuro(total)}</div>${rows}`;
+  }
+  function wireEncaissedRows(container){
+    if(!container) return;
+    container.querySelectorAll('[data-action="encaissed-open"]').forEach(el=>{
+      el.addEventListener('click', ()=> openPaymentFormOverlay({ paymentId: el.dataset.id, onSaved: renderCotisationsCard }));
+    });
+  }
+
+  wrap.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0;">Vue d'ensemble</h2>
+      <div style="display:flex; flex-wrap:wrap; gap:16px; margin-top:6px;">
+        <div><div style="font-size:11px; color:var(--ink-dim); text-transform:uppercase;">Attendu</div><div style="font-size:18px; font-weight:700;">${fmtEuro(totalExpected)}</div></div>
+        <div><div style="font-size:11px; color:var(--ink-dim); text-transform:uppercase;">Encaissé</div><div style="font-size:18px; font-weight:700; color:var(--tatami);">${fmtEuro(totalEncaisse)}</div></div>
+        <div><div style="font-size:11px; color:var(--ink-dim); text-transform:uppercase;">En attente</div><div style="font-size:18px; font-weight:700; color:#B08A2E;">${fmtEuro(totalAttente)}</div></div>
+        <div><div style="font-size:11px; color:var(--ink-dim); text-transform:uppercase;">Reste dû</div><div style="font-size:18px; font-weight:700; color:var(--clay);">${fmtEuro(totalRemaining)}</div></div>
+      </div>
+      ${methodRowsHtml ? `<div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--line);">${methodRowsHtml}</div>` : ''}
+    </div>
+    <div class="card">
+      <div class="row" style="align-items:center; justify-content:space-between;">
+        <h2 style="margin-top:0;">Élèves avec un reste dû${dueList.length ? ` (${dueList.length})` : ''}</h2>
+        <button class="ghost" id="exportDueFeesPdfBtn" style="padding:5px 10px; font-size:12.5px; white-space:nowrap;">📄 Export PDF par cours</button>
+      </div>
+      <input type="text" id="cotisationsDueSearch" placeholder="🔎 Rechercher un élève…" value="${escapeHtml(ui.cotisationsDueSearch||'')}" style="margin-bottom:8px;">
+      <div id="cotisationsDueRows">${dueRowsHtml}</div>
+    </div>
+    <div class="card">
+      <div class="row" style="align-items:center; justify-content:space-between;">
+        <h2 style="margin-top:0;">Chèques à encaisser</h2>
+        <button class="ghost" id="exportChequesPdfBtn" style="padding:5px 10px; font-size:12.5px; white-space:nowrap;">📄 Export PDF par discipline</button>
+      </div>
+      <div class="row" style="align-items:center; gap:8px; margin:2px 0 8px;">
+        <span class="field-label" style="margin:0; white-space:nowrap;">Période</span>
+        <select id="chequesPeriodFilter" style="flex:1;">
+          <option value="">Toutes les périodes</option>
+          ${periodOptionValues.map(v=>`<option value="${v}" ${activePeriodFilter===v?'selected':''}>${escapeHtml(periodOptionsMap[v])}</option>`).join('')}
+        </select>
+      </div>
+      ${periodsHtml}
+    </div>
+    <div class="card">
+      <div class="row" style="align-items:center; justify-content:space-between;">
+        <h2 style="margin-top:0;">Paiements encaissés</h2>
+        <button class="ghost" id="exportEncaissedPdfBtn" style="padding:5px 10px; font-size:12.5px; white-space:nowrap;">📄 Export PDF (${escapeHtml(PAYMENT_METHOD_LABELS[PAYMENT_METHOD_CAROUSEL_ORDER[(ui.encaissedMethodIndex||0) % PAYMENT_METHOD_CAROUSEL_ORDER.length]])})</button>
+      </div>
+      <div class="row" style="align-items:center; justify-content:center; gap:14px; margin-top:4px;">
+        <button type="button" class="ghost icon-btn" id="encaissedPrevBtn" style="padding:5px 10px;">‹</button>
+        <div id="encaissedMethodLabel" style="font-weight:700; font-size:14px; min-width:170px; text-align:center;">${escapeHtml(PAYMENT_METHOD_LABELS[PAYMENT_METHOD_CAROUSEL_ORDER[(ui.encaissedMethodIndex||0) % PAYMENT_METHOD_CAROUSEL_ORDER.length]])}</div>
+        <button type="button" class="ghost icon-btn" id="encaissedNextBtn" style="padding:5px 10px;">›</button>
+      </div>
+      <div id="encaissedListWrap" style="margin-top:10px;">${buildEncaissedBlockHtml()}</div>
+    </div>`;
+  const dueRowsContainer = document.getElementById('cotisationsDueRows');
+  wireDueRows(dueRowsContainer);
+  const dueSearchInput = document.getElementById('cotisationsDueSearch');
+  if(dueSearchInput){
+    // Ne met à jour que la liste (pas tout le bloc, ni le champ lui-même) pour ne jamais perdre
+    // le focus/curseur en cours de frappe.
+    dueSearchInput.addEventListener('input', e=>{
+      ui.cotisationsDueSearch = e.target.value;
+      const q = e.target.value.trim().toLowerCase();
+      const filtered = q ? dueList.filter(({m})=> String(m.name||'').toLowerCase().includes(q)) : dueList;
+      dueRowsContainer.innerHTML = buildDueRowsHtml(filtered, !!q);
+      wireDueRows(dueRowsContainer);
+    });
+  }
+  const exportDueBtn = document.getElementById('exportDueFeesPdfBtn');
+  if(exportDueBtn) exportDueBtn.addEventListener('click', generateDueFeesPdf);
+  const exportChequesBtn = document.getElementById('exportChequesPdfBtn');
+  if(exportChequesBtn) exportChequesBtn.addEventListener('click', generateChequesToCashPdf);
+  const exportEncaissedBtn = document.getElementById('exportEncaissedPdfBtn');
+  if(exportEncaissedBtn) exportEncaissedBtn.addEventListener('click', generateEncaissedPaymentsPdf);
+  wrap.querySelectorAll('[data-action="cheque-mark-encaisse"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const p = (data.payments||[]).find(x=>x.id===btn.dataset.id);
+      if(!p) return;
+      p.status = 'encaisse';
+      p.encaissedAt = todayStr();
+      saveData();
+      renderActiveTab();
+      showToast('Chèque marqué comme encaissé');
+    });
+  });
+  const periodFilterSelect = document.getElementById('chequesPeriodFilter');
+  if(periodFilterSelect) periodFilterSelect.addEventListener('change', e=>{
+    ui.chequesToCashPeriodFilter = e.target.value;
+    renderCotisationsCard();
+  });
+  wireEncaissedRows(document.getElementById('encaissedListWrap'));
+  function refreshEncaissedBlock(){
+    const labelEl = document.getElementById('encaissedMethodLabel');
+    const listEl = document.getElementById('encaissedListWrap');
+    const exportBtn = document.getElementById('exportEncaissedPdfBtn');
+    const method = PAYMENT_METHOD_CAROUSEL_ORDER[ui.encaissedMethodIndex % PAYMENT_METHOD_CAROUSEL_ORDER.length];
+    if(labelEl) labelEl.textContent = PAYMENT_METHOD_LABELS[method];
+    if(exportBtn) exportBtn.textContent = `📄 Export PDF (${PAYMENT_METHOD_LABELS[method]})`;
+    if(listEl) listEl.innerHTML = buildEncaissedBlockHtml();
+    wireEncaissedRows(listEl);
+  }
+  const encaissedPrevBtn = document.getElementById('encaissedPrevBtn');
+  const encaissedNextBtn = document.getElementById('encaissedNextBtn');
+  if(encaissedPrevBtn) encaissedPrevBtn.addEventListener('click', ()=>{
+    ui.encaissedMethodIndex = ((ui.encaissedMethodIndex||0) - 1 + PAYMENT_METHOD_CAROUSEL_ORDER.length) % PAYMENT_METHOD_CAROUSEL_ORDER.length;
+    refreshEncaissedBlock();
+  });
+  if(encaissedNextBtn) encaissedNextBtn.addEventListener('click', ()=>{
+    ui.encaissedMethodIndex = ((ui.encaissedMethodIndex||0) + 1) % PAYMENT_METHOD_CAROUSEL_ORDER.length;
+    refreshEncaissedBlock();
+  });
+}
+// Export PDF des élèves avec un reste dû, regroupés par cours (un tableau par cours, trié
+// alphabétiquement par cours puis par nom de famille) — pour affichage/impression hors appli.
+async function generateDueFeesPdf(){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const btn = document.getElementById('exportDueFeesPdfBtn');
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
+  try{
+    const activeMembers = data.members.filter(m=>!m.archived);
+    const dueList = [];
+    let totalRemaining = 0;
+    activeMembers.forEach(m=>{
+      const due = memberRemainingDue(m);
+      if(due.remaining!==null && due.remaining>0.01){ totalRemaining += due.remaining; dueList.push({ m, remaining: due.remaining }); }
+    });
+    dueList.sort((a,b)=> memberSurname(a.m.name).localeCompare(memberSurname(b.m.name), 'fr'));
+    const byGroup = {};
+    dueList.forEach(({m,remaining})=>{
+      const g = data.groups.find(x=>x.id===m.groupId);
+      const key = g ? g.name : 'Sans cours';
+      (byGroup[key] ||= []).push({ m, remaining });
+    });
+    const groupNames = Object.keys(byGroup).sort((a,b)=> a.localeCompare(b,'fr'));
+    const logoImg = document.querySelector('header.topbar .club-logo-light');
+    const logoSrc = logoImg ? logoImg.src : '';
+    const headerHtml = `
+      <div class="recap-header">
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
+        <div>
+          <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
+          <div class="rh-sub">Élèves avec un reste dû, par cours — ${fmtDateShort(todayStr())||''} · Total : ${fmtEuro(totalRemaining)}</div>
+        </div>
+      </div>`;
+    const headRow = `<tr><th>Nom</th><th>Prénom</th><th>Reste dû</th></tr>`;
+    const rowHtml = ({m,remaining})=>{
+      const parts = String(m.name||'').trim().split(/\s+/);
+      const prenom = parts[0]||'';
+      const nom = parts.slice(1).join(' ');
+      return `<tr><td>${escapeHtml(nom)}</td><td>${escapeHtml(prenom)}</td><td>${fmtEuro(remaining)}</td></tr>`;
+    };
+    const blocks = [];
+    if(groupNames.length===0){
+      blocks.push(`<table class="recap-table">${headRow}<tr><td colspan="3" style="text-align:center; color:#888; padding:20px 10px;">Aucun reste dû 🎉</td></tr></table>`);
+    } else {
+      const CHUNK = 22;
+      groupNames.forEach(gName=>{
+        const members = byGroup[gName];
+        const groupTotal = members.reduce((s,x)=>s+x.remaining,0);
+        for(let i=0;i<members.length;i+=CHUNK){
+          const chunk = members.slice(i, i+CHUNK);
+          const title = `<div class="recap-event"><div class="re-title">${escapeHtml(gName)}${i===0 ? ` — ${members.length} élève${members.length>1?'s':''} · ${fmtEuro(groupTotal)}` : ' (suite)'}</div></div>`;
+          blocks.push(`${title}<table class="recap-table">${headRow}${chunk.map(rowHtml).join('')}</table>`);
+        }
+      });
+    }
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    const margin = 24;
+    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass:'recap-doc', containerWidthPx:700, margin });
+    pdf.save(`restes-dus-par-cours-${todayStr()}.pdf`);
+    showToast('PDF généré');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
+// Export PDF des chèques en attente d'encaissement, regroupés par discipline (Judo à part, Karate,
+// Aikibudo, Taiso...) en réutilisant courseToDiscipline/DISCIPLINE_GROUPS (même regroupement que la
+// carte "Par discipline" du Suivi annuel) — pour préparer les dépôts en banque par grande discipline.
+async function generateChequesToCashPdf(){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const btn = document.getElementById('exportChequesPdfBtn');
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
+  try{
+    const activePeriodFilter = ui.chequesToCashPeriodFilter || '';
+    const chequesToCash = (data.payments||[]).filter(p=>p.method==='cheque' && p.status==='attente' && p.cashDate && (!activePeriodFilter || snapToCashPeriodValue(p.cashDate)===activePeriodFilter));
+    let totalAmount = 0;
+    const byDiscipline = {};
+    chequesToCash.forEach(p=>{
+      totalAmount += p.amountTotal;
+      const firstMember = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
+      const group = firstMember ? data.groups.find(x=>x.id===firstMember.groupId) : null;
+      const discipline = group ? (courseToDiscipline(group.name) || group.name) : null;
+      const key = discipline || 'Autres';
+      (byDiscipline[key] ||= []).push(p);
+    });
+    const order = [...DISCIPLINE_GROUPS, 'Autres'];
+    const disciplineNames = Object.keys(byDiscipline).sort((a,b)=> {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia===-1?999:ia) - (ib===-1?999:ib);
+    });
+    disciplineNames.forEach(key=>{
+      byDiscipline[key].sort((a,b)=> (a.cashDate||'').localeCompare(b.cashDate||''));
+    });
+    const logoImg = document.querySelector('header.topbar .club-logo-light');
+    const logoSrc = logoImg ? logoImg.src : '';
+    const periodSuffix = activePeriodFilter ? ` — période : ${cashPeriodLabel(activePeriodFilter)}` : '';
+    const headerHtml = `
+      <div class="recap-header">
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
+        <div>
+          <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
+          <div class="rh-sub">Chèques à encaisser, par discipline${periodSuffix} — ${fmtDateShort(todayStr())||''} · Total : ${fmtEuro(totalAmount)}</div>
+        </div>
+      </div>`;
+    const headRow = `<tr><th>Nom du chèque</th><th>Adhérent(s)</th><th>Cours</th><th>N° chèque</th><th>Banque</th><th>Période</th><th>Montant</th></tr>`;
+    const rowHtml = p=>{
+      const chequeOwnerName = paymentDisplayName(p);
+      const memberNames = (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?om.name:'?'; }).join(', ');
+      const groupNames = [...new Set((p.allocations||[]).map(a=>{
+        const om = data.members.find(x=>x.id===a.memberId);
+        const g = om ? data.groups.find(x=>x.id===om.groupId) : null;
+        return g ? g.name : null;
+      }).filter(Boolean))].join(' / ');
+      return `<tr><td>${escapeHtml(chequeOwnerName)}</td><td>${escapeHtml(memberNames)}</td><td>${escapeHtml(groupNames||'—')}</td><td>${escapeHtml(p.chequeNumber||'—')}</td><td>${escapeHtml(p.chequeBank||'—')}</td><td>${escapeHtml(cashPeriodLabel(p.cashDate))}</td><td>${fmtEuro(p.amountTotal)}</td></tr>`;
+    };
+    const blocks = [];
+    if(disciplineNames.length===0){
+      blocks.push(`<table class="recap-table">${headRow}<tr><td colspan="7" style="text-align:center; color:#888; padding:20px 10px;">${activePeriodFilter ? 'Aucun chèque pour cette période.' : "Aucun chèque en attente d'encaissement."}</td></tr></table>`);
+    } else {
+      const CHUNK = 18;
+      disciplineNames.forEach(key=>{
+        const rows = byDiscipline[key];
+        const subTotal = rows.reduce((s,p)=>s+p.amountTotal,0);
+        for(let i=0;i<rows.length;i+=CHUNK){
+          const chunk = rows.slice(i, i+CHUNK);
+          const title = `<div class="recap-event"><div class="re-title">${escapeHtml(key)}${i===0 ? ` — ${rows.length} chèque${rows.length>1?'s':''} · ${fmtEuro(subTotal)}` : ' (suite)'}</div></div>`;
+          blocks.push(`${title}<table class="recap-table">${headRow}${chunk.map(rowHtml).join('')}</table>`);
+        }
+      });
+    }
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    const margin = 24;
+    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass:'recap-doc', containerWidthPx:700, margin });
+    pdf.save(`cheques-a-encaisser-par-discipline-${todayStr()}.pdf`);
+    showToast('PDF généré');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
+// Export PDF des paiements encaissés pour la méthode actuellement affichée dans le carrousel
+// "Paiements encaissés" (chèque, espèces, chèque sport, virement, autre) — les colonnes N° chèque et
+// banque n'apparaissent que pour la méthode chèque.
+async function generateEncaissedPaymentsPdf(){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const btn = document.getElementById('exportEncaissedPdfBtn');
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
+  try{
+    const method = PAYMENT_METHOD_CAROUSEL_ORDER[(ui.encaissedMethodIndex||0) % PAYMENT_METHOD_CAROUSEL_ORDER.length];
+    const isCheque = method==='cheque';
+    const list = (data.payments||[]).filter(p=>p.status==='encaisse' && p.method===method)
+      .sort((a,b)=> (a.encaissedAt||a.createdAt||'').localeCompare(b.encaissedAt||b.createdAt||''));
+    const total = list.reduce((s,p)=>s+p.amountTotal,0);
+    const logoImg = document.querySelector('header.topbar .club-logo-light');
+    const logoSrc = logoImg ? logoImg.src : '';
+    const headerHtml = `
+      <div class="recap-header">
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
+        <div>
+          <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
+          <div class="rh-sub">Paiements encaissés — ${escapeHtml(PAYMENT_METHOD_LABELS[method])} — ${fmtDateShort(todayStr())||''} · Total : ${fmtEuro(total)}</div>
+        </div>
+      </div>`;
+    const headRow = `<tr><th>Nom</th><th>Cours</th>${isCheque?'<th>N° chèque</th><th>Banque</th>':''}<th>Encaissé le</th><th>Montant</th></tr>`;
+    const rowHtml = p=>{
+      const displayName = paymentDisplayName(p);
+      const groupNames = [...new Set((p.allocations||[]).map(a=>{
+        const om = data.members.find(x=>x.id===a.memberId);
+        const g = om ? data.groups.find(x=>x.id===om.groupId) : null;
+        return g ? g.name : null;
+      }).filter(Boolean))].join(' / ');
+      const dateLabel = p.encaissedAt ? (fmtDateShort(p.encaissedAt)||'—') : (p.createdAt ? (fmtDateShort(p.createdAt.slice(0,10))||'—') : '—');
+      return `<tr><td>${escapeHtml(displayName)}</td><td>${escapeHtml(groupNames||'—')}</td>${isCheque?`<td>${escapeHtml(p.chequeNumber||'—')}</td><td>${escapeHtml(p.chequeBank||'—')}</td>`:''}<td>${dateLabel}</td><td>${fmtEuro(p.amountTotal)}</td></tr>`;
+    };
+    const blocks = [];
+    if(list.length===0){
+      const colspan = isCheque ? 6 : 4;
+      blocks.push(`<table class="recap-table">${headRow}<tr><td colspan="${colspan}" style="text-align:center; color:#888; padding:20px 10px;">Aucun paiement encaissé pour cette méthode.</td></tr></table>`);
+    } else {
+      const CHUNK = 22;
+      for(let i=0;i<list.length;i+=CHUNK){
+        const chunk = list.slice(i, i+CHUNK);
+        blocks.push(`<table class="recap-table">${headRow}${chunk.map(rowHtml).join('')}</table>`);
+      }
+    }
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    const margin = 24;
+    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass:'recap-doc', containerWidthPx:700, margin });
+    pdf.save(`paiements-encaisses-${method}-${todayStr()}.pdf`);
+    showToast('PDF généré');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
 }
 function renderCompetitionsCalendarCard(){
   const wrap = document.getElementById('competitions-calendar');
