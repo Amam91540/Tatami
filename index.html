@@ -3717,6 +3717,46 @@ function memberFeeDetails(m, familyRank){
     total, license, adhesion, course, groupName: group.name
   };
 }
+// Mutualisation de cotisation pour UNE MÊME PERSONNE inscrite à 2 disciplines différentes (donc 2
+// fiches, ex: Judo + Karaté) : l'adhésion au club (10€) n'est due qu'une fois, pas une fois par
+// discipline. On s'appuie sur les "doublons" déjà validés par l'utilisateur comme 2 fiches légitimes
+// distinctes (voir validatedDuplicateKeys / renderDuplicateMembersCard) — c'est exactement ce que
+// représente une validation là-bas : une même personne, 2 disciplines. INDÉPENDANT du système de
+// familles (familyId/feeRank) : une vraie famille (plusieurs personnes distinctes) n'est pas
+// concernée et continue de payer une adhésion par personne, sans changement.
+function duplicatePersonGroupFor(memberId){
+  const m = data.members.find(x=>x.id===memberId);
+  if(!m || m.archived) return null;
+  const key = memberDuplicateKeyOf(m);
+  if(!key) return null;
+  if(!loadValidatedDuplicateKeys().has(key)) return null;
+  const group = data.members.filter(x=> !x.archived && memberDuplicateKeyOf(x)===key);
+  if(group.length<2) return null;
+  // La mutualisation ne s'applique qu'entre disciplines différentes — si les fiches "doublon" sont en
+  // réalité dans la même discipline (erreur de saisie pas encore fusionnée), on ne touche à rien.
+  const disciplines = new Set(group.map(x=>{
+    const g = data.groups.find(gr=>gr.id===x.groupId);
+    return g ? (courseDisciplineKey(g.name)||g.name) : null;
+  }));
+  if(disciplines.size<2) return null;
+  return group;
+}
+// Classe les fiches du groupe par coût plein-tarif croissant (rang p1) : la moins chère garde
+// l'adhésion ("membre famille 1"), la ou les suivantes en sont dispensées ("membre famille 2"+).
+function mutualizedFeeDetails(m, group){
+  const withCost = group.map(x=> ({ member: x, base: memberFeeDetails(x, 'p1') }));
+  const usable = withCost.filter(x=> !x.base.error);
+  usable.sort((a,b)=> a.base.total - b.base.total);
+  const rankOf = {};
+  usable.forEach((x,idx)=> { rankOf[x.member.id] = idx===0 ? 'p1' : 'p2'; });
+  const rank = rankOf[m.id] || 'p1';
+  const details = memberFeeDetails(m, rank);
+  if(details.error) return details;
+  if(rank!=='p1' && details.adhesion){
+    return { ...details, total: Math.round((details.total - details.adhesion)*100)/100, adhesion: 0, adhesionWaived: true, mutualizedRank: rank };
+  }
+  return { ...details, adhesionWaived: false, mutualizedRank: rank };
+}
 /* ---------------- COTISATIONS : familles, rangs, paiements ---------------- */
 // Nom de famille approximatif d'un élève, déduit du champ "Prénom Nom" (même logique que
 // reverseNameOrder côté Code.gs) : le prénom est le premier mot, le nom de famille tout le reste.
@@ -3837,6 +3877,12 @@ function removeMemberFromFamily(memberId){
 function memberExpectedFee(m){
   if(m.feeOverrideAmount!==null && m.feeOverrideAmount!==undefined && m.feeOverrideAmount!==''){
     return { amount: Number(m.feeOverrideAmount), source:'override' };
+  }
+  const dupGroup = duplicatePersonGroupFor(m.id);
+  if(dupGroup){
+    const details = mutualizedFeeDetails(m, dupGroup);
+    if(details.error) return { amount: null, source:'error', error: details.error };
+    return { amount: details.total, source:'grille', details };
   }
   const details = memberFeeDetails(m, m.feeRank||'p1');
   if(details.error) return { amount: null, source:'error', error: details.error };
@@ -4504,6 +4550,34 @@ function renderMemberCotisationOverlay(memberId){
     <div class="rio-card">
       <h2 style="margin-top:0;">Cotisation — ${escapeHtml(m.name)}</h2>
       ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
+      ${(()=>{
+        // Même personne inscrite à 2 disciplines (doublon validé) : détail par discipline +
+        // total combiné, en plus (pas à la place) du bloc famille éventuel ci-dessus.
+        const dupGroup = duplicatePersonGroupFor(memberId);
+        if(!dupGroup) return '';
+        const rows = dupGroup.map(x=>{
+          const xDetails = mutualizedFeeDetails(x, dupGroup);
+          if(xDetails.error) return null;
+          const parts = [];
+          if(xDetails.course) parts.push(`Cotisation ${fmtEuro(xDetails.course)}`);
+          if(!xDetails.adhesionWaived && xDetails.adhesion) parts.push(`Adhésion ${fmtEuro(xDetails.adhesion)}`);
+          if(xDetails.license) parts.push(`Licence ${fmtEuro(xDetails.license)}`);
+          const rankLabel = xDetails.mutualizedRank==='p1' ? 'Prix Membre famille 1' : 'Prix Membre famille 2';
+          const isCurrent = x.id===memberId;
+          const discLabel = xDetails.disciplineLabel || courseToDiscipline(xDetails.groupName) || xDetails.groupName;
+          return `<div style="font-size:12.5px; ${isCurrent?'font-weight:600;':''} margin-top:2px;">${escapeHtml(discLabel)} : ${parts.join(' + ')} (${escapeHtml(rankLabel)}) = <strong>${fmtEuro(xDetails.total)}</strong>${isCurrent?' <span style="font-weight:400; color:var(--ink-dim);">(cette fiche)</span>':''}</div>`;
+        }).filter(Boolean);
+        if(!rows.length) return '';
+        const combinedTotal = dupGroup.reduce((sum,x)=>{
+          const d = mutualizedFeeDetails(x, dupGroup);
+          return sum + (d.error ? 0 : d.total);
+        }, 0);
+        return `<div class="group-block" style="margin:0 0 10px; background:rgba(176,138,46,0.08); border-color:rgba(176,138,46,0.3);">
+          <div style="font-size:11px; font-weight:600; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:4px;">🥋 2 disciplines (même personne) — cotisation mutualisée</div>
+          ${rows.join('')}
+          <div style="font-size:12.5px; margin-top:6px; border-top:1px dashed rgba(0,0,0,0.15); padding-top:6px;">Total combiné : <strong>${fmtEuro(combinedTotal)}</strong></div>
+        </div>`;
+      })()}
       <div class="row">
         <div style="flex:1;">
           <span class="field-label">Rang familial</span>
