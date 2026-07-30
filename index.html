@@ -289,6 +289,16 @@
   .recap-table td{ padding:9px 10px; border-bottom:1px solid #eee; }
   .recap-table tr:nth-child(even) td{ background:#FAFAF7; }
 
+  /* Bordereau d'encaissement A.M.A.M — tableau à nombreuses colonnes étroites, format paysage */
+  .bordereau-table{ width:100%; border-collapse:collapse; font-size:10.5px; }
+  .bordereau-table th{ background:#2A2F26; color:#fff; text-align:left; padding:5px 6px; font-size:9px; text-transform:uppercase; letter-spacing:0.02em; border:1px solid #2A2F26; }
+  .bordereau-table td{ padding:5px 6px; border:1px solid #ddd; vertical-align:top; }
+  .bordereau-table tr:nth-child(even) td{ background:#FAFAF7; }
+  .bordereau-table tr.bord-total td{ background:#F1F4EA; font-weight:800; border-top:2px solid #2A2F26; }
+  .bordereau-doc .bd-meta{ display:flex; justify-content:space-between; font-size:12px; margin-bottom:10px; gap:12px; flex-wrap:wrap; }
+  .bordereau-doc .bd-meta strong{ font-weight:700; }
+  .bordereau-doc .bd-footer{ font-size:11px; color:#666; margin-top:14px; font-style:italic; }
+
   /* Calendrier PDF — grille par mois (paysage) */
   .pdfcal-grid{ display:flex; gap:10px; align-items:flex-start; margin-top:6px; }
   .pdfcal-col{ flex:1; min-width:0; }
@@ -3911,11 +3921,11 @@ function memberRemainingDue(m){
   const paid = memberPaidTotal(m.id);
   return { remaining: Math.round((expected.amount - paid)*100)/100, expected, paid };
 }
-const PAYMENT_METHOD_LABELS = { especes:'Espèces', cheque:'Chèque', virement:'Virement', chequesport:'Chèque Sport Mennecy', autre:'Autre' };
+const PAYMENT_METHOD_LABELS = { especes:'Espèces', cheque:'Chèque', ancv:'ANCV', virement:'Virement', chequesport:'Chèque Sport Mennecy', autre:'Autre' };
 const PAYMENT_STATUS_LABELS = { attente:'À encaisser', encaisse:'Encaissé', rejete:'Rejeté (sans provision)', annule:'Annulé' };
 // Ordre d'affichage du carrousel "Paiements encaissés" (Suivi annuel) : demandé explicitement
 // chèque, espèces, chèque sport, puis les autres méthodes.
-const PAYMENT_METHOD_CAROUSEL_ORDER = ['cheque', 'especes', 'chequesport', 'virement', 'autre'];
+const PAYMENT_METHOD_CAROUSEL_ORDER = ['cheque', 'especes', 'ancv', 'chequesport', 'virement', 'autre'];
 function fmtEuro(v){
   return (v===null || v===undefined || v==='' || isNaN(Number(v))) ? '—' : Number(v).toFixed(2).replace('.',',') + ' €';
 }
@@ -3926,20 +3936,17 @@ function paymentDisplayName(p){
   if(p.payerName && p.payerName.trim()) return p.payerName.trim();
   return (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?om.name:'?'; }).join(', ');
 }
-// "Périodes" d'encaissement de chèque (Début / Mi / Fin de mois) au lieu d'une date exacte à saisir :
-// on stocke quand même une date ISO canonique (1er / 15 / dernier jour du mois) pour que le tri
-// chronologique, le regroupement et les anciens enregistrements (dates exactes saisies avant cette
-// fonctionnalité) continuent de fonctionner sans migration — on "arrondit" simplement toute date au
-// tiers de mois auquel elle appartient.
-const CASH_PERIOD_LABELS = { debut:'Début', mi:'Mi', fin:'Fin' };
+// "Périodes" d'encaissement de chèque : uniquement fin de mois (les chèques sont déposés en banque
+// le 30/dernier jour du mois — plus de choix Début/Mi, demandé explicitement). On stocke quand même
+// une date ISO canonique (dernier jour du mois) pour que le tri chronologique, le regroupement et les
+// anciens enregistrements (dates Début/Mi saisies avant cette simplification) continuent de
+// fonctionner sans migration — on "arrondit" simplement toute date à la fin du mois auquel elle
+// appartient.
+const CASH_PERIOD_LABELS = { fin:'Fin' };
 function cashPeriodBucket(day){
-  if(day<=10) return 'debut';
-  if(day<=20) return 'mi';
   return 'fin';
 }
 function cashPeriodCanonicalDate(year, monthIndex0, bucket){
-  if(bucket==='debut') return `${year}-${String(monthIndex0+1).padStart(2,'0')}-01`;
-  if(bucket==='mi') return `${year}-${String(monthIndex0+1).padStart(2,'0')}-15`;
   const lastDay = new Date(year, monthIndex0+1, 0).getDate();
   return `${year}-${String(monthIndex0+1).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
 }
@@ -3947,19 +3954,27 @@ function snapToCashPeriodValue(dateStr){
   if(!dateStr) return '';
   const d = new Date(dateStr+'T00:00:00');
   if(isNaN(d.getTime())) return dateStr;
-  return cashPeriodCanonicalDate(d.getFullYear(), d.getMonth(), cashPeriodBucket(d.getDate()));
+  return cashPeriodCanonicalDate(d.getFullYear(), d.getMonth(), 'fin');
 }
 function cashPeriodLabel(dateStr){
   if(!dateStr) return '—';
   const d = new Date(dateStr+'T00:00:00');
   if(isNaN(d.getTime())) return '—';
-  const bucket = cashPeriodBucket(d.getDate());
   const monthLabel = d.toLocaleDateString('fr-FR', { month:'long', year:'numeric' });
-  return `${CASH_PERIOD_LABELS[bucket]} ${monthLabel}`;
+  return `Fin ${monthLabel}`;
 }
-// Options du sélecteur de période dans le formulaire de paiement : fenêtre glissante d'un mois avant
-// aujourd'hui à 12 mois après (couvre un échéancier de chèques sur une saison sportive), étendue au
-// besoin pour inclure le mois du paiement en cours d'édition s'il est plus ancien/lointain.
+// Abréviation courte du mois (SEPT, OCT, NOV...) utilisée dans les colonnes Date 1/2/3 du bordereau
+// d'encaissement — format compact façon "SEPT" plutôt que "septembre 2026".
+function cashPeriodShortMonth(dateStr){
+  if(!dateStr) return '';
+  const d = new Date(dateStr+'T00:00:00');
+  if(isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('fr-FR', { month:'short' }).replace('.','').toUpperCase();
+}
+// Options du sélecteur de période (fin de mois) dans le formulaire de paiement : fenêtre glissante
+// d'un mois avant aujourd'hui à 12 mois après (couvre un échéancier de chèques sur une saison
+// sportive), étendue au besoin pour inclure le mois du paiement en cours d'édition s'il est plus
+// ancien/lointain. Un seul choix par mois désormais (fin de mois uniquement).
 function cashPeriodSelectOptions(extraDateStr){
   const now = new Date();
   let minOffset = -1, maxOffset = 12;
@@ -3975,9 +3990,7 @@ function cashPeriodSelectOptions(extraDateStr){
   for(let offset=minOffset; offset<=maxOffset; offset++){
     const d = new Date(now.getFullYear(), now.getMonth()+offset, 1);
     const monthLabel = d.toLocaleDateString('fr-FR', { month:'long', year:'numeric' });
-    // Le libellé de chaque option inclut le mois complet (pas juste "Début"/"Mi"/"Fin") : c'est ce
-    // texte-là qui reste visible dans la barre du menu une fois une période sélectionnée.
-    options.push({ month: monthLabel, items: ['debut','mi','fin'].map(b=>({ value: cashPeriodCanonicalDate(d.getFullYear(), d.getMonth(), b), label: `${CASH_PERIOD_LABELS[b]} ${monthLabel}` })) });
+    options.push({ value: cashPeriodCanonicalDate(d.getFullYear(), d.getMonth(), 'fin'), label: `Fin ${monthLabel}` });
   }
   return options;
 }
@@ -4241,8 +4254,8 @@ function openPaymentFormOverlay(opts){
   // méthode, ajouter la famille...) reconstruit le HTML à partir des seules valeurs initiales et
   // efface tout ce que l'utilisateur avait déjà saisi.
   const draft = editing
-    ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(editing.amountTotal) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '' }
-    : { method: 'especes', status: 'encaisse', allocations: opts.presetMemberId ? [{ memberId: opts.presetMemberId, amount: null }] : [], payerNameOverride: false, payerName: '', amountTotal: '', cashDate: '', chequeNumber: '', chequeBank: '', note: '' };
+    ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(editing.amountTotal) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '', diversEnabled: !!editing.diversEnabled, diversMotif: editing.diversMotif || '', diversAmount: editing.diversAmount!==undefined && editing.diversAmount!==null && editing.diversAmount!=='' ? String(editing.diversAmount) : '' }
+    : { method: 'especes', status: 'encaisse', allocations: opts.presetMemberId ? [{ memberId: opts.presetMemberId, amount: null }] : [], payerNameOverride: false, payerName: '', amountTotal: '', cashDate: '', chequeNumber: '', chequeBank: '', note: '', diversEnabled: false, diversMotif: '', diversAmount: '' };
   function memberOptionsHtml(excludeIds){
     return data.members.filter(m=>!m.archived && !excludeIds.includes(m.id))
       .sort((a,b)=> a.name.localeCompare(b.name))
@@ -4306,7 +4319,7 @@ function openPaymentFormOverlay(opts){
           <span class="field-label">${isCheque ? "Période d'encaissement prévue" : 'Date de réception'}</span>
           ${isCheque ? (()=>{
             const selectedPeriodValue = snapToCashPeriodValue(draft.cashDate || todayStr());
-            return `<select id="pf-date">${cashPeriodSelectOptions(draft.cashDate||null).map(g=>`<optgroup label="${escapeHtml(g.month)}">${g.items.map(it=>`<option value="${it.value}" ${selectedPeriodValue===it.value?'selected':''}>${escapeHtml(it.label)}</option>`).join('')}</optgroup>`).join('')}</select>`;
+            return `<select id="pf-date">${cashPeriodSelectOptions(draft.cashDate||null).map(it=>`<option value="${it.value}" ${selectedPeriodValue===it.value?'selected':''}>${escapeHtml(it.label)}</option>`).join('')}</select>`;
           })() : `<input type="date" id="pf-date" value="${escapeHtml(draft.cashDate || todayStr())}">`}
         </div>
         ${isCheque ? `
@@ -4325,6 +4338,14 @@ function openPaymentFormOverlay(opts){
           <label for="pf-payername-toggle" style="font-size:12.5px; cursor:pointer; margin:0;">Le chèque n'est pas au nom de l'adhérent</label>
         </div>
         ${draft.payerNameOverride ? `<div><span class="field-label">Nom sur le chèque</span><input type="text" id="pf-payername" value="${escapeHtml(draft.payerName||'')}" placeholder="Nom exact figurant sur le chèque"></div>` : ''}` : ''}
+        <div class="row" style="align-items:center; gap:6px; margin-top:8px;">
+          <input type="checkbox" id="pf-divers-toggle" ${draft.diversEnabled?'checked':''} style="width:auto;">
+          <label for="pf-divers-toggle" style="font-size:12.5px; cursor:pointer; margin:0;">Encaissement "Divers" en plus (ex: kimono)</label>
+        </div>
+        ${draft.diversEnabled ? `<div class="row">
+          <div style="flex:2;"><span class="field-label">Motif</span><input type="text" id="pf-divers-motif" value="${escapeHtml(draft.diversMotif||'')}" placeholder="Ex: Kimono"></div>
+          <div style="flex:1;"><span class="field-label">Montant (€)</span><input type="number" step="0.01" id="pf-divers-amount" value="${escapeHtml(draft.diversAmount||'')}"></div>
+        </div>` : ''}
         <div>
           <span class="field-label">Note (optionnel)</span>
           <input type="text" id="pf-note" value="${escapeHtml(draft.note||'')}">
@@ -4369,6 +4390,12 @@ function openPaymentFormOverlay(opts){
     if(payerToggle) payerToggle.addEventListener('change', e=>{ draft.payerNameOverride = e.target.checked; render(); });
     const payerNameInput = document.getElementById('pf-payername');
     if(payerNameInput) payerNameInput.addEventListener('input', e=>{ draft.payerName = e.target.value; });
+    const diversToggle = document.getElementById('pf-divers-toggle');
+    if(diversToggle) diversToggle.addEventListener('change', e=>{ draft.diversEnabled = e.target.checked; render(); });
+    const diversMotifInput = document.getElementById('pf-divers-motif');
+    if(diversMotifInput) diversMotifInput.addEventListener('input', e=>{ draft.diversMotif = e.target.value; });
+    const diversAmountInput = document.getElementById('pf-divers-amount');
+    if(diversAmountInput) diversAmountInput.addEventListener('input', e=>{ draft.diversAmount = e.target.value; });
     document.getElementById('pf-add-member').addEventListener('change', e=>{
       const id = e.target.value;
       if(id){ draft.allocations.push({ memberId:id, amount:null }); render(); }
@@ -4446,6 +4473,9 @@ function openPaymentFormOverlay(opts){
       if(newStatus==='encaisse' && !(editing && editing.status==='encaisse')) encaissedAt = todayStr();
       const payerNameEl = document.getElementById('pf-payername');
       const payerName = (draft.method==='cheque' && draft.payerNameOverride && payerNameEl) ? payerNameEl.value.trim() : '';
+      const diversEnabled = !!(document.getElementById('pf-divers-toggle') && document.getElementById('pf-divers-toggle').checked);
+      const diversMotif = diversEnabled ? (document.getElementById('pf-divers-motif').value.trim()) : '';
+      const diversAmount = diversEnabled ? (Math.round((Number(document.getElementById('pf-divers-amount').value)||0)*100)/100) : 0;
       const payload = {
         id: editing ? editing.id : uid(),
         method: draft.method,
@@ -4457,6 +4487,12 @@ function openPaymentFormOverlay(opts){
         status: newStatus,
         encaissedAt,
         note: document.getElementById('pf-note').value.trim(),
+        diversEnabled, diversMotif, diversAmount,
+        // Le bordereau d'encaissement (folio + section) est assigné au moment de la génération du PDF
+        // et n'est jamais réinitialisé ici, pour ne pas faire disparaître/réapparaître un paiement déjà
+        // inclus dans un bordereau si on rouvre le formulaire pour corriger un détail après coup.
+        bordereauFolio: editing ? (editing.bordereauFolio || null) : null,
+        bordereauSection: editing ? (editing.bordereauSection || null) : null,
         allocations: draft.allocations.map(a=>({ memberId:a.memberId, amount: Math.round((Number(a.amount)||0)*100)/100 })),
         season: editing ? editing.season : (data.settings.seasonStartYear || autoSeasonStartYear()),
         createdAt: editing ? editing.createdAt : new Date().toISOString()
@@ -7705,6 +7741,23 @@ function renderCotisationsCard(){
     });
   }
 
+  // Bordereau d'encaissement A.M.A.M : nombre de paiements pas encore mis sur un bordereau + dernier
+  // folio généré, par section — pour l'affichage du bloc dédié.
+  const bordereauSectionsHtml = BORDEREAU_SECTIONS.map(section=>{
+    const pendingCount = (data.payments||[]).filter(p=>
+      ['especes','cheque','ancv'].includes(p.method) && p.status!=='annule' && p.status!=='rejete' &&
+      !p.bordereauFolio && paymentBordereauSection(p)===section
+    ).length;
+    const lastLog = (data.settings.bordereauLog||[]).filter(l=>l.section===section).sort((a,b)=> b.folio-a.folio)[0];
+    return `<div class="row" style="align-items:center; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--line);">
+      <div>
+        <div style="font-weight:600; font-size:13.5px;">${escapeHtml(section)}</div>
+        <div style="font-size:11.5px; color:var(--ink-dim);">${pendingCount ? `${pendingCount} paiement${pendingCount>1?'s':''} en attente` : 'Aucun paiement en attente'}${lastLog ? ` · dernier folio N°${lastLog.folio} (${fmtDateShort(lastLog.generatedAt)})` : ''}</div>
+      </div>
+      <button class="ghost" data-action="generate-bordereau" data-section="${escapeHtml(section)}" style="padding:5px 10px; font-size:12.5px; white-space:nowrap;">📄 Générer</button>
+    </div>`;
+  }).join('');
+
   wrap.innerHTML = `
     <div class="card">
       <h2 style="margin-top:0;">Vue d'ensemble</h2>
@@ -7749,6 +7802,11 @@ function renderCotisationsCard(){
         <button type="button" class="ghost icon-btn" id="encaissedNextBtn" style="padding:5px 10px;">›</button>
       </div>
       <div id="encaissedListWrap" style="margin-top:10px;">${buildEncaissedBlockHtml()}</div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0;">📋 Bordereau d'encaissement A.M.A.M</h2>
+      <p style="font-size:12px; color:var(--ink-dim); margin:4px 0 10px; line-height:1.5;">Un bordereau par section, à générer avant chaque dépôt en banque. Reprend tous les paiements espèces/chèque/ANCV pas encore mis sur un bordereau (regroupés par famille) ; les chèques inclus passent automatiquement "encaissé". Le Chèque Sport garde son attestation dédiée.</p>
+      ${bordereauSectionsHtml}
     </div>`;
   const dueRowsContainer = document.getElementById('cotisationsDueRows');
   wireDueRows(dueRowsContainer);
@@ -7770,6 +7828,9 @@ function renderCotisationsCard(){
   if(exportChequesBtn) exportChequesBtn.addEventListener('click', generateChequesToCashPdf);
   const exportEncaissedBtn = document.getElementById('exportEncaissedPdfBtn');
   if(exportEncaissedBtn) exportEncaissedBtn.addEventListener('click', generateEncaissedPaymentsPdf);
+  wrap.querySelectorAll('[data-action="generate-bordereau"]').forEach(btn=>{
+    btn.addEventListener('click', ()=> generateBordereauPdf(btn.dataset.section));
+  });
   wrap.querySelectorAll('[data-action="cheque-mark-encaisse"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const p = (data.payments||[]).find(x=>x.id===btn.dataset.id);
@@ -8014,6 +8075,187 @@ async function generateEncaissedPaymentsPdf(){
     await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass:'recap-doc', containerWidthPx:700, margin });
     pdf.save(`paiements-encaisses-${method}-${todayStr()}.pdf`);
     showToast('PDF généré');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
+
+/* ---------------- BORDEREAU D'ENCAISSEMENT A.M.A.M ---------------- */
+// 4 sections comptables, une par grande discipline — les cours Baby (Judo/Karaté) sont rattachés à
+// leur discipline "adulte", et le Kobudo au Aïkibudo (regroupement demandé explicitement, distinct de
+// courseToDiscipline qui sert par ailleurs aux statistiques).
+const BORDEREAU_SECTIONS = ['Judo', 'Karate', 'Aikibudo', 'Taiso'];
+function paymentBordereauSection(p){
+  const first = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
+  if(!first) return null;
+  const group = data.groups.find(g=>g.id===first.groupId);
+  if(!group) return null;
+  const disc = courseToDiscipline(group.name);
+  if(!disc) return null;
+  if(disc==='Baby Judo') return 'Judo';
+  if(disc==='Baby Karate') return 'Karate';
+  if(disc==='Kobudo') return 'Aikibudo';
+  return BORDEREAU_SECTIONS.includes(disc) ? disc : null;
+}
+// Regroupe les paiements d'un même bordereau par famille (une ligne par famille) : on utilise le
+// rattachement famille existant (familyId) quand il existe, sinon le nom de famille de la première
+// personne concernée par le paiement — pour que 2 chèques de la même famille (ex: 2 enfants) fusionnent
+// bien sur une seule ligne du bordereau, même sans famille formellement validée dans l'app.
+function paymentBordereauFamilyKey(p){
+  const first = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
+  if(!first) return 'inconnu:'+p.id;
+  if(first.familyId) return 'fam:'+first.familyId;
+  const ln = normalizeForMatch(memberLastName(first)) || normalizeForMatch(first.name);
+  return 'nom:'+ln;
+}
+function paymentBordereauFamilySurname(p){
+  const first = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
+  if(!first) return '—';
+  const ln = memberLastName(first);
+  return (ln || first.name || '—').toUpperCase();
+}
+// Prochain numéro de folio pour une section : compteur persistant, jamais réutilisé (même en cas de
+// suppression/correction ultérieure d'un bordereau).
+function nextBordereauFolio(section){
+  if(!data.settings.bordereauFolioCounters) data.settings.bordereauFolioCounters = {};
+  const next = (data.settings.bordereauFolioCounters[section]||0) + 1;
+  data.settings.bordereauFolioCounters[section] = next;
+  return next;
+}
+// Génère (ou régénère) le bordereau d'encaissement A.M.A.M pour une section. Reprend tous les
+// paiements espèces/chèque/ANCV pas encore inclus dans un bordereau (le Chèque Sport garde son propre
+// PDF d'attestation existant) : si de nouveaux paiements sont en attente, un NOUVEAU folio est
+// consommé et ces paiements y sont rattachés (les chèques encore "à encaisser" passent "encaissé",
+// horodatés à aujourd'hui — générer le bordereau, c'est l'acte de dépôt en banque). Si rien de nouveau
+// n'est en attente, on régénère simplement le dernier bordereau déjà généré pour cette section, sans
+// consommer de nouveau numéro.
+async function generateBordereauPdf(section){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const btn = document.querySelector(`[data-action="generate-bordereau"][data-section="${section}"]`);
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération…'; }
+  try{
+    const pending = (data.payments||[]).filter(p=>
+      ['especes','cheque','ancv'].includes(p.method) &&
+      p.status!=='annule' && p.status!=='rejete' &&
+      !p.bordereauFolio &&
+      paymentBordereauSection(p)===section
+    );
+    let paymentsForDoc, folio, generatedAt;
+    if(pending.length>0){
+      folio = nextBordereauFolio(section);
+      generatedAt = todayStr();
+      pending.forEach(p=>{
+        p.bordereauFolio = folio;
+        p.bordereauSection = section;
+        if(p.method==='cheque' && p.status==='attente'){
+          p.status = 'encaisse';
+          if(!p.encaissedAt) p.encaissedAt = generatedAt;
+        }
+      });
+      if(!data.settings.bordereauLog) data.settings.bordereauLog = [];
+      data.settings.bordereauLog.push({ id: uid(), section, folio, generatedAt, paymentIds: pending.map(p=>p.id) });
+      saveData();
+      renderActiveTab();
+      paymentsForDoc = pending;
+    } else {
+      const log = (data.settings.bordereauLog||[]).filter(l=>l.section===section).sort((a,b)=> b.folio-a.folio)[0];
+      if(!log){ showToast('Aucun paiement en attente pour cette section'); return; }
+      folio = log.folio;
+      generatedAt = log.generatedAt;
+      const ids = new Set(log.paymentIds);
+      paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
+    }
+    // Regroupement par famille (une ligne par famille) : cumul Inscription/Divers/ANCV/espèces/chèque,
+    // et pour les chèques, tous les mois d'encaissement distincts (Date 1/2/3) et le nom du chèque s'il
+    // diffère de l'adhérent.
+    const groups = {};
+    const groupOrder = [];
+    paymentsForDoc.forEach(p=>{
+      const key = paymentBordereauFamilyKey(p);
+      if(!groups[key]){ groups[key] = { surname: paymentBordereauFamilySurname(p), payments: [] }; groupOrder.push(key); }
+      groups[key].payments.push(p);
+    });
+    groupOrder.sort((ka,kb)=> groups[ka].surname.localeCompare(groups[kb].surname, 'fr'));
+    let totInscription=0, totDivers=0, totAncv=0, totEspeces=0, totCheque=0;
+    const rows = groupOrder.map(key=>{
+      const g = groups[key];
+      let inscription=0, divers=0, ancv=0, especes=0, cheque=0;
+      const chequeOwners = new Set();
+      const chequeMonthEntries = [];
+      const diversMotifs = [];
+      const memberNames = new Set();
+      g.payments.forEach(p=>{
+        inscription += p.amountTotal;
+        const diversAmt = p.diversEnabled ? (Number(p.diversAmount)||0) : 0;
+        if(diversAmt>0){ divers += diversAmt; if(p.diversMotif) diversMotifs.push(p.diversMotif); }
+        const methodAmount = Math.round((p.amountTotal + diversAmt)*100)/100;
+        if(p.method==='ancv') ancv += methodAmount;
+        else if(p.method==='especes') especes += methodAmount;
+        else if(p.method==='cheque'){
+          cheque += methodAmount;
+          if(p.payerName && p.payerName.trim()) chequeOwners.add(p.payerName.trim());
+          if(p.cashDate) chequeMonthEntries.push({ date: p.cashDate, label: cashPeriodShortMonth(p.cashDate) });
+        }
+        (p.allocations||[]).forEach(a=>{ const om=data.members.find(x=>x.id===a.memberId); if(om) memberNames.add(om.name); });
+      });
+      totInscription += inscription; totDivers += divers; totAncv += ancv; totEspeces += especes; totCheque += cheque;
+      // Mois d'encaissement distincts, triés chronologiquement (plusieurs chèques échelonnés pour la
+      // même famille) — jusqu'à 3 affichés (Date 1/2/3).
+      chequeMonthEntries.sort((a,b)=> a.date.localeCompare(b.date));
+      const monthsSorted = [...new Set(chequeMonthEntries.map(e=>e.label))];
+      const observations = diversMotifs.length ? `Divers : ${diversMotifs.join(', ')}` : [...memberNames].join(', ');
+      return `<tr>
+        <td><strong>${escapeHtml(g.surname)}</strong></td>
+        <td>${fmtEuro(inscription)}</td>
+        <td>${divers>0 ? fmtEuro(divers) : '—'}</td>
+        <td>${ancv>0 ? fmtEuro(ancv) : '—'}</td>
+        <td>${especes>0 ? fmtEuro(especes) : '—'}</td>
+        <td>${cheque>0 ? fmtEuro(cheque) : '—'}</td>
+        <td>${chequeOwners.size ? `<strong>${escapeHtml([...chequeOwners].join(', '))}</strong>` : '—'}</td>
+        <td>${escapeHtml(monthsSorted[0]||'—')}</td>
+        <td>${escapeHtml(monthsSorted[1]||'—')}</td>
+        <td>${escapeHtml(monthsSorted[2]||'—')}</td>
+        <td>${escapeHtml(observations||'—')}</td>
+      </tr>`;
+    }).join('');
+    const totalRow = `<tr class="bord-total">
+      <td>TOTAL</td><td>${fmtEuro(totInscription)}</td><td>${fmtEuro(totDivers)}</td><td>${fmtEuro(totAncv)}</td><td>${fmtEuro(totEspeces)}</td><td>${fmtEuro(totCheque)}</td>
+      <td colspan="5"></td>
+    </tr>`;
+    const headRow = `<tr><th>Nom</th><th>Inscription</th><th>Divers</th><th>ANCV</th><th>Espèces</th><th>Chèque</th><th>Nom du chèque</th><th>Date 1</th><th>Date 2</th><th>Date 3</th><th>Observations</th></tr>`;
+    const table = groupOrder.length
+      ? `<table class="bordereau-table">${headRow}${rows}${totalRow}</table>`
+      : `<table class="bordereau-table">${headRow}<tr><td colspan="11" style="text-align:center; color:#888; padding:16px 10px;">Aucun paiement.</td></tr></table>`;
+    const meta = `<div class="bd-meta">
+      <div>Section : <strong>${escapeHtml(section)}</strong></div>
+      <div>Date : <strong>${fmtDateShort(generatedAt)||generatedAt}</strong></div>
+      <div>Par : ……………………</div>
+      <div>Folio N° : <strong>${folio}</strong></div>
+    </div>`;
+    const logoImg = document.querySelector('header.topbar .club-logo-light');
+    const logoSrc = logoImg ? logoImg.src : '';
+    const headerHtml = `
+      <div class="recap-header">
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
+        <div>
+          <div class="rh-club">BORDEREAU D'ENCAISSEMENT A.M.A.M</div>
+          <div class="rh-sub">${escapeHtml(data.clubName||'')}</div>
+        </div>
+      </div>
+      ${meta}`;
+    const footer = `<div class="bd-footer">Les chèques seront déposés en banque le 30 du mois.</div>`;
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4', orientation:'landscape' });
+    const margin = 24;
+    await paginateBlocksIntoPdf(pdf, { blocks:[table, footer], headerHtml, containerClass:'recap-doc bordereau-doc', containerWidthPx:1000, margin });
+    pdf.save(`bordereau-encaissement-${section.toLowerCase()}-folio${folio}-${todayStr()}.pdf`);
+    showToast(`Bordereau ${section} — Folio N°${folio} généré`);
   } catch(err){
     showToast('Échec de la génération : ' + (err.message||err));
   } finally {
