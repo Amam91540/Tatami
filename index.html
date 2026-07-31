@@ -487,6 +487,36 @@
 
   #birthday-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:130; padding:16px; overflow:auto; }
   #birthday-overlay.show{ display:flex; align-items:center; justify-content:center; }
+
+  /* Mode "jour de compétition" : écran plein écran, optimisé mobile/tapis — pas une fenêtre modale
+     comme les autres overlays, mais un remplacement complet de l'écran tant qu'il est ouvert. */
+  #compday-overlay{ display:none; position:fixed; inset:0; background:var(--bg); z-index:200; flex-direction:column; }
+  #compday-overlay.show{ display:flex; }
+  .compday-header{ flex-shrink:0; background:var(--surface); border-bottom:1px solid var(--line); padding:12px 14px calc(12px + env(safe-area-inset-bottom, 0px)); box-shadow:0 2px 10px rgba(0,0,0,.06); }
+  .compday-header-top{ display:flex; align-items:center; gap:10px; }
+  .compday-header-top select{ flex:1; padding:11px 10px; font-size:15px; font-weight:600; border-radius:10px; }
+  .compday-close-btn{ flex-shrink:0; width:40px; height:40px; border-radius:10px; border:1px solid var(--line); background:var(--surface-2); color:var(--ink); font-size:18px; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .compday-progress{ margin-top:8px; font-size:12.5px; color:var(--ink-dim); display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .compday-progress-bar{ flex:1; height:6px; border-radius:4px; background:var(--surface-2); overflow:hidden; }
+  .compday-progress-bar-fill{ height:100%; background:var(--tatami); border-radius:4px; transition:width .2s; }
+  .compday-body{ flex:1; overflow-y:auto; padding:14px 14px calc(30px + env(safe-area-inset-bottom, 0px)); -webkit-overflow-scrolling:touch; }
+  .compday-cat-divider{ font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-dim); margin:18px 2px 8px; }
+  .compday-cat-divider:first-child{ margin-top:2px; }
+  .compday-row{ background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  .compday-row.done{ border-color:var(--tatami); box-shadow:0 0 0 1px var(--tatami) inset; }
+  .compday-name{ font-size:17px; font-weight:700; display:flex; align-items:center; gap:8px; }
+  .compday-weight{ margin-top:10px; }
+  .compday-weight select{ width:100%; padding:12px 10px; font-size:15.5px; border-radius:10px; }
+  .compday-results{ display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .compday-result-btn{ flex:1 1 60px; min-width:52px; padding:14px 4px; font-size:15px; font-weight:700; border-radius:10px; border:1px solid var(--line); background:var(--surface-2); color:var(--ink); cursor:pointer; }
+  .compday-result-btn.active{ background:var(--tatami); color:#fff; border-color:var(--tatami); }
+  .compday-result-btn.active.gold{ background:#F0C419; border-color:#C9A227; color:#4A3800; }
+  .compday-result-btn.active.silver{ background:#D7D9DB; border-color:#A8ACAF; color:#3A3D40; }
+  .compday-result-btn.active.bronze{ background:#CD8B4A; border-color:#A8672E; color:#fff; }
+  .compday-points-row{ display:flex; align-items:center; gap:10px; margin-top:10px; }
+  .compday-points-btn{ flex-shrink:0; width:44px; height:44px; border-radius:10px; border:1px solid var(--line); background:var(--surface-2); color:var(--ink); font-size:20px; font-weight:700; cursor:pointer; }
+  .compday-points-input{ flex:1; text-align:center; padding:12px; font-size:20px; font-weight:700; border-radius:10px; }
+  .compday-empty{ text-align:center; color:var(--ink-dim); padding:60px 20px; font-size:14px; }
   #birthday-overlay .bday-card{ background:var(--surface); border:2px solid var(--tatami); border-radius:16px; padding:26px 24px; max-width:420px; width:100%; box-shadow:0 14px 50px rgba(0,0,0,.35); text-align:center; }
   #birthday-overlay .bday-emoji{ font-size:44px; line-height:1; margin-bottom:10px; }
   #birthday-overlay .bday-title{ font-family:'Big Shoulders Display',sans-serif; font-weight:800; font-size:22px; color:var(--ink); margin-bottom:12px; }
@@ -850,6 +880,7 @@
               </button>
             </div>
           </div>
+          <button class="primary" id="openCompDayModeBtn" style="width:100%; margin-top:10px;">🥋 Mode jour de compétition</button>
           <div id="add-result-form" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--line);">
             <div class="row">
               <div style="flex:1">
@@ -1055,11 +1086,13 @@
 <div id="bordereau-preview-overlay"></div>
 <div id="convoc-whatsapp-overlay"></div>
 <div id="birthday-overlay"></div>
+<div id="compday-overlay"></div>
 <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" style="display:none">
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script>
 const BELTS = [
   {c:'#EFEAD9', l:'Blanche'},
@@ -1593,17 +1626,23 @@ function isCommitteeGroup(g){
 }
 // Fonctions disponibles sur une fiche du Comité directeur uniquement (bureau de l'association).
 const COMMITTEE_ROLES = ['Président(e)', 'Président(e) Adjoint(e)', 'Secrétaire', 'Secrétaire Adjoint(e)', 'Trésorier(e)', 'Trésorier(e) Adjointe', 'Secrétaire permanente', 'Membre', 'Professeur', 'Assistant(e)'];
-// Recrée le groupe s'il a disparu (ex: après "Réinitialiser toutes les données", qui vide tous les
-// groupes) — sur le même principe que ensureLicensePendingGroupOnce plus bas : le Comité directeur
-// est une infrastructure permanente de l'appli (fiches liées, export dédié), pas un cours normal
-// qu'on pourrait recréer à la main puisqu'il n'existe pas d'UI de création de cours.
-function ensureComiteDirecteurGroupOnce(){
-  const flag = 'comiteDirecteurGroupCreated_v1';
-  if(data.settings[flag]) return false;
-  const exists = data.groups.some(g=>isCommitteeGroup(g));
-  if(!exists) data.groups.push({ id: uid(), name: 'Comité directeur', recurrence:[] });
-  data.settings[flag] = true;
-  return !exists;
+// Suppression DÉFINITIVE du groupe "Comité directeur" (demande explicite du club) : retire le
+// groupe et toutes les fiches qui y étaient rattachées (fiches liées créées spécifiquement pour ce
+// groupe via createLinkedMemberRecord — la fiche "élève" d'origine de la même personne, dans son
+// vrai cours, n'est jamais touchée, ces fiches étant indépendantes une fois créées, voir plus haut).
+// Volontairement SANS drapeau "une bonne fois pour toutes" — cette fonction se relance à chaque
+// chargement (coût négligeable) pour rattraper aussi une réapparition du groupe après fusion avec un
+// appareil pas encore synchronisé qui en aurait recréé un (ancien ensureComiteDirecteurGroupOnce, ou
+// renameExportGroupToComiteDirecteurOnce, sur un appareil dont le drapeau ne serait pas à jour).
+function removeComiteDirecteurGroupPermanently(){
+  const groups = data.groups.filter(g=>isCommitteeGroup(g));
+  if(groups.length===0) return false;
+  const groupIds = new Set(groups.map(g=>g.id));
+  data.members.filter(m=>groupIds.has(m.groupId)).forEach(m=> markDeleted('members', m.id));
+  data.members = data.members.filter(m=>!groupIds.has(m.groupId));
+  groups.forEach(g=> markDeleted('groups', g.id));
+  data.groups = data.groups.filter(g=>!groupIds.has(g.id));
+  return true;
 }
 
 // Le fichier Excel de préparation d'import contient un onglet "export" (toutes les lignes, avant
@@ -1639,6 +1678,26 @@ function ensureLicensePendingGroupOnce(){
   if(!exists) data.groups.push({ id: uid(), name: 'Licence à prendre', recurrence:[] });
   data.settings[flag] = true;
   return !exists;
+}
+// Fusionne les doublons d'un groupe spécial (identifié par son nom via `predicate`), apparus quand 2
+// appareils créent chacun le leur (ex: ensureLicensePendingGroupOnce) avant de s'être jamais
+// synchronisés entre eux — chacun avec son propre id, la fusion serveur par id les garde tous les
+// deux au lieu d'en garder un seul. Garde le premier trouvé (le plus ancien dans l'ordre du
+// tableau), reporte tous les élèves des autres vers celui-ci, puis supprime les groupes en trop.
+// Volontairement SANS drapeau "une bonne fois pour toutes" : se relance à chaque chargement (coût
+// négligeable sur une poignée de groupes) pour rattraper aussi un doublon apparu après coup.
+function dedupeSpecialGroup(predicate){
+  const matches = data.groups.filter(predicate);
+  if(matches.length<=1) return false;
+  const canonical = matches[0];
+  const extras = matches.slice(1);
+  extras.forEach(g=>{
+    data.members.forEach(m=>{ if(m.groupId===g.id) m.groupId = canonical.id; });
+    markDeleted('groups', g.id);
+  });
+  const extraIds = new Set(extras.map(g=>g.id));
+  data.groups = data.groups.filter(g=>!extraIds.has(g.id));
+  return true;
 }
 // La saison "qui arrive" au sens du club : toujours celle qui suit la saison en cours (ex: en
 // 2025-2026, la prochaine est 2026-2027), recalculée à chaque appel — jamais figée en dur — pour que
@@ -1697,8 +1756,9 @@ function applyDataInvariants(){
   if(cleanupUnvalidatedSessions()){ saveData(); }
   if(seedVeteranCalendar2026Once()){ saveData(); }
   if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
-  if(ensureComiteDirecteurGroupOnce()){ saveData(); }
+  if(removeComiteDirecteurGroupPermanently()){ saveData(); }
   if(ensureLicensePendingGroupOnce()){ saveData(); }
+  if(dedupeSpecialGroup(isLicensePendingGroup)){ saveData(); }
   if(renamePoussinetsToMiniPoussins()){ saveData(); }
   if(renumberBordereauFoliosIfDuplicated()){ saveData(); }
   if(ensureBordereauFolioCounterConsistency()){ saveData(); }
@@ -2128,6 +2188,14 @@ function recipientsInSeasonView(list){
 // recherche d'élève dans le formulaire de stage étant elle-même filtrée par vue).
 function stageInSeasonView(s){
   return (s.participants||[]).some(p=> memberMatchesSeasonView(p.memberId));
+}
+// Même principe pour un événement de convocation (data.convocEvents[]) : "appartient" à la vue
+// actuellement affichée si au moins un de ses destinataires en fait partie (voir recipientsInSeasonView).
+// Utilisé pour filtrer les listes d'événements (convocation en cours/archive, historique des résultats)
+// — sans ça, une compétition qui ne concerne que la saison en cours (ou l'inverse) ressortirait quand
+// même dans l'autre vue, vide ou avec les mauvais destinataires mélangés.
+function eventInSeasonView(ev){
+  return recipientsInSeasonView(ev.recipients).length>0;
 }
 // Un paiement "appartient" à une vue (saison en cours / saison à venir) selon la fiche à qui il est
 // rattaché (1ère personne de la répartition, même convention que paymentBordereauSection) — chaque
@@ -3128,7 +3196,7 @@ function renderBeltPassageSection(){
   if(!wrap) return;
   const hidden = loadBeltPassageHidden();
   if(!ui.beltPassageGroupFilter) ui.beltPassageGroupFilter = 'all';
-  const eligible = data.members.filter(m=> !m.archived && m.belt !== 'noire' && !memberHasPassageThisSeason(m.id) && !memberInNoBeltCourse(m))
+  const eligible = data.members.filter(m=> !m.archived && !!m.forNextSeason===isViewingNextSeason() && m.belt !== 'noire' && !memberHasPassageThisSeason(m.id) && !memberInNoBeltCourse(m))
     .filter(m=> ui.beltPassageGroupFilter==='all' || m.groupId===ui.beltPassageGroupFilter)
     .sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
 
@@ -3873,7 +3941,11 @@ function familySuggestionKey(memberIds){
 // Ne valide RIEN automatiquement — chaque groupe doit être confirmé (ou corrigé) à la main.
 function findFamilySuggestions(){
   const dismissed = new Set(data.settings.dismissedFamilySuggestions||[]);
-  const candidates = data.members.filter(m=>!m.archived && !m.familyId);
+  // Cloisonnement par saison (voir cotisationsScopedMembers) : on ne détecte des familles probables
+  // qu'entre fiches de la vue actuellement affichée — sinon une fiche "saison en cours" et sa fiche
+  // liée "saison à venir" (même personne, 2 enregistrements) ressortiraient comme 2 personnes d'une
+  // même famille, et un élève d'une autre saison pourrait apparaître dans un groupe qui ne le concerne pas.
+  const candidates = cotisationsScopedMembers().filter(m=>!m.familyId);
   const byLastName = {};
   const byAddress = {};
   candidates.forEach(m=>{
@@ -3955,6 +4027,20 @@ function familyMembers(familyId){
   if(!familyId) return [];
   return data.members.filter(m=>m.familyId===familyId && !m.archived);
 }
+// Une fiche est "en attente" tant qu'elle n'a pas été validée pour la saison en préparation : elle
+// est toujours dans le groupe spécial "Licence à prendre" (voir prepareNextSeasonLicenses / le bouton
+// "✓ Valider" sur la fiche). Un élève en attente n'est pas encore réellement (ré)inscrit.
+function isMemberLicensePending(m){
+  if(!m) return false;
+  return isLicensePendingGroup(data.groups.find(g=>g.id===m.groupId));
+}
+// Membres de la même famille que m, encore en attente de validation ("Licence à prendre"), cantonné
+// à la même saison que m (un frère/sœur "saison en cours" ne doit pas impacter le calcul d'une fiche
+// "saison à venir", et inversement — voir cotisationsScopedMembers).
+function familyPendingMembers(m){
+  if(!m || !m.familyId) return [];
+  return familyMembers(m.familyId).filter(fm=> !!fm.forNextSeason===!!m.forNextSeason && isMemberLicensePending(fm));
+}
 // Retire un membre de sa famille (dissociation) sans toucher aux autres membres de cette famille.
 function removeMemberFromFamily(memberId){
   const m = data.members.find(x=>x.id===memberId);
@@ -3978,6 +4064,20 @@ function memberExpectedFee(m){
     const details = mutualizedFeeDetails(m, dupGroup);
     if(details.error) return { amount: null, source:'error', error: details.error };
     return { amount: details.total, source:'grille', details };
+  }
+  // Famille avec au moins un membre pas encore validé (toujours dans "Licence à prendre") : tant que
+  // la famille n'est pas au complet, chacun des membres déjà validés paie comme s'il était seul (le
+  // rang p1..p4 est recalculé uniquement parmi les membres déjà validés, sans tenir compte du rang
+  // figé sur la fiche) — pas d'avantage tarifaire familial partiel. Dès que le dernier membre valide
+  // sa licence, le tarif famille normal (rang stocké sur chaque fiche) s'applique de nouveau.
+  const familyPending = familyPendingMembers(m);
+  if(familyPending.length && !isMemberLicensePending(m)){
+    const validatedFam = familyMembers(m.familyId).filter(fm=> !!fm.forNextSeason===!!m.forNextSeason && !isMemberLicensePending(fm));
+    const assignment = optimalFamilyRankAssignment(validatedFam);
+    const rank = (assignment.find(a=>a.memberId===m.id)||{}).feeRank || 'p1';
+    const details = memberFeeDetails(m, rank);
+    if(details.error) return { amount: null, source:'error', error: details.error, familyPending };
+    return { amount: details.total, source:'grille', details, familyPending };
   }
   const details = memberFeeDetails(m, m.feeRank||'p1');
   if(details.error) return { amount: null, source:'error', error: details.error };
@@ -4113,14 +4213,17 @@ function cashPeriodSelectOptions(extraDateStr){
 // qu'elle seule côté "non rattachés", donc plus aucun groupe d'au moins 2 personnes à suggérer.
 function findFamilyMergeSuggestions(){
   const dismissed = new Set(data.settings.dismissedFamilySuggestions||[]);
-  const unlinked = data.members.filter(m=>!m.archived && !m.familyId);
+  // Même cloisonnement par saison que findFamilySuggestions ci-dessus : ni le candidat non rattaché,
+  // ni les membres de la famille déjà validée auxquels on le compare, ne doivent sortir de la vue
+  // actuellement affichée (saison en cours, ou saison à venir si ce bandeau est sélectionné).
+  const unlinked = cotisationsScopedMembers().filter(m=>!m.familyId);
   const families = Object.values(data.settings.familyGroups||{});
   const suggestions = [];
   unlinked.forEach(m=>{
     const ln = normalizeForMatch(memberLastName(m));
     const ak = memberAddressKey(m);
     families.forEach(fam=>{
-      const famMembers = familyMembers(fam.id);
+      const famMembers = familyMembers(fam.id).filter(fm=> memberMatchesSeasonView(fm.id));
       if(famMembers.length===0) return;
       const nameMatch = !!ln && famMembers.some(fm=> normalizeForMatch(memberLastName(fm))===ln);
       const addrMatch = !!ak && famMembers.some(fm=> memberAddressKey(fm)===ak);
@@ -4278,11 +4381,15 @@ function dissolveFamily(familyId){
 function renderFamilyGroupsCard(){
   const wrap = document.getElementById('family-groups-card');
   if(!wrap) return;
-  const families = Object.values(data.settings.familyGroups||{}).filter(f=>familyMembers(f.id).length>0);
+  // Cloisonnement par saison : une famille validée n'est affichée dans la vue actuelle que si elle
+  // compte au moins un membre appartenant à cette vue, et seuls ces membres-là sont listés (voir
+  // cotisationsScopedMembers/memberMatchesSeasonView) — sinon une famille de la saison en cours
+  // ressortirait aussi en "saison à venir" et inversement.
+  const families = Object.values(data.settings.familyGroups||{}).filter(f=>familyMembers(f.id).some(m=>memberMatchesSeasonView(m.id)));
   if(families.length===0){ wrap.innerHTML = ''; return; }
-  const addableMembers = data.members.filter(m=>!m.archived && !m.familyId).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+  const addableMembers = cotisationsScopedMembers().filter(m=>!m.familyId).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
   const rows = families.map(f=>{
-    const members = familyMembers(f.id).sort((a,b)=> (a.feeRank||'p1').localeCompare(b.feeRank||'p1'));
+    const members = familyMembers(f.id).filter(m=>memberMatchesSeasonView(m.id)).sort((a,b)=> (a.feeRank||'p1').localeCompare(b.feeRank||'p1'));
     const membersHtml = members.map(m=>{
       const due = memberRemainingDue(m);
       return `<div style="display:flex; justify-content:space-between; gap:8px; padding:3px 0; font-size:13px;">
@@ -4753,6 +4860,7 @@ function renderMemberCotisationOverlay(memberId){
     <div class="rio-card">
       <h2 style="margin-top:0;">Cotisation — ${escapeHtml(m.name)}</h2>
       ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
+      ${due.expected.familyPending && due.expected.familyPending.length ? `<p style="font-size:12.5px; background:#FFF6E0; border:1px solid #E8C468; color:#8a6a1a; border-radius:8px; padding:8px 10px; margin:0 0 10px; line-height:1.5;">⚠️ Attention, ${due.expected.familyPending.map(p=>`<strong>${escapeHtml(p.name)}</strong>`).join(' et ')} ${due.expected.familyPending.length>1?'ne sont pas encore inscrit(e)s':"n'est pas encore inscrit(e)"} (fiche encore dans « Licence à prendre »). En attendant, ${escapeHtml(m.name)} est facturé(e) comme si elle/il était seul(e) — le tarif famille reviendra automatiquement dès que tout le monde aura validé sa licence.</p>` : ''}
       ${(()=>{
         // Même personne inscrite à 2 disciplines (doublon validé) : détail par discipline +
         // total combiné, en plus (pas à la place) du bloc famille éventuel ci-dessus.
@@ -6659,18 +6767,17 @@ function findDuplicateMemberSets(){
   });
   return [...byKey.values()].map(dedupeLinkedSeasonPairs).filter(list=>list.length>1);
 }
-// Retire d'un groupe de fiches "même nom + même date de naissance" celles qui sont en réalité la
-// fiche "saison à venir" d'une fiche "saison en cours" déjà présente dans ce même groupe (couple lié
-// via member.forNextSeason + linkedMemberId, voir prepareNextSeasonLicenses) : c'est un seul et même
-// élève réparti sur 2 saisons distinctes, pas 2 fiches en double — ne doit jamais déclencher l'alerte
-// "Élèves en double détectés" ni l'overlay de fusion.
+// Retire d'un groupe de fiches "même nom + même date de naissance" celles qui appartiennent à la
+// saison à venir (member.forNextSeason) dès lors qu'une fiche de la saison en cours existe aussi
+// dans ce groupe : une fiche d'une saison et une fiche de l'autre saison sont FORCÉMENT 2 fiches
+// distinctes (jamais un doublon), qu'elles soient ou non liées via linkedMemberId — le lien peut
+// se rompre (validate-license, import qui recrée une fiche sans passer par "Préparer la saison"...)
+// sans que ça change la règle. Ne doit jamais déclencher l'alerte "Élèves en double détectés" ni
+// l'overlay de fusion pour une paire à cheval sur 2 saisons.
 function dedupeLinkedSeasonPairs(list){
-  const linkedNextSeasonIds = new Set(
-    list.filter(m=> m.forNextSeason && m.linkedMemberId
-      && list.some(o=> o.id===m.linkedMemberId && o.linkedMemberId===m.id))
-      .map(m=>m.id)
-  );
-  return list.filter(m=> !linkedNextSeasonIds.has(m.id));
+  const hasCurrentSeasonMember = list.some(m=>!m.forNextSeason);
+  if(!hasCurrentSeasonMember) return list;
+  return list.filter(m=> !m.forNextSeason);
 }
 
 // Clé de dédoublonnage d'un élève (nom de famille + date de naissance) — identique à celle utilisée
@@ -9325,7 +9432,13 @@ function genToken(){
   return uid()+uid()+uid()+uid();
 }
 function findOrCreateConvocEvent(name, date){
-  let ev = data.convocEvents.find(e=> e.name.trim().toLowerCase()===name.trim().toLowerCase());
+  // Cloisonné par saison : on ne réutilise un événement existant du même nom que s'il appartient déjà
+  // à la vue actuellement affichée, ou n'a encore aucun destinataire (tout juste créé, pas encore
+  // rattaché à une saison) — sinon une compétition récurrente d'une saison à l'autre (même nom chaque
+  // année) mélangerait dans le même objet des destinataires de la saison en cours et de la saison à
+  // venir (voir eventInSeasonView). Si un événement du même nom existe déjà pour l'autre saison, on en
+  // crée un second, distinct, pour la vue actuelle.
+  let ev = data.convocEvents.find(e=> e.name.trim().toLowerCase()===name.trim().toLowerCase() && (e.recipients.length===0 || eventInSeasonView(e)));
   if(!ev){
     ev = { id: uid(), name: name.trim(), date: date||'', createdAt: todayStr(), recipients: [] };
     data.convocEvents.push(ev);
@@ -9348,7 +9461,7 @@ function getOrCreateRecipientToken(ev, member){
 async function ensureConvocEvent(members){
   const eventName = document.getElementById('convocEvent').value.trim() || 'Convocation';
   const date = document.getElementById('convocDate').value;
-  const existing = data.convocEvents.find(e=> e.name.trim().toLowerCase()===eventName.trim().toLowerCase());
+  const existing = data.convocEvents.find(e=> e.name.trim().toLowerCase()===eventName.trim().toLowerCase() && (e.recipients.length===0 || eventInSeasonView(e)));
   const dateChanged = !existing || (date && existing.date!==date);
   if(dateChanged && !(await confirmIfSeasonMismatch(date))) return null;
   const ev = findOrCreateConvocEvent(eventName, date);
@@ -9803,7 +9916,11 @@ function renderConvocTab(){
 
   const eventSel = document.getElementById('convocEventSel');
   const currentEventName = document.getElementById('convocEvent').value.trim();
-  const sortedEvents = [...data.convocEvents].filter(ev=>!ev.archived).sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+  // Cloisonné par saison (voir eventInSeasonView) : on ne propose de réutiliser que les événements
+  // qui concernent déjà la vue actuellement affichée — sinon un événement de la saison en cours
+  // pourrait être réutilisé en "saison à venir" et mélanger des destinataires des 2 saisons dans le
+  // même objet ev.recipients.
+  const sortedEvents = [...data.convocEvents].filter(ev=>!ev.archived && eventInSeasonView(ev)).sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
   eventSel.innerHTML = `<option value="">— Nouvel événement —</option>` + sortedEvents.map(ev=>`<option value="${escapeHtml(ev.name)}" ${ev.name===currentEventName?'selected':''}>${escapeHtml(ev.name)}</option>`).join('');
   eventSel.onchange = ()=>{
     if(eventSel.value){
@@ -10868,10 +10985,10 @@ function eventHasMissingResults(ev){
   const oneDayAfter = new Date(ev.date+'T00:00:00');
   oneDayAfter.setDate(oneDayAfter.getDate()+1);
   if(new Date() < oneDayAfter) return false;
-  return ev.recipients.some(r=> r.response==='present' && !r.result);
+  return recipientsInSeasonView(ev.recipients).some(r=> r.response==='present' && !r.result);
 }
   function allResultsFilledForEvent(ev){
-  const presents = (ev.recipients||[]).filter(r=>r.response==='present');
+  const presents = recipientsInSeasonView(ev.recipients||[]).filter(r=>r.response==='present');
   if(presents.length===0) return false;
   return presents.every(r=> !!(r.result && String(r.result).trim()));
 }
@@ -10908,7 +11025,8 @@ function saveResultsHistoryHidden(val){ resultsHistoryVisibility.set(val); }
 function renderResultsHistoryCard(){
   const wrap = document.getElementById('results-history-card');
   if(!wrap) return;
-  const archived = (data.convocEvents||[]).filter(ev=>ev.resultsArchived).sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  // Cloisonné par saison (voir eventInSeasonView).
+  const archived = (data.convocEvents||[]).filter(ev=>ev.resultsArchived && eventInSeasonView(ev)).sort((a,b)=> (b.date||'').localeCompare(a.date||''));
   const hidden = loadResultsHistoryHidden();
   const selectedId = ui.resultsHistorySelectedId && archived.some(ev=>ev.id===ui.resultsHistorySelectedId) ? ui.resultsHistorySelectedId : '';
   ui.resultsHistorySelectedId = selectedId;
@@ -10954,7 +11072,7 @@ function renderResultsHistoryCard(){
   attachResultsHistoryDetailHandlers();
 }
 function renderResultsHistoryDetail(ev){
-  const presents = ev.recipients.filter(r=>r.response==='present');
+  const presents = recipientsInSeasonView(ev.recipients).filter(r=>r.response==='present');
   return `
     <div class="meta" style="margin-bottom:8px;">${ev.date?fmtDate(ev.date):''}${ev.ville?' — '+escapeHtml(ev.ville):''} · ${presents.length} participant${presents.length===1?'':'s'}</div>
     <div class="row" style="margin-bottom:10px;">
@@ -11022,7 +11140,8 @@ function renderResultsTab(){
   const sel = document.getElementById('resultsEventSel');
   if(!sel) return;
   renderResultsDashboard();
-  const events = [...(data.convocEvents||[])].filter(ev=>!ev.resultsArchived).sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
+  // Cloisonné par saison (voir eventInSeasonView).
+  const events = [...(data.convocEvents||[])].filter(ev=>!ev.resultsArchived && eventInSeasonView(ev)).sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
   const prev = ui.resultsEventId;
   if(events.length===0){
     sel.innerHTML = '<option value="">Aucun événement pour l’instant</option>';
@@ -11040,6 +11159,7 @@ function renderResultsTab(){
   if(ui.resultsSelectedMemberId) renderPalmares();
 
   document.getElementById('downloadEventPdfBtn').onclick = generateEventResultsPdf;
+  document.getElementById('openCompDayModeBtn').onclick = openCompetitionDayMode;
   document.getElementById('shareSocialVisualBtn').onclick = ()=> generateSocialMediaVisual(ui.resultsEventId);
   document.getElementById('downloadPalmaresPdfBtn').onclick = ()=> generateMemberPalmaresPdf();
   document.getElementById('generateRecapPdfBtn').onclick = generateMonthlyRecapPdf;
@@ -11351,7 +11471,7 @@ function initAddResultForm(){
     if(!ui.addResultMatchedMemberId){ showToast('Tape le nom d’un élève et choisis-le dans la liste proposée'); return; }
     const member = data.members.find(m=>m.id===ui.addResultMatchedMemberId);
     if(!member) return;
-    const existingResultEvent = data.convocEvents.find(e=> e.name.trim().toLowerCase()===nameVal.trim().toLowerCase());
+    const existingResultEvent = data.convocEvents.find(e=> e.name.trim().toLowerCase()===nameVal.trim().toLowerCase() && (e.recipients.length===0 || eventInSeasonView(e)));
     const resultDateChanged = !existingResultEvent || (dateVal && existingResultEvent.date!==dateVal);
     if(resultDateChanged && !(await confirmIfSeasonMismatch(dateVal))) return;
     const shiai = isShiaiEvent(nameVal);
@@ -11487,8 +11607,9 @@ function renderAddResultParticipantsList(eventId){
   const wrap = document.getElementById('add-result-participants-list');
   if(!wrap) return;
   const ev = eventId ? data.convocEvents.find(e=>e.id===eventId) : null;
-  if(!ev || ev.recipients.length===0){ wrap.innerHTML=''; return; }
-  wrap.innerHTML = `<label class="small">Déjà ajoutés à « ${escapeHtml(ev.name)} » (${ev.recipients.length})</label>` + ev.recipients.map(r=>`
+  const evRecipients = ev ? recipientsInSeasonView(ev.recipients) : [];
+  if(!ev || evRecipients.length===0){ wrap.innerHTML=''; return; }
+  wrap.innerHTML = `<label class="small">Déjà ajoutés à « ${escapeHtml(ev.name)} » (${evRecipients.length})</label>` + evRecipients.map(r=>`
     <div class="convoc-row">
       <div class="info"><div class="n">${nameWithBoldSurname(r.name)}</div></div>
       <span class="tag">${r.result ? escapeHtml(r.result) : 'sans résultat'}</span>
@@ -11682,6 +11803,212 @@ function renderResultsList(){
   });
 }
 
+/* ---------------- MODE JOUR DE COMPÉTITION ---------------- */
+// Écran plein écran, optimisé mobile/tapis : juste la liste des présents avec poids + résultat à
+// cocher au fur et à mesure, sans naviguer dans le reste de l'app. Réutilise exactement les mêmes
+// données que l'onglet Résultats (ev.recipients, recipientsInSeasonView, RESULT_PLACEMENT_OPTIONS,
+// buildWeightFieldHtml, isShiaiEvent, getMemberLastWeight...) — c'est la même source de vérité, donc
+// un résultat saisi ici apparaît immédiatement dans l'onglet Résultats classique, et inversement.
+function competitionDayEligibleEvents(){
+  return [...(data.convocEvents||[])].filter(ev=>!ev.resultsArchived && eventInSeasonView(ev))
+    .sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
+}
+function openCompetitionDayMode(){
+  const overlay = document.getElementById('compday-overlay');
+  if(!overlay) return;
+  if(!ui.compDayEventId || !data.convocEvents.some(e=>e.id===ui.compDayEventId)){
+    ui.compDayEventId = ui.resultsEventId || null;
+  }
+  renderCompetitionDayMode();
+  overlay.classList.add('show');
+}
+function closeCompetitionDayMode(){
+  const overlay = document.getElementById('compday-overlay');
+  if(!overlay) return;
+  overlay.classList.remove('show');
+  overlay.innerHTML = '';
+  // Les deux écrans partagent les mêmes données : on aligne l'onglet Résultats classique sur
+  // l'événement consulté ici, au cas où il diffère, puis on rafraîchit pour refléter les saisies.
+  if(ui.compDayEventId) ui.resultsEventId = ui.compDayEventId;
+  renderActiveTab();
+}
+function compdayUpdateProgress(){
+  const bar = document.querySelector('#compday-overlay .compday-progress-bar-fill');
+  const label = document.querySelector('#compday-overlay .compday-progress-label');
+  const body = document.querySelector('#compday-overlay .compday-body');
+  if(!bar || !label || !body) return;
+  const total = body.querySelectorAll('.compday-row').length;
+  const done = body.querySelectorAll('.compday-row.done').length;
+  label.textContent = `${done}/${total} résultat${total===1?'':'s'} saisi${total===1?'':'s'}`;
+  bar.style.width = (total ? Math.round(done/total*100) : 0) + '%';
+}
+function renderCompetitionDayMode(){
+  const overlay = document.getElementById('compday-overlay');
+  if(!overlay) return;
+  const events = competitionDayEligibleEvents();
+  const ev = events.find(e=>e.id===ui.compDayEventId) || null;
+  if(ev) ui.compDayEventId = ev.id;
+
+  const eventSelectHtml = events.length===0
+    ? `<option value="">Aucun événement pour l'instant</option>`
+    : `<option value="">— Choisir un événement —</option>` + events.map(e=>`<option value="${e.id}" ${ev && e.id===ev.id?'selected':''}>${escapeHtml(e.name)}${e.date?' — '+fmtDate(e.date):''}</option>`).join('');
+
+  let bodyHtml = '';
+  let totalCount = 0, doneCount = 0;
+  if(!ev){
+    bodyHtml = `<div class="compday-empty">${events.length===0 ? "Aucun événement actif — crée d'abord une compétition depuis l'onglet Convocations." : "Choisis un événement ci-dessus pour commencer."}</div>`;
+  } else {
+    const presents = recipientsInSeasonView(ev.recipients).filter(r=>r.response==='present');
+    totalCount = presents.length;
+    if(presents.length===0){
+      bodyHtml = `<div class="compday-empty">Personne n'a encore répondu présent(e) à cet événement.</div>`;
+    } else {
+      const shiai = isShiaiEvent(ev.name);
+      const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+      // Même pré-remplissage automatique du poids que dans l'onglet Résultats classique.
+      let changed = false;
+      if(shiai){
+        presents.forEach(r=>{ if(r.weight !== 'Poule morphologique'){ r.weight = 'Poule morphologique'; changed = true; } });
+      } else {
+        presents.forEach(r=>{
+          if(!r.weight){
+            const suggested = getMemberLastWeight(r.memberId, ev.date, ev.id);
+            if(suggested){ r.weight = suggested; changed = true; }
+          }
+        });
+      }
+      if(changed) saveData();
+      const sorted = [...presents].sort((a,b)=>{
+        const ra = categoryRank(birthDateOf(a)), rb = categoryRank(birthDateOf(b));
+        if(ra.bandIdx !== rb.bandIdx) return ra.bandIdx - rb.bandIdx;
+        if(ra.suffix !== rb.suffix) return ra.suffix - rb.suffix;
+        return memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr');
+      });
+      let lastCat = null;
+      sorted.forEach(r=>{
+        const done = !!(r.result && String(r.result).trim());
+        if(done) doneCount++;
+        const cat = groupedCategoryLabel(birthDateOf(r));
+        if(cat !== lastCat){ bodyHtml += `<div class="compday-cat-divider">${escapeHtml(cat)}</div>`; lastCat = cat; }
+        const resultHtml = shiai
+          ? `<div class="compday-points-row">
+               <button type="button" class="compday-points-btn" data-action="compday-points-step" data-event="${ev.id}" data-member="${r.memberId}" data-dir="-1">−</button>
+               <input type="text" inputmode="numeric" class="compday-points-input" data-action="compday-edit-result" data-event="${ev.id}" data-member="${r.memberId}" value="${escapeHtml(r.result||'')}" placeholder="0">
+               <button type="button" class="compday-points-btn" data-action="compday-points-step" data-event="${ev.id}" data-member="${r.memberId}" data-dir="1">+</button>
+             </div>`
+          : `<div class="compday-results">
+               ${RESULT_PLACEMENT_OPTIONS.map(o=>{
+                 const isActive = String(r.result||'')===o;
+                 const medalClass = o==='1'?'gold':o==='2'?'silver':o==='3'?'bronze':'';
+                 return `<button type="button" class="compday-result-btn ${isActive?'active '+medalClass:''}" data-action="compday-set-result" data-event="${ev.id}" data-member="${r.memberId}" data-value="${o}">${o}</button>`;
+               }).join('')}
+             </div>`;
+        bodyHtml += `
+        <div class="compday-row ${done?'done':''}" data-row-member="${r.memberId}">
+          <div class="compday-name"><span class="compday-check">${done?'✅ ':''}</span>${nameWithBoldSurname(r.name)}</div>
+          <div class="compday-weight">${buildWeightFieldHtml(birthDateOf(r), r.weight||'', `data-action="compday-edit-weight" data-event="${ev.id}" data-member="${r.memberId}"`, shiai)}</div>
+          ${resultHtml}
+        </div>`;
+      });
+    }
+  }
+
+  overlay.innerHTML = `
+    <div class="compday-header">
+      <div class="compday-header-top">
+        <select id="compdayEventSel">${eventSelectHtml}</select>
+        <button type="button" class="compday-close-btn" id="compdayCloseBtn">✕</button>
+      </div>
+      ${ev && totalCount>0 ? `
+      <div class="compday-progress">
+        <span class="compday-progress-label">${doneCount}/${totalCount} résultat${totalCount===1?'':'s'} saisi${totalCount===1?'':'s'}</span>
+        <div class="compday-progress-bar"><div class="compday-progress-bar-fill" style="width:${Math.round(doneCount/totalCount*100)}%;"></div></div>
+      </div>` : ''}
+    </div>
+    <div class="compday-body">${bodyHtml}</div>
+  `;
+
+  document.getElementById('compdayCloseBtn').onclick = closeCompetitionDayMode;
+  const eventSel = document.getElementById('compdayEventSel');
+  if(eventSel) eventSel.onchange = (e)=>{ ui.compDayEventId = e.target.value || null; renderCompetitionDayMode(); };
+
+  // Mises à jour ciblées (pas de re-rendu complet de la liste à chaque tap) pour ne pas faire sauter
+  // le scroll pendant la saisie sur le tapis — seule la ligne et la barre de progression bougent.
+  overlay.querySelectorAll('[data-action="compday-set-result"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const evObj = data.convocEvents.find(x=>x.id===btn.dataset.event);
+      const rec = evObj && evObj.recipients.find(x=>x.memberId===btn.dataset.member);
+      if(!rec) return;
+      rec.result = (rec.result===btn.dataset.value) ? '' : btn.dataset.value;
+      saveData();
+      const row = btn.closest('.compday-row');
+      if(row){
+        row.querySelectorAll('.compday-result-btn').forEach(b=>{
+          const active = b.dataset.value===rec.result;
+          b.classList.toggle('active', active);
+          b.classList.toggle('gold', active && b.dataset.value==='1');
+          b.classList.toggle('silver', active && b.dataset.value==='2');
+          b.classList.toggle('bronze', active && b.dataset.value==='3');
+        });
+        const done = !!(rec.result && String(rec.result).trim());
+        row.classList.toggle('done', done);
+        const check = row.querySelector('.compday-check');
+        if(check) check.textContent = done ? '✅ ' : '';
+      }
+      compdayUpdateProgress();
+      if(ui.resultsSelectedMemberId===rec.memberId) renderPalmares();
+    });
+  });
+  overlay.querySelectorAll('[data-action="compday-edit-result"]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const evObj = data.convocEvents.find(x=>x.id===inp.dataset.event);
+      const rec = evObj && evObj.recipients.find(x=>x.memberId===inp.dataset.member);
+      if(!rec) return;
+      rec.result = inp.value.trim();
+      saveData();
+      const row = inp.closest('.compday-row');
+      if(row){
+        const done = !!(rec.result && String(rec.result).trim());
+        row.classList.toggle('done', done);
+        const check = row.querySelector('.compday-check');
+        if(check) check.textContent = done ? '✅ ' : '';
+      }
+      compdayUpdateProgress();
+      if(ui.resultsSelectedMemberId===rec.memberId) renderPalmares();
+    });
+  });
+  overlay.querySelectorAll('[data-action="compday-points-step"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const evObj = data.convocEvents.find(x=>x.id===btn.dataset.event);
+      const rec = evObj && evObj.recipients.find(x=>x.memberId===btn.dataset.member);
+      if(!rec) return;
+      const current = parseInt(rec.result,10) || 0;
+      const next = Math.max(0, current + (Number(btn.dataset.dir)||0));
+      rec.result = String(next);
+      saveData();
+      const row = btn.closest('.compday-row');
+      if(row){
+        const input = row.querySelector('[data-action="compday-edit-result"]');
+        if(input) input.value = rec.result;
+        row.classList.toggle('done', true);
+        const check = row.querySelector('.compday-check');
+        if(check) check.textContent = '✅ ';
+      }
+      compdayUpdateProgress();
+      if(ui.resultsSelectedMemberId===rec.memberId) renderPalmares();
+    });
+  });
+  overlay.querySelectorAll('[data-action="compday-edit-weight"]').forEach(sel=>{
+    sel.addEventListener('change', ()=>{
+      const evObj = data.convocEvents.find(x=>x.id===sel.dataset.event);
+      const rec = evObj && evObj.recipients.find(x=>x.memberId===sel.dataset.member);
+      if(!rec) return;
+      rec.weight = sel.value.trim();
+      saveData();
+    });
+  });
+}
+
 function renderResultsSearchList(query){
   const listWrap = document.getElementById('results-search-list');
   if(!query){ listWrap.innerHTML = ''; return; }
@@ -11839,7 +12166,7 @@ async function generateMemberPalmaresPdf(memberId){
 }
 
 function unrespondedTooltip(ev){
-  const names = ev.recipients.filter(r=>!r.response).map(r=>displayNameOrder(r.name));
+  const names = recipientsInSeasonView(ev.recipients).filter(r=>!r.response).map(r=>displayNameOrder(r.name));
   const n = names.length;
   if(n===0) return '';
   if(n<=5){
@@ -11849,10 +12176,13 @@ function unrespondedTooltip(ev){
   return `Au moins 6 élèves n'ont pas répondu.`;
 }
 function eventMetaLine(ev){
-  const total = ev.recipients.length;
-  const opened = ev.recipients.filter(r=>r.opened).length;
-  const present = ev.recipients.filter(r=>r.response==='present').length;
-  const absent = ev.recipients.filter(r=>r.response==='absent').length;
+  // Cloisonné par saison (voir recipientsInSeasonView) : les compteurs ne portent que sur les
+  // destinataires de la vue actuellement affichée.
+  const recipients = recipientsInSeasonView(ev.recipients);
+  const total = recipients.length;
+  const opened = recipients.filter(r=>r.opened).length;
+  const present = recipients.filter(r=>r.response==='present').length;
+  const absent = recipients.filter(r=>r.response==='absent').length;
   const openedPart = ev.emailSent ? ` · ${opened} ouvert${opened===1?'':'s'}` : '';
   return `${ev.date?fmtDate(ev.date)+' — ':''}${total} convoqué${total===1?'':'s'}${openedPart} · ✅ ${present} · ❌ ${absent}`;
 }
@@ -11860,7 +12190,7 @@ function eventMetaLine(ev){
 function buildEventRecipientsHtml(ev){
   const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
   const beltOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.belt : null; };
-  const sortedRecipients = [...ev.recipients].sort((a,b)=>{
+  const sortedRecipients = recipientsInSeasonView(ev.recipients).sort((a,b)=>{
     const ra = categoryRank(birthDateOf(a)), rb = categoryRank(birthDateOf(b));
     if(ra.bandIdx !== rb.bandIdx) return ra.bandIdx - rb.bandIdx;
     if(ra.suffix !== rb.suffix) return ra.suffix - rb.suffix;
@@ -12049,7 +12379,9 @@ const ICON_UNARCHIVE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 function renderConvocCurrent(){
   const wrap = document.getElementById('convoc-current');
   if(!wrap) return;
-  const events = (data.convocEvents||[]).filter(ev=>!ev.archived)
+  // Cloisonné par saison (voir eventInSeasonView) : une compétition dont aucun destinataire n'appartient
+  // à la vue actuellement affichée ne doit pas apparaître ici.
+  const events = (data.convocEvents||[]).filter(ev=>!ev.archived && eventInSeasonView(ev))
     .sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
   const header = `
     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -12065,7 +12397,7 @@ function renderConvocCurrent(){
         <div class="group-block" style="margin-top:10px;">
           <div class="group-title-row" data-action="toggle-history" data-id="${ev.id}" style="cursor:pointer;">
             <div>
-              <div class="name">${escapeHtml(ev.name)}${ev.recipients.some(r=>!r.response) ? ` <span title="${escapeHtml(unrespondedTooltip(ev))}" style="color:#E8A33D;">⚠️</span>` : ''}</div>
+              <div class="name">${escapeHtml(ev.name)}${recipientsInSeasonView(ev.recipients).some(r=>!r.response) ? ` <span title="${escapeHtml(unrespondedTooltip(ev))}" style="color:#E8A33D;">⚠️</span>` : ''}</div>
               <div class="meta">${eventMetaLine(ev)}</div>
             </div>
             <div style="display:flex; align-items:center; gap:6px;">
@@ -12127,7 +12459,8 @@ function renderConvocCurrent(){
 function renderConvocArchive(){
   const wrap = document.getElementById('convoc-archive');
   if(!wrap) return;
-  const archived = (data.convocEvents||[]).filter(ev=>ev.archived)
+  // Cloisonné par saison (voir eventInSeasonView), même logique que renderConvocCurrent.
+  const archived = (data.convocEvents||[]).filter(ev=>ev.archived && eventInSeasonView(ev))
     .sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
 
   if(archived.length===0){
@@ -12185,11 +12518,15 @@ async function generateConvocEventPdf(eventId){
     return;
   }
   const ev = data.convocEvents.find(e=>e.id===eventId);
-  if(!ev || ev.recipients.length===0){ showToast('Aucun élève convoqué pour cet événement'); return; }
+  if(!ev) { showToast('Aucun élève convoqué pour cet événement'); return; }
+  // Cloisonné par saison (voir recipientsInSeasonView) : le PDF ne doit lister que les destinataires
+  // de la vue actuellement affichée.
+  const evRecipients = recipientsInSeasonView(ev.recipients);
+  if(evRecipients.length===0){ showToast('Aucun élève convoqué pour cet événement'); return; }
 
   try{
     const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
-    const sorted = [...ev.recipients].sort((a,b)=>{
+    const sorted = [...evRecipients].sort((a,b)=>{
       const ra = categoryRank(birthDateOf(a)), rb = categoryRank(birthDateOf(b));
       if(ra.bandIdx !== rb.bandIdx) return ra.bandIdx - rb.bandIdx;
       if(ra.suffix !== rb.suffix) return ra.suffix - rb.suffix;
@@ -12203,8 +12540,8 @@ async function generateConvocEventPdf(eventId){
       const statusLabel = r.response==='present' ? '✅ Présent(e)' : (r.response==='absent' ? '❌ Absent(e)' : '⏳ En attente');
       return `<tr><td>${nameWithBoldSurname(r.name)}</td><td>${escapeHtml(cat||'')}</td><td>${statusLabel}</td></tr>`;
     }).join('');
-    const present = ev.recipients.filter(r=>r.response==='present').length;
-    const absent = ev.recipients.filter(r=>r.response==='absent').length;
+    const present = evRecipients.filter(r=>r.response==='present').length;
+    const absent = evRecipients.filter(r=>r.response==='absent').length;
 
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
@@ -12218,7 +12555,7 @@ async function generateConvocEventPdf(eventId){
         </div>
       </div>
       <div class="recap-summary">
-        <div class="box"><div class="n">${ev.recipients.length}</div><div class="l">Convoqués</div></div>
+        <div class="box"><div class="n">${evRecipients.length}</div><div class="l">Convoqués</div></div>
         <div class="box"><div class="n">${present}</div><div class="l">Présents</div></div>
         <div class="box"><div class="n">${absent}</div><div class="l">Absents</div></div>
       </div>
@@ -12328,9 +12665,23 @@ function buildConvocCardHtmlCompact(m, ctx, link){
       </div>`;
 }
 
+// QR code généré 100% côté client (librairie qrcode-generator embarquée) plutôt qu'appelé auprès
+// d'un service externe (ancien api.qrserver.com) : ça évite toute dépendance réseau/CORS au moment
+// de la génération du PDF — html2canvas ne peut pas capturer une image cross-origin qui n'envoie pas
+// les bons en-têtes, ce qui faisait planter ou vider le QR code sur le PDF final selon les navigateurs
+// et réseaux. Retourne directement un data URL PNG, utilisable tel quel comme src d'une <img>.
 function qrImageUrl(text, size){
   size = size || 130;
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(text)}`;
+  if(!text || typeof qrcode==='undefined') return '';
+  try{
+    const qr = qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    const cellSize = Math.max(1, Math.floor(size / qr.getModuleCount()));
+    return qr.createDataURL(cellSize, 0);
+  } catch(err){
+    return '';
+  }
 }
 
 function waitForImages(container){
@@ -12644,7 +12995,10 @@ function buildSocialMedalistsData(presents){
       if(result==='1') gold++;
       else if(result==='2') silver++;
       else bronze++;
-      podium[result].push(r.name);
+      // Poids affiché après le nom uniquement pour les médaillé(e)s, et uniquement quand une vraie
+      // catégorie de poids existe (pas "Poule morphologique" ni un champ laissé vide).
+      const weightLabel = (r.weight && r.weight!=='Poule morphologique') ? `${r.weight} kg` : '';
+      podium[result].push({ name:r.name, weightLabel });
     } else {
       // "Non classé(e)s" : tous les présents hors podium — on précise juste 4e/5e/7e le cas échéant,
       // sans jamais écrire explicitement "NC" ou "ABS".
@@ -12652,7 +13006,7 @@ function buildSocialMedalistsData(presents){
       nonClasses.push({ name:r.name, result, suffix });
     }
   });
-  ['1','2','3'].forEach(k=> podium[k].sort((a,b)=> memberSurname(a).localeCompare(memberSurname(b), 'fr')));
+  ['1','2','3'].forEach(k=> podium[k].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')));
   nonClasses.sort((a,b)=>{
     const ra = rankOrderIndex(a.result), rb = rankOrderIndex(b.result);
     if(ra!==rb) return ra-rb;
@@ -12661,6 +13015,28 @@ function buildSocialMedalistsData(presents){
   return { gold, silver, bronze, podium, nonClasses };
 }
 
+// Bloc "Félicitations" en bas du visuel réseaux sociaux : un encart par compétition de qualification
+// distincte (case "Qualification" cochée dans Saisir un résultat / la liste des résultats), avec la
+// liste des prénoms des élèves qui s'y qualifient. Regroupe par r.qualificationFor plutôt que
+// d'afficher une ligne par élève, au cas où plusieurs se qualifient pour la même échéance.
+function buildQualifiersCongratsHtml(presents){
+  const byQualif = {};
+  const order = [];
+  (presents||[]).forEach(r=>{
+    if(!r.qualificationFor) return;
+    if(!byQualif[r.qualificationFor]){ byQualif[r.qualificationFor] = []; order.push(r.qualificationFor); }
+    byQualif[r.qualificationFor].push(r.name);
+  });
+  if(order.length===0) return '';
+  return `
+    <div style="margin-top:26px;">
+      ${order.map(q=>{
+        const names = [...byQualif[q]].sort((a,b)=> memberSurname(a).localeCompare(memberSurname(b), 'fr')).map(n=>shortMemberName(n));
+        const namesJoined = names.length>1 ? names.slice(0,-1).join(', ') + ' et ' + names[names.length-1] : names[0];
+        return `<div style="text-align:center; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:19px; color:#F3EFE5; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:14px 20px; margin-top:10px;">🎉 Félicitations à ${namesJoined} qui se qualifient pour <span style="color:#B9CB92;">${escapeHtml(q)}</span> !</div>`;
+      }).join('')}
+    </div>`;
+}
 function buildSocialVisualHtml(ev, presents, birthDateOf, shiaiEvent){
   const logoImg = document.querySelector('header.topbar .club-logo-light');
   const logoSrc = logoImg ? logoImg.src : '';
@@ -12685,7 +13061,7 @@ function buildSocialVisualHtml(ev, presents, birthDateOf, shiaiEvent){
           <div style="font-family:'Big Shoulders Display', sans-serif; font-weight:800; font-size:32px; color:${color};">${count}</div>
         </div>
         ${names.length ? names.map(n=>`
-          <div style="font-family:'Rajdhani',sans-serif; font-weight:700; font-size:19px; color:#F3EFE5; text-align:center; padding:7px 4px; border-top:1px solid rgba(255,255,255,0.12);">${shortMemberName(n)}</div>
+          <div style="font-family:'Rajdhani',sans-serif; font-weight:700; font-size:19px; color:#F3EFE5; text-align:center; padding:7px 4px; border-top:1px solid rgba(255,255,255,0.12);">${shortMemberName(n.name)}${n.weightLabel ? ` <span style="font-weight:600; font-size:15px; color:rgba(243,239,229,0.75);">(${escapeHtml(n.weightLabel)})</span>` : ''}</div>
         `).join('') : `<div style="text-align:center; font-family:'Inter',sans-serif; font-size:13px; color:rgba(243,239,229,0.4); padding:6px 0;">—</div>`}
       </div>`;
 
@@ -12723,6 +13099,7 @@ function buildSocialVisualHtml(ev, presents, birthDateOf, shiaiEvent){
       <div style="text-align:center; font-family:'Big Shoulders Display', sans-serif; font-weight:800; font-size:50px; color:#F3EFE5; line-height:1.08; margin-bottom:14px;">${escapeHtml(ev.name)}</div>
       ${dateVillePills}
       ${bodyHtml}
+      ${buildQualifiersCongratsHtml(presents)}
       <div style="margin-top:40px; text-align:center; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:17px; color:#B9CB92; letter-spacing:0.06em; text-transform:uppercase;">🥋 ${escapeHtml(data.clubName||'')}</div>
     </div>`;
 }
@@ -14184,6 +14561,12 @@ function goToMemberFiche(memberId, groupId){
   // La recherche est accessible depuis n'importe quel onglet — on bascule vers Cours pour
   // afficher la fiche trouvée, même si on cherchait depuis Présences, Convoc., etc.
   switchTab('groupes');
+  // Le bloc "👥 Groupes" (section-group repliable) doit lui aussi être ouvert, sinon la fiche est
+  // bien rendue dans le DOM mais reste invisible (display:none sur .section-group-body) : on force
+  // son état "ouvert" en mémoire + en CSS, comme un clic sur son en-tête.
+  saveSectionGroupOpen('groupes-cours', true);
+  const groupesSection = document.querySelector('.section-group[data-group="groupes-cours"]');
+  if(groupesSection) groupesSection.classList.remove('collapsed');
   setTimeout(()=>{
     const el = document.querySelector(`[data-action="toggle-member-fiche"][data-id="${memberId}"]`);
     if(el){
