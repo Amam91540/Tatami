@@ -6016,7 +6016,6 @@ function renderManualEventRow(e){
         <input type="text" data-field="address" value="${escapeHtml(e.address||'')}">
       </div>
       ${ageCategoryCheckboxesHtml(e.ageCategories!==undefined?e.ageCategories:[])}
-      ${disciplineSelectHtml(e.discipline!==undefined?e.discipline:'')}
       ${courseCheckboxesHtml(e.courseIds!==undefined?e.courseIds:[])}
       <div class="row" style="margin-top:2px;">
         <button class="primary" data-action="save-manual-edit" style="flex:1;">✓ Enregistrer</button>
@@ -6032,7 +6031,7 @@ function renderManualEventRow(e){
     <div class="info">
       <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'manual', e}))}</div>
       <div class="e">${e.date?fmtDateRange(e.date, e.dateEnd):''}${e.city?' · '+escapeHtml(e.city):''}</div>
-      <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(e.ageCategories!==undefined?e.ageCategories:[])}${calendarDisciplineTagHtml(e.discipline!==undefined?e.discipline:'')}${calendarCourseTagsHtml(e.courseIds)}${e.createdByAccountId ? `<span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">👤 Ajouté par ${escapeHtml(accountNameById(e.createdByAccountId) || 'un compte prof')}</span>` : ''}</div>
+      <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(e.ageCategories!==undefined?e.ageCategories:[])}${(!Array.isArray(e.courseIds) || e.courseIds.length===0) ? '<span class="tag warn">⚠️ Aucun cours — masqué pour tous les profs</span>' : calendarCourseTagsHtml(e.courseIds)}${e.createdByAccountId ? `<span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">👤 Ajouté par ${escapeHtml(accountNameById(e.createdByAccountId) || 'un compte prof')}</span>` : ''}</div>
     </div>
     <div style="display:flex; gap:4px; flex-shrink:0;">
       <button class="ghost icon-btn" data-action="toggle-validate-manual" data-id="${escapeHtml(e.id)}" title="${validated?'Retirer la validation':'Valider'}" style="padding:6px 9px; font-size:12px; ${validated?'background:var(--tatami-dim); border-color:var(--tatami); color:var(--tatami);':''}">✓</button>
@@ -6075,7 +6074,6 @@ function renderCalendarAddForm(){
       <input type="text" data-field="address">
     </div>
     ${ageCategoryCheckboxesHtml([])}
-    ${disciplineSelectHtml('')}
     ${courseCheckboxesHtml([])}
     <div class="row" style="margin-top:2px;">
       <button class="primary" data-action="save-add-calendar-event" style="flex:1;">✓ Ajouter au calendrier</button>
@@ -6109,10 +6107,14 @@ function isCalendarRowIncomplete(r){
   const hasName = !!(f.name && f.name.trim());
   const hasCity = !!(f.city && f.city.trim());
   const hasAddress = !!(f.address && f.address.trim());
-  // Un événement sans discipline choisie est traité comme "incomplet" au même titre qu'un champ
-  // manquant : il est de toute façon masqué pour les profs tant qu'il n'est pas tagué (voir
-  // filterDataForRole côté Code.gs), donc le signaler ici avec le triangle déjà existant permet
+  // Un événement sans cours coché est traité comme "incomplet" au même titre qu'un champ manquant :
+  // il est de toute façon masqué pour les profs tant qu'il n'est pas tagué (voir manualEventVisibleToProf
+  // / filterDataForRole côté Code.gs), donc le signaler ici avec le triangle déjà existant permet
   // à Thomas de les retrouver via le filtre "Incomplet" déjà en place, sans nouvelle UI.
+  if(r.kind==='manual'){
+    const hasCourses = Array.isArray(r.e.courseIds) && r.e.courseIds.length>0;
+    return !(hasName && hasCity && hasAddress && calendarRowHasCategory(f.ageCategories) && hasCourses);
+  }
   return !(hasName && hasCity && hasAddress && calendarRowHasCategory(f.ageCategories) && calendarRowHasDiscipline(f.discipline));
 }
 function renderImportedCompetitionsSettings(){
@@ -6302,10 +6304,9 @@ function renderImportedCompetitionsSettings(){
           else cb.checked = profile.ageCategories.includes(cb.dataset.cat);
         });
       }
-      const alreadyHasDiscipline = readDisciplineFromForm(addForm);
-      if(profile.discipline && !alreadyHasDiscipline){
-        const sel = addForm.querySelector('[data-discipline-select]');
-        if(sel) sel.value = profile.discipline;
+      const alreadyHasCourses = readCourseIdsFromForm(addForm);
+      if(Array.isArray(profile.courseIds) && profile.courseIds.length && alreadyHasCourses.length===0){
+        addForm.querySelectorAll('[data-course]').forEach(cb=>{ cb.checked = profile.courseIds.includes(cb.dataset.course); });
       }
       showToast(`Infos reprises d’une compétition déjà connue`);
     };
@@ -6323,8 +6324,8 @@ function renderImportedCompetitionsSettings(){
       const cityVal = addForm.querySelector('[data-field="city"]').value.trim();
       const addressVal = addForm.querySelector('[data-field="address"]').value.trim();
       const ageCategoriesVal = readAgeCategoriesFromForm(addForm);
-      const disciplineVal = readDisciplineFromForm(addForm);
       const courseIdsVal = readCourseIdsFromForm(addForm);
+      const disciplineVal = deriveDisciplineFromCourseIds(courseIdsVal);
       const entry = {
         id: uid(),
         type: addForm.querySelector('[data-field="type"]').value,
@@ -6483,8 +6484,8 @@ function renderImportedCompetitionsSettings(){
       entry.city = manualEditForm.querySelector('[data-field="city"]').value.trim();
       entry.address = manualEditForm.querySelector('[data-field="address"]').value.trim();
       entry.ageCategories = readAgeCategoriesFromForm(manualEditForm);
-      entry.discipline = readDisciplineFromForm(manualEditForm);
       entry.courseIds = readCourseIdsFromForm(manualEditForm);
+      entry.discipline = deriveDisciplineFromCourseIds(entry.courseIds);
       saveCompetitionProfile(entry.name, entry.city, { address: entry.address, ageCategories: entry.ageCategories, discipline: entry.discipline, courseIds: entry.courseIds });
       saveData();
       ui.editingCompetitionKey = null;
@@ -10997,13 +10998,27 @@ function importedCompetitionCourses(c){
 function calendarSelectableCourses(){
   return (data.groups||[]).filter(g=>!!courseToDiscipline(g.name)).sort((a,b)=>a.name.localeCompare(b.name,'fr'));
 }
+// Un événement manuel n'a plus de discipline choisie à la main par l'admin (voir suppression du
+// sélecteur de discipline dans renderManualEventRow/renderCalendarAddForm) : elle est déduite du
+// premier cours coché, uniquement pour le regroupement par discipline (disciplineCalendarRows) et
+// l'affichage — elle n'a plus aucun rôle de sécurité (voir courseIds/manualEventVisibleToProf et
+// filterDataForRole côté Code.gs, qui cloisonnent désormais par cours et non plus par discipline).
+function deriveDisciplineFromCourseIds(courseIds){
+  const ids = Array.isArray(courseIds) ? courseIds : [];
+  for(const id of ids){
+    const g = (data.groups||[]).find(x=>x.id===id);
+    const disc = g && courseToDiscipline(g.name);
+    if(disc) return disc;
+  }
+  return '';
+}
 function courseCheckboxesHtml(courseIds){
   const courses = calendarSelectableCourses();
   if(courses.length===0) return '';
   const selected = Array.isArray(courseIds) ? courseIds : [];
   return `
     <div>
-      <span class="field-label">Cours concernés (optionnel — laisser vide = visible pour tous les profs de la discipline choisie ci-dessus ; cocher un ou plusieurs cours = visible UNIQUEMENT pour le(s) prof(s) qui donne(nt) ce(s) cours-là)</span>
+      <span class="field-label">Cours concernés — coche au moins un cours pour que cet événement apparaisse chez le(s) prof(s) concerné(s). Sans cours coché, personne (aucun prof) ne le voit ; seul l'admin le voit toujours.</span>
       <div style="display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:4px;">
         ${courses.map(g=>`<label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" data-course="${escapeHtml(g.id)}" ${selected.includes(g.id)?'checked':''}> ${escapeHtml(g.name)}</label>`).join('')}
       </div>
@@ -11031,15 +11046,15 @@ function importedCompetitionVisibleToProf(c, ownedGroupIds){
 }
 // Même principe pour un événement "manuel" (data.calendarEvents — qu'il ait été ajouté à la main
 // depuis Réglages, par un prof depuis son calendrier de discipline, ou matérialisé depuis l'ancien
-// calendrier fédéral via migrateFederationCalendarOnce). Contrairement aux compétitions importées,
-// le champ courseIds n'est PAS obligatoire ici : tant qu'il n'a jamais été renseigné (undefined,
-// cas de tous les événements créés avant cette fonctionnalité, ou créés par un prof pour lui-même),
-// le cloisonnement par discipline seule (inchangé, voir filterDataForRole côté Code.gs) continue de
-// s'appliquer normalement. Le champ ne devient un filtre supplémentaire QUE si quelqu'un l'a
-// explicitement renseigné (même vide, pour le rendre volontairement invisible à tous les profs).
+// calendrier fédéral via migrateFederationCalendarOnce). Cloisonnement strict et rétroactif par
+// cours (remplace l'ancien cloisonnement par discipline, y compris pour les événements créés avant
+// cette fonctionnalité) : sans cours coché, un événement est invisible pour TOUS les profs, même
+// ceux qui couvraient la bonne discipline. Seul l'admin voit toujours tout. Le vrai rempart de
+// sécurité est côté serveur (voir filterDataForRole dans Code.gs, qui applique la même règle) —
+// cette fonction est la version client utilisée pour l'affichage.
 function manualEventVisibleToProf(e, ownedGroupIds){
-  if(!Array.isArray(e.courseIds)) return true;
-  return e.courseIds.length>0 && e.courseIds.some(id=>ownedGroupIds.includes(id));
+  const courseIds = Array.isArray(e.courseIds) ? e.courseIds : [];
+  return courseIds.length>0 && courseIds.some(id=>ownedGroupIds.includes(id));
 }
 function wireAgeCategoryExclusivity(formEl){
   const boxes = Array.from(formEl.querySelectorAll('[data-cat]'));
@@ -12051,6 +12066,11 @@ function renderDisciplineCalendarCard(){
         address: '',
         ageCategories: [],
         discipline,
+        // Ce mini-formulaire ne propose pas de choisir un cours précis (un prof n'a pas cette
+        // granularité ici) : on rattache directement l'événement à TOUS ses cours, sinon il
+        // deviendrait invisible même pour lui-même sous le nouveau cloisonnement strict par cours
+        // (voir manualEventVisibleToProf / filterDataForRole côté Code.gs).
+        courseIds: myOwnedGroupIds(),
         createdByAccountId: session.accountId || ''
       };
       if(!data.calendarEvents) data.calendarEvents = [];
