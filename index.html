@@ -6330,10 +6330,16 @@ function renderImportedCompetitionsSettings(){
     const addCityInput = addForm.querySelector('[data-field="city"]');
     if(addNameInput) addNameInput.addEventListener('blur', addFormApplyProfile);
     if(addCityInput) addCityInput.addEventListener('blur', addFormApplyProfile);
-    addForm.querySelector('[data-action="save-add-calendar-event"]').addEventListener('click', async ()=>{
+    const saveAddCalendarBtn = addForm.querySelector('[data-action="save-add-calendar-event"]');
+    saveAddCalendarBtn.addEventListener('click', async ()=>{
+      // Garde-fou anti double-clic : un événement créé en double (voire triple) a déjà été observé
+      // en production, très probablement à cause de plusieurs clics rapprochés sur ce bouton (ex:
+      // pendant que la page semblait figée). On ignore tout clic supplémentaire pendant l'envoi.
+      if(saveAddCalendarBtn.disabled) return;
       const name = addForm.querySelector('[data-field="name"]').value.trim();
       const dateVal = addForm.querySelector('[data-field="date"]').value;
       if(!name || !dateVal){ showToast('Renseigne au moins le nom et la date'); return; }
+      saveAddCalendarBtn.disabled = true;
       // Contrairement aux présences/résultats, un événement de calendrier peut légitimement
       // concerner une saison future (planifier une compétition à venir) ou passée (compléter
       // l'historique) : pas d'avertissement de saison ici, la création est toujours acceptée.
@@ -10949,8 +10955,8 @@ function calendarCategoryTagsHtml(ageCategories){
 function calendarSelectableCategories(){
   return [...(data.settings.ageBands||[]).map(b=>b.label), 'Vétérans'];
 }
-function ageCategoryCheckboxesHtml(ageCategories){
-  const ageBandLabels = calendarSelectableCategories();
+function ageCategoryCheckboxesHtml(ageCategories, availableLabels){
+  const ageBandLabels = availableLabels || calendarSelectableCategories();
   const isAll = ageCategories==='all';
   const selectedArr = Array.isArray(ageCategories) ? ageCategories : [];
   return `
@@ -11054,6 +11060,20 @@ function calendarCourseTagsHtml(courseIds){
 function myOwnedGroupIds(){
   const session = getSession();
   return (session && Array.isArray(session.groupIds)) ? session.groupIds : [];
+}
+// Catégories d'âge réellement représentées parmi les élèves des cours d'un prof (même logique que
+// groupedCategoriesAvailable(), restreinte à ses propres cours) : pour son formulaire d'ajout
+// d'événement, on ne lui propose que les catégories qu'il a vraiment dans son/ses cours, pas la
+// liste complète de toutes les catégories du club.
+function myOwnedAgeCategories(){
+  const ownedGroupIds = myOwnedGroupIds();
+  const labels = [];
+  (data.settings.ageBands||[]).forEach(b=>{
+    const hasAny = (data.members||[]).some(m=>!m.archived && ownedGroupIds.includes(m.groupId) && groupedCategoryLabel(m.birthDate, m)===b.label);
+    if(hasAny && !labels.includes(b.label)) labels.push(b.label);
+  });
+  if((data.members||[]).some(m=>!m.archived && ownedGroupIds.includes(m.groupId) && veteranLabelForMember(m))) labels.push('Vétérans');
+  return labels;
 }
 // Une compétition/un stage importé n'est visible pour un prof QUE si elle a été explicitement
 // rattachée à au moins un de SES cours (voir importedCompetitionCourses ci-dessus). Si aucun cours
@@ -11958,6 +11978,7 @@ function renderDisciplineCalendarCard(){
   }
   section.style.display = '';
   if(ui.addingOwnCalendarEvent===undefined) ui.addingOwnCalendarEvent = false;
+  const ownedAgeCategories = myOwnedAgeCategories();
   const label = disciplines.map(d=>CALENDAR_DISCIPLINE_LABELS[d]).join(' / ');
   const rows = disciplineCalendarRows(disciplines);
   const today = new Date(); today.setHours(0,0,0,0);
@@ -11966,17 +11987,20 @@ function renderDisciplineCalendarCard(){
   const rowHtml = (r)=>{
     const f = r.kind==='imported' ? {
       name: effectiveCompetitionName(r.c), city: effectiveCompetitionCity(r.c),
-      icon: r.c.type==='stage' ? '🥋' : '🏆', mine: false, id: null, dateLabel: r.date?fmtDate(r.date):escapeHtml(r.c.dayLabel||'')
+      icon: r.c.type==='stage' ? '🥋' : '🏆', mine: false, id: null, dateLabel: r.date?fmtDate(r.date):escapeHtml(r.c.dayLabel||''),
+      ageCategories: importedCompetitionAgeCategories(r.c)
     } : {
       name: r.e.name||'', city: r.e.city||'',
       icon: r.e.type==='stage' ? '🥋' : '🏆', mine: session.accountId && r.e.createdByAccountId===session.accountId,
-      id: r.e.id, dateLabel: r.e.date?fmtDateRange(r.e.date, r.e.dateEnd):''
+      id: r.e.id, dateLabel: r.e.date?fmtDateRange(r.e.date, r.e.dateEnd):'',
+      ageCategories: r.e.ageCategories!==undefined ? r.e.ageCategories : []
     };
     return `
     <div class="convoc-row" data-row-key="${r.kind}-${escapeHtml(f.id||competitionKey(r.c))}" style="align-items:flex-start;">
       <div class="info">
         <div class="n">${f.icon} ${escapeHtml(f.name)}${f.mine?' <span class="tag">Ajouté par toi</span>':''}</div>
         <div class="e">${f.dateLabel}${f.city?' · '+escapeHtml(f.city):''}</div>
+        <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(f.ageCategories)}</div>
       </div>
       ${f.mine ? `
       <div style="display:flex; gap:4px; flex-shrink:0;">
@@ -12019,6 +12043,7 @@ function renderDisciplineCalendarCard(){
         <span class="field-label">Discipline</span>
         <select data-field="discipline">${disciplines.map(d=>`<option value="${d}">${CALENDAR_DISCIPLINE_LABELS[d]}</option>`).join('')}</select>
       </div>` : ''}
+      ${ownedAgeCategories.length>0 ? ageCategoryCheckboxesHtml([], ownedAgeCategories) : ''}
       <div class="row" style="margin-top:2px;">
         <button class="primary" data-action="save-own-calendar-event" style="flex:1;">✓ Ajouter</button>
         <button class="ghost" data-action="cancel-add-own-calendar-event" style="flex:1;">Annuler</button>
@@ -12047,6 +12072,7 @@ function renderDisciplineCalendarCard(){
         <span class="field-label">Ville</span>
         <input type="text" data-field="city" value="${escapeHtml(editingEntry.city||'')}">
       </div>
+      ${ownedAgeCategories.length>0 ? ageCategoryCheckboxesHtml(editingEntry.ageCategories!==undefined?editingEntry.ageCategories:[], ownedAgeCategories) : ''}
       <div class="row" style="margin-top:2px;">
         <button class="primary" data-action="save-edit-own-calendar-event" style="flex:1;">✓ Enregistrer</button>
         <button class="ghost" data-action="cancel-edit-own-calendar-event" style="flex:1;">Annuler</button>
@@ -12067,10 +12093,16 @@ function renderDisciplineCalendarCard(){
   });
   const addForm = wrap.querySelector('[data-form="add-own-calendar-event"]');
   if(addForm){
-    addForm.querySelector('[data-action="save-own-calendar-event"]').addEventListener('click', async ()=>{
+    wireAgeCategoryExclusivity(addForm);
+    const saveOwnCalendarBtn = addForm.querySelector('[data-action="save-own-calendar-event"]');
+    saveOwnCalendarBtn.addEventListener('click', async ()=>{
+      // Garde-fou anti double-clic (voir save-add-calendar-event) : évite qu'un événement se
+      // retrouve créé en double/triple à cause de plusieurs clics rapprochés sur ce bouton.
+      if(saveOwnCalendarBtn.disabled) return;
       const name = addForm.querySelector('[data-field="name"]').value.trim();
       const dateVal = addForm.querySelector('[data-field="date"]').value;
       if(!name || !dateVal){ showToast('Renseigne au moins le nom et la date'); return; }
+      saveOwnCalendarBtn.disabled = true;
       // Voir save-add-calendar-event : pas d'avertissement de saison pour un événement de calendrier
       // (compétition/stage à venir la saison prochaine, par exemple).
       const disciplineField = addForm.querySelector('[data-field="discipline"]');
@@ -12083,7 +12115,7 @@ function renderDisciplineCalendarCard(){
         dateEnd: '',
         city: addForm.querySelector('[data-field="city"]').value.trim(),
         address: '',
-        ageCategories: [],
+        ageCategories: readAgeCategoriesFromForm(addForm),
         discipline,
         // Ce mini-formulaire ne propose pas de choisir un cours précis (un prof n'a pas cette
         // granularité ici) : on rattache directement l'événement à TOUS ses cours, sinon il
@@ -12106,6 +12138,7 @@ function renderDisciplineCalendarCard(){
   }
   const editForm = wrap.querySelector('[data-form="edit-own-calendar-event"]');
   if(editForm){
+    wireAgeCategoryExclusivity(editForm);
     editForm.querySelector('[data-action="save-edit-own-calendar-event"]').addEventListener('click', async ()=>{
       const id = editForm.dataset.entryId;
       const entry = (data.calendarEvents||[]).find(e=>e.id===id);
@@ -12116,6 +12149,7 @@ function renderDisciplineCalendarCard(){
       entry.name = editForm.querySelector('[data-field="name"]').value.trim();
       entry.date = newDateVal;
       entry.city = editForm.querySelector('[data-field="city"]').value.trim();
+      entry.ageCategories = readAgeCategoriesFromForm(editForm);
       saveData();
       ui.editingOwnCalendarEventId = null;
       renderDisciplineCalendarCard();
