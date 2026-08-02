@@ -2906,7 +2906,7 @@ function renderGroupsTab(){
               <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px; flex-wrap:wrap;">
                 <button class="ghost icon-btn" data-action="member-history-pdf" data-id="${m.id}" title="Générer l'historique complet (résultats, passages de grade, stages) en PDF" style="padding:7px 10px;">📄 Historique PDF</button>
                 <button class="ghost icon-btn" data-action="edit-member-fiche" data-id="${m.id}" title="Modifier les informations" style="padding:7px 10px;">✏️</button>
-                <button class="ghost icon-btn" data-action="del-member" data-id="${m.id}" style="font-size:12px; padding:7px 10px;">Retirer</button>
+                ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="del-member" data-id="${m.id}" style="font-size:12px; padding:7px 10px;">Retirer</button>`}
               </div>`;
             }
             return `
@@ -2973,9 +2973,11 @@ function renderGroupsTab(){
           </div>
           <div>
             <span class="field-label">Cours</span>
-            <select data-action="change-group" data-id="${m.id}">
+            ${isProfSession()
+              ? `<div>${curGroup ? escapeHtml(curGroup.name) : '—'}</div>`
+              : `<select data-action="change-group" data-id="${m.id}">
               ${data.groups.map(g2=>`<option value="${g2.id}" ${g2.id===m.groupId?'selected':''}>${escapeHtml(g2.name)}</option>`).join('')}
-            </select>
+            </select>`}
           </div>
           ${committee ? `
           <div>
@@ -2991,7 +2993,7 @@ function renderGroupsTab(){
           </div>
           <div style="display:flex; justify-content:flex-end; gap:8px;">
             <button class="ghost icon-btn" data-action="done-member-fiche" data-id="${m.id}" title="Terminer la modification" style="padding:7px 10px;">✓ Terminé</button>
-            <button class="ghost icon-btn" data-action="del-member" data-id="${m.id}" style="font-size:12px; padding:7px 10px;">Retirer</button>
+            ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="del-member" data-id="${m.id}" style="font-size:12px; padding:7px 10px;">Retirer</button>`}
           </div>`;
           })() : ''}
         </div>`;
@@ -3270,6 +3272,12 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
   if(action==='member-history-pdf'){
     generateMemberPalmaresPdf(btn.dataset.id);
   } else if(action==='del-member'){
+    // Garde-fou même si le bouton était présent par un autre biais (ex: rendu déjà en mémoire
+    // avant une reconnexion sous un autre rôle) : un prof ne doit jamais pouvoir retirer un élève,
+    // même si ce n'était déjà de toute façon jamais persisté côté serveur (voir sanitizePayloadForRole
+    // dans Code.gs, qui ignore silencieusement toute modification de data.members envoyée par un
+    // compte prof) — mieux vaut bloquer clairement ici que laisser croire que ça a fonctionné.
+    if(isProfSession()) return;
     if(!(await confirmDialog('Retirer ce pratiquant du cours ?', { confirmLabel:'Retirer' }))) return;
     markDeleted('members', btn.dataset.id);
     data.members = data.members.filter(x=>x.id!==btn.dataset.id);
@@ -3544,6 +3552,10 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   }
   const groupSel = e.target.closest('[data-action="change-group"]');
   if(groupSel){
+    // Même garde-fou que del-member : un prof ne doit jamais pouvoir changer un élève de cours
+    // (le sélecteur n'est de toute façon plus rendu pour lui, voir renderGroupsTab — ceci couvre
+    // le cas d'un élément déjà présent en mémoire avant une reconnexion sous un autre rôle).
+    if(isProfSession()) return;
     const m = data.members.find(x=>x.id===groupSel.dataset.id);
     if(m && groupSel.value){
       const newGroup = data.groups.find(x=>x.id===groupSel.value);
@@ -5977,6 +5989,16 @@ function validatedBadgeHtml(validated){
 function cancelledBadgeHtml(cancelled){
   return cancelled ? ' <span class="tag" style="background:var(--clay-dim); color:var(--clay); font-weight:800; vertical-align:middle;">ANNULÉ</span>' : '';
 }
+// "Désactivé" est volontairement DISTINCT de "annulé" (cancelled) : annulé signale que la
+// compétition/le stage elle-même n'a plus lieu (information factuelle, affichée partout, y compris
+// dans les PDF et convocations déjà envoyées). Désactivé est un interrupteur purement interne au
+// club (utile ex: doublon, erreur de saisie, événement plus du tout pertinent) qui retire
+// l'événement des points d'entrée de convocation et des PDF de calendrier générés — voir
+// calendarEntryConvocable()/generateCalendarPdf — sans le supprimer ni le marquer comme annulé aux
+// yeux de qui verrait déjà une convocation existante.
+function disabledBadgeHtml(disabled){
+  return disabled ? ' <span class="tag" style="background:var(--surface-2); color:var(--ink-dim); font-weight:800; vertical-align:middle;">DÉSACTIVÉ</span>' : '';
+}
 function incompleteBadgeHtml(incomplete){
   return incomplete ? ' <span title="Informations manquantes — vérifie le nom, la ville, l’adresse et la catégorie d’âge" style="display:inline-block; vertical-align:middle; font-size:13px;">⚠️</span>' : '';
 }
@@ -5985,6 +6007,7 @@ function renderImportedCompetitionRow(c){
   const editing = ui.editingCompetitionKey === key;
   const validated = getCompetitionOverride(c).validated === true;
   const cancelled = getCompetitionOverride(c).cancelled === true;
+  const disabled = getCompetitionOverride(c).disabled === true;
   if(editing){
     return `
     <div class="convoc-row" style="flex-direction:column; align-items:stretch; gap:8px;" data-form="imported-edit">
@@ -6016,13 +6039,14 @@ function renderImportedCompetitionRow(c){
   return `
   <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'imported', c}))}</div>
+      <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${disabledBadgeHtml(disabled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'imported', c}))}</div>
       <div class="e">${effectiveCompetitionDate(c)?fmtDate(effectiveCompetitionDate(c)):escapeHtml(c.dayLabel)} · ${escapeHtml(effectiveCompetitionCity(c))}</div>
       <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(importedCompetitionAgeCategories(c))}${calendarDisciplineTagHtml(importedCompetitionDiscipline(c))}${calendarCourseTagsHtml(importedCompetitionCourses(c))}</div>
     </div>
     <div style="display:flex; gap:4px; flex-shrink:0;">
       <button class="ghost icon-btn" data-action="toggle-validate-imported" data-key="${escapeHtml(key)}" title="${validated?'Retirer la validation':'Valider'}" style="padding:6px 9px; font-size:12px; ${validated?'background:var(--tatami-dim); border-color:var(--tatami); color:var(--tatami);':''}">✓</button>
       <button class="ghost icon-btn" data-action="toggle-cancel-imported" data-key="${escapeHtml(key)}" title="${cancelled?'Retirer l’annulation':'Marquer comme annulé'}" style="padding:6px 9px; font-size:12px; ${cancelled?'background:var(--clay-dim); border-color:var(--clay); color:var(--clay);':''}">🚫</button>
+      <button class="ghost icon-btn" data-action="toggle-disable-imported" data-key="${escapeHtml(key)}" title="${disabled?'Réactiver (redevient convocable et réapparaît sur les PDF)':'Désactiver (plus de convoc possible, disparaît des PDF calendrier)'}" style="padding:6px 9px; font-size:12px; ${disabled?'background:var(--surface-2); border-color:var(--ink-dim); color:var(--ink-dim);':''}">${disabled?'▶':'⏸'}</button>
       <button class="ghost icon-btn" data-action="edit-imported-competition" data-key="${escapeHtml(key)}" title="Modifier" style="padding:6px 9px; font-size:12px;">✏️</button>
       <button class="ghost icon-btn" data-action="delete-imported-competition" data-key="${escapeHtml(key)}" title="Supprimer définitivement" style="padding:6px 9px; font-size:12px;">✕</button>
     </div>
@@ -6074,16 +6098,18 @@ function renderManualEventRow(e){
   const typeBadge = e.type==='stage' ? '🥋' : '🏆';
   const validated = e.validated === true;
   const cancelled = e.cancelled === true;
+  const disabled = e.disabled === true;
   return `
   <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'manual', e}))}</div>
+      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${disabledBadgeHtml(disabled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'manual', e}))}</div>
       <div class="e">${e.date?fmtDateRange(e.date, e.dateEnd):''}${e.city?' · '+escapeHtml(e.city):''}</div>
       <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(e.ageCategories!==undefined?e.ageCategories:[])}${(!Array.isArray(e.courseIds) || e.courseIds.length===0) ? '<span class="tag warn">⚠️ Aucun cours — masqué pour tous les profs</span>' : calendarCourseTagsHtml(e.courseIds)}${e.createdByAccountId ? `<span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">👤 Ajouté par ${escapeHtml(accountNameById(e.createdByAccountId) || 'un compte prof')}</span>` : ''}</div>
     </div>
     <div style="display:flex; gap:4px; flex-shrink:0;">
       <button class="ghost icon-btn" data-action="toggle-validate-manual" data-id="${escapeHtml(e.id)}" title="${validated?'Retirer la validation':'Valider'}" style="padding:6px 9px; font-size:12px; ${validated?'background:var(--tatami-dim); border-color:var(--tatami); color:var(--tatami);':''}">✓</button>
       <button class="ghost icon-btn" data-action="toggle-cancel-manual" data-id="${escapeHtml(e.id)}" title="${cancelled?'Retirer l’annulation':'Marquer comme annulé'}" style="padding:6px 9px; font-size:12px; ${cancelled?'background:var(--clay-dim); border-color:var(--clay); color:var(--clay);':''}">🚫</button>
+      <button class="ghost icon-btn" data-action="toggle-disable-manual" data-id="${escapeHtml(e.id)}" title="${disabled?'Réactiver (redevient convocable et réapparaît sur les PDF)':'Désactiver (plus de convoc possible, disparaît des PDF calendrier)'}" style="padding:6px 9px; font-size:12px; ${disabled?'background:var(--surface-2); border-color:var(--ink-dim); color:var(--ink-dim);':''}">${disabled?'▶':'⏸'}</button>
       <button class="ghost icon-btn" data-action="edit-manual-event" data-id="${escapeHtml(e.id)}" title="Modifier" style="padding:6px 9px; font-size:12px;">✏️</button>
       <button class="ghost icon-btn" data-action="delete-manual-event" data-id="${escapeHtml(e.id)}" title="Supprimer" style="padding:6px 9px; font-size:12px;">✕</button>
     </div>
@@ -6502,6 +6528,30 @@ function renderImportedCompetitionsSettings(){
       renderImportedCompetitionsSettings();
       renderCompetitionsCalendarCard();
       showToast(entry.cancelled ? 'Événement marqué comme annulé' : 'Annulation retirée');
+    });
+  });
+  wrap.querySelectorAll('[data-action="toggle-disable-imported"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!data.settings.competitionOverrides) data.settings.competitionOverrides = {};
+      const key = btn.dataset.key;
+      const existing = data.settings.competitionOverrides[key] || {};
+      const nowDisabled = !existing.disabled;
+      data.settings.competitionOverrides[key] = { ...existing, disabled: nowDisabled };
+      saveData();
+      renderImportedCompetitionsSettings();
+      renderCompetitionsCalendarCard();
+      showToast(nowDisabled ? 'Compétition désactivée — plus de convoc possible, retirée des PDF' : 'Compétition réactivée');
+    });
+  });
+  wrap.querySelectorAll('[data-action="toggle-disable-manual"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
+      if(!entry) return;
+      entry.disabled = !entry.disabled;
+      saveData();
+      renderImportedCompetitionsSettings();
+      renderCompetitionsCalendarCard();
+      showToast(entry.disabled ? 'Événement désactivé — plus de convoc possible, retiré des PDF' : 'Événement réactivé');
     });
   });
 
@@ -8620,7 +8670,7 @@ function buildCalendarTimelineHtml(entries){
         <div class="cal-event type-${en.type}">
           <div class="cal-daybox"><div class="d">${day}</div><div class="m">${MONTH_NAMES_FR[d.getMonth()].slice(0,3)}</div></div>
           <div class="cal-info">
-            <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}${validatedBadgeHtml(en.validated || isPassed)}${cancelledBadgeHtml(en.cancelled)}</div>
+            <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}${validatedBadgeHtml(en.validated || isPassed)}${cancelledBadgeHtml(en.cancelled)}${disabledBadgeHtml(en.disabled)}</div>
             <div class="e">${en.dateEnd && en.dateEnd!==en.date ? fmtDateRange(en.date, en.dateEnd)+' — ' : ''}${escapeHtml(en.city||'')}</div>
             <div class="cats">${catsHtml}</div>
           </div>
@@ -9902,7 +9952,9 @@ async function generateCalendarPdf(categoryFilter, entriesOverride, buttonId){
     showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
     return;
   }
-  const allEntries = entriesOverride || getAllCalendarEntries();
+  // Un événement désactivé (voir toggle-disable-imported/manual/own-calendar-event) ne doit jamais
+  // apparaître sur un PDF de calendrier généré, quelle que soit la sélection de catégorie.
+  const allEntries = (entriesOverride || getAllCalendarEntries()).filter(en=>!en.disabled);
   const entries = categoryFilter==='all' ? allEntries : allEntries.filter(en=>calendarEntryAppliesToCategory(en.ageCategories, categoryFilter));
   if(entries.length===0){ showToast('Aucun événement à inclure pour cette sélection'); return; }
 
@@ -11171,13 +11223,15 @@ function getAllCalendarEntries(){
     ageCategories: importedCompetitionAgeCategories(c),
     courseIds: importedCompetitionCourses(c),
     validated: getCompetitionOverride(c).validated === true,
-    cancelled: getCompetitionOverride(c).cancelled === true
+    cancelled: getCompetitionOverride(c).cancelled === true,
+    disabled: getCompetitionOverride(c).disabled === true
   }));
   const manual = (data.calendarEvents||[]).map(e=>({
     key: 'manual-'+e.id, kind:'manual', id:e.id, type: e.type||'competition',
     name: e.name||'', date: e.date||'', dateEnd: e.dateEnd||'', dayLabel: e.dayLabel||'',
     city: e.city||'',
     cancelled: e.cancelled === true,
+    disabled: e.disabled === true,
     ageCategories: e.ageCategories!==undefined ? e.ageCategories : [],
     courseIds: e.courseIds,
     validated: e.validated === true
@@ -11679,8 +11733,10 @@ function renderCalendarOtherSearchResults(query){
   const isProf = !!(session && session.role==='prof');
   // Un prof ne doit pas pouvoir retrouver ici (et donc convoquer pour) une compétition/un stage qui
   // n'a pas été rattaché à un de ses cours — voir myVisibleCalendarEntries() (même règle stricte,
-  // partagée avec la génération de PDF de son calendrier).
-  const all = isProf ? myVisibleCalendarEntries() : getAllCalendarEntries();
+  // partagée avec la génération de PDF de son calendrier). Un événement désactivé (voir
+  // toggle-disable-imported/manual/own-calendar-event) n'est jamais proposable pour une convocation,
+  // pour personne — même l'admin.
+  const all = (isProf ? myVisibleCalendarEntries() : getAllCalendarEntries()).filter(en=>!en.disabled);
   const matches = all.filter(en=> (en.name||'').toLowerCase().includes(q) || (en.city||'').toLowerCase().includes(q));
   wrap.innerHTML = matches.slice(0,50).map(en=>`
     <div class="convoc-row" data-action="pick-calendar-other" data-key="${escapeHtml(en.key)}" style="cursor:pointer;">
@@ -11704,7 +11760,8 @@ function initCalendarCompetitionPicker(){
     const ownedGroupIds = isProf ? myOwnedGroupIds() : [];
     // Même cloisonnement que renderCalendarOtherSearchResults : un prof ne voit dans ce menu que les
     // compétitions/stages importés rattachés à un de ses cours (l'admin, lui, voit toujours tout).
-    const withinMonth = competitionsWithinNextMonth().filter(c=> !isProf || importedCompetitionVisibleToProf(c, ownedGroupIds));
+    // Une compétition désactivée (voir toggle-disable-imported) n'apparaît jamais ici, pour personne.
+    const withinMonth = competitionsWithinNextMonth().filter(c=> (!isProf || importedCompetitionVisibleToProf(c, ownedGroupIds)) && getCompetitionOverride(c).disabled !== true);
     select.innerHTML = `<option value="">— Choisir une compétition —</option>` + withinMonth.map(c=>{
       const idx = COMPETITION_CALENDAR.indexOf(c);
       const already = hasConvocationForCompetition(c) ? '✓ ' : '';
@@ -12117,17 +12174,19 @@ function renderDisciplineCalendarCard(){
       name: r.e.name||'', city: r.e.city||'',
       icon: r.e.type==='stage' ? '🥋' : '🏆', mine: session.accountId && r.e.createdByAccountId===session.accountId,
       id: r.e.id, dateLabel: r.e.date?fmtDateRange(r.e.date, r.e.dateEnd):'',
-      ageCategories: r.e.ageCategories!==undefined ? r.e.ageCategories : [], courseIds: r.e.courseIds
+      ageCategories: r.e.ageCategories!==undefined ? r.e.ageCategories : [], courseIds: r.e.courseIds,
+      disabled: r.e.disabled === true
     };
     return `
     <div class="convoc-row" data-row-key="${r.kind}-${escapeHtml(f.id||competitionKey(r.c))}" style="align-items:flex-start;">
       <div class="info">
-        <div class="n">${f.icon} ${escapeHtml(f.name)}${f.mine?' <span class="tag">Ajouté par toi</span>':''}</div>
+        <div class="n">${f.icon} ${escapeHtml(f.name)}${f.mine?' <span class="tag">Ajouté par toi</span>':''}${disabledBadgeHtml(f.disabled)}</div>
         <div class="e">${f.dateLabel}${f.city?' · '+escapeHtml(f.city):''}</div>
         <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(f.ageCategories)}${calendarCourseTagsHtml(f.courseIds)}</div>
       </div>
       ${f.mine ? `
       <div style="display:flex; gap:4px; flex-shrink:0;">
+        <button class="ghost icon-btn" data-action="toggle-disable-own-calendar-event" data-id="${escapeHtml(f.id)}" title="${f.disabled?'Réactiver (redevient convocable et réapparaît sur le PDF)':'Désactiver (plus de convoc possible, disparaît du PDF)'}" style="padding:6px 9px; font-size:12px; ${f.disabled?'background:var(--surface-2); border-color:var(--ink-dim); color:var(--ink-dim);':''}">${f.disabled?'▶':'⏸'}</button>
         <button class="ghost icon-btn" data-action="edit-own-calendar-event" data-id="${escapeHtml(f.id)}" title="Modifier" style="padding:6px 9px; font-size:12px;">✏️</button>
         <button class="ghost icon-btn" data-action="delete-own-calendar-event" data-id="${escapeHtml(f.id)}" title="Supprimer" style="padding:6px 9px; font-size:12px;">✕</button>
       </div>` : ''}
@@ -12326,6 +12385,16 @@ function renderDisciplineCalendarCard(){
       saveData();
       renderDisciplineCalendarCard();
       showToast('Événement supprimé');
+    });
+  });
+  wrap.querySelectorAll('[data-action="toggle-disable-own-calendar-event"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
+      if(!entry) return;
+      entry.disabled = !entry.disabled;
+      saveData();
+      renderDisciplineCalendarCard();
+      showToast(entry.disabled ? 'Événement désactivé — plus de convoc possible, retiré de ton PDF' : 'Événement réactivé');
     });
   });
 }
