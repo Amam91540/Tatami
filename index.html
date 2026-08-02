@@ -1494,6 +1494,12 @@ function ensureSettings(){
   if(!data.calendarEvents) data.calendarEvents = [];
   if(!data.beltPassages) data.beltPassages = [];
   if(!data.settings.deletedCalendarCompetitions) data.settings.deletedCalendarCompetitions = [];
+  // Distinct de deletedCalendarCompetitions (qui masque juste l'entrée BRUTE une fois matérialisée
+  // en événement normal, voir migrateFederationCalendarOnce) : ceci mémorise qu'un événement
+  // fédéral déjà matérialisé a été supprimé DÉLIBÉRÉMENT par l'admin (voir delete-manual-event) —
+  // pour ne plus jamais le recompter comme "en attente de bascule" dans le bandeau, ni le
+  // recréer si on reclique sur "Basculer" (voir pendingFederationMigrationCount/migrateFederationCalendarOnce).
+  if(!data.settings.deletedFederationEventKeys) data.settings.deletedFederationEventKeys = [];
   if(!data.settings.competitionOverrides) data.settings.competitionOverrides = {};
   if(!data.settings.competitionProfiles) data.settings.competitionProfiles = {};
   if(!data.settings.onceFlags || typeof data.settings.onceFlags !== 'object') data.settings.onceFlags = {};
@@ -6438,6 +6444,16 @@ function renderImportedCompetitionsSettings(){
       if(!(await confirmDialog('Supprimer définitivement cette compétition de la liste ?', { danger:true, confirmLabel:'Supprimer' }))) return;
       if(!data.settings.deletedCalendarCompetitions) data.settings.deletedCalendarCompetitions = [];
       data.settings.deletedCalendarCompetitions.push(btn.dataset.key);
+      // Même mémorisation que delete-manual-event (voir deletedFederationEventKeys) : sans ça, une
+      // bascule ultérieure ("Basculer ces événements...") recréerait cette compétition qu'on vient
+      // pourtant de supprimer délibérément.
+      const rawComp = COMPETITION_CALENDAR.find(c=>competitionKey(c)===btn.dataset.key);
+      if(rawComp){
+        if(!data.settings.deletedFederationEventKeys) data.settings.deletedFederationEventKeys = [];
+        const fedKey = calendarFederationKey(rawComp.name, 'competition');
+        const migrationKey = calendarFederationMigrationKey(fedKey, effectiveCompetitionDate(rawComp), rawComp.details);
+        if(!data.settings.deletedFederationEventKeys.includes(migrationKey)) data.settings.deletedFederationEventKeys.push(migrationKey);
+      }
       saveData();
       renderImportedCompetitionsSettings();
       renderCompetitionsCalendarCard();
@@ -6537,6 +6553,16 @@ function renderImportedCompetitionsSettings(){
   wrap.querySelectorAll('[data-action="delete-manual-event"]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!(await confirmDialog('Supprimer cet événement du calendrier ?', { danger:true, confirmLabel:'Supprimer' }))) return;
+      const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
+      // Si l'événement supprimé vient du calendrier fédéral (voir migrateFederationCalendarOnce),
+      // on mémorise sa clé pour ne plus jamais le recompter comme "en attente de bascule" ni le
+      // recréer automatiquement — sinon il réapparaîtrait au prochain clic sur "Basculer" (voir
+      // pendingFederationMigrationCount).
+      if(entry && entry.source==='federation' && entry.federationKey){
+        if(!data.settings.deletedFederationEventKeys) data.settings.deletedFederationEventKeys = [];
+        const key = calendarFederationMigrationKey(entry.federationKey, entry.date, entry.details);
+        if(!data.settings.deletedFederationEventKeys.includes(key)) data.settings.deletedFederationEventKeys.push(key);
+      }
       markDeleted('calendarEvents', btn.dataset.id);
       data.calendarEvents = (data.calendarEvents||[]).filter(e=>e.id!==btn.dataset.id);
       saveData();
@@ -11249,12 +11275,16 @@ function calendarFederationMigrationKey(federationKey, date, details){
 // les 52 compétitions sont déjà bien présentes et à jour dans le classeur. En vérifiant l'état réel
 // (reste-t-il des entrées à créer ?), le bandeau ne peut plus jamais réapparaître à tort une fois
 // la bascule effectivement faite, peu importe l'état du drapeau côté serveur.
+// Une entrée déjà supprimée délibérément par l'admin (voir delete-manual-event et
+// data.settings.deletedFederationEventKeys) ne compte JAMAIS comme "en attente" — sinon supprimer
+// une compétition fédérale ferait immédiatement réapparaître le bandeau de bascule pour elle.
 function pendingFederationMigrationCount(){
   const existingKeys = new Set((data.calendarEvents||[]).filter(e=>e.source==='federation' && e.federationKey).map(e=>calendarFederationMigrationKey(e.federationKey, e.date, e.details)));
+  const deletedFederationKeys = new Set(data.settings.deletedFederationEventKeys || []);
   return COMPETITION_CALENDAR.filter(c=>{
     const federationKey = calendarFederationKey(c.name, 'competition');
     const migrationKey = calendarFederationMigrationKey(federationKey, effectiveCompetitionDate(c), c.details);
-    return !existingKeys.has(migrationKey);
+    return !existingKeys.has(migrationKey) && !deletedFederationKeys.has(migrationKey);
   }).length;
 }
 function migrateFederationCalendarOnce(defaultDiscipline){
@@ -11279,12 +11309,17 @@ function migrateFederationCalendarOnce(defaultDiscipline){
   // événement pour le remplacer : la compétition disparaît partout, sans recours. Itérer sur la
   // liste brute permet de rattraper ce cas ; la protection anti-doublon ci-dessus empêche toujours
   // de recréer une entrée qui existe déjà réellement.
+  const deletedFederationKeys = new Set(data.settings.deletedFederationEventKeys || []);
   const currentComps = COMPETITION_CALENDAR;
   currentComps.forEach(c=>{
     const federationKey = calendarFederationKey(c.name, 'competition');
     const effectiveDate = effectiveCompetitionDate(c);
     const migrationKey = calendarFederationMigrationKey(federationKey, effectiveDate, c.details);
     if(existingFederationKeys.has(migrationKey)) return;
+    // Un événement déjà supprimé DÉLIBÉRÉMENT par l'admin (voir delete-manual-event) ne doit
+    // jamais être recréé automatiquement par une bascule ultérieure — sinon "supprimer" une
+    // compétition fédérale ne servirait à rien, elle reviendrait au prochain clic sur "Basculer".
+    if(deletedFederationKeys.has(migrationKey)) return;
     const ov = getCompetitionOverride(c);
     data.calendarEvents.push({
       id: uid(), type:'competition',
