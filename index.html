@@ -11227,6 +11227,13 @@ function migrateFederationCalendarOnce(defaultDiscipline){
       // data.calendarEvents, donc modifiable/rattachable comme n'importe quel événement manuel.
       discipline: importedCompetitionDiscipline(c) || defaultDiscipline || '',
       createdByAccountId: '',
+      // Un ciblage par cours déjà choisi par l'admin AVANT la bascule (via l'ancien système
+      // override/fiche récurrente pour les compétitions "importées", voir importedCompetitionCourses)
+      // doit être conservé sur l'événement normal qui en résulte — sinon ce choix est silencieusement
+      // perdu à la migration, et l'événement redevient invisible pour tous les profs (sans courseIds)
+      // ou pire, visible pour des profs non concernés si un ancien code de secours plus permissif
+      // était encore utilisé quelque part.
+      courseIds: importedCompetitionCourses(c),
       validated: ov.validated===true, cancelled: ov.cancelled===true,
       level: c.level||'', dayLabel: c.dayLabel||'', details: c.details||[], weighIn: c.weighIn||[],
       source:'federation', federationKey
@@ -11649,12 +11656,13 @@ function renderCalendarOtherSearchResults(query){
   const ownedGroupIds = isProf ? myOwnedGroupIds() : [];
   // Un prof ne doit pas pouvoir retrouver ici (et donc convoquer pour) une compétition/un stage qui
   // n'a pas été rattaché à un de ses cours — voir importedCompetitionVisibleToProf/manualEventVisibleToProf.
-  // Pour un événement manuel, ce filtre supplémentaire ne s'applique que s'il a explicitement un
-  // courseIds renseigné ; sinon le cloisonnement par discipline (déjà fait côté serveur) suffit.
+  // Cloisonnement STRICT dans les deux cas (imported ET manuel) : sans cours coché intersectant les
+  // siens, un prof ne doit jamais pouvoir le retrouver ici, même si courseIds est absent/vide — voir
+  // le commentaire de manualEventVisibleToProf (remplace l'ancien cloisonnement par discipline).
   const all = getAllCalendarEntries().filter(en=>{
     if(!isProf) return true;
     if(en.kind==='imported') return Array.isArray(en.courseIds) && en.courseIds.length>0 && en.courseIds.some(id=>ownedGroupIds.includes(id));
-    return !Array.isArray(en.courseIds) || (en.courseIds.length>0 && en.courseIds.some(id=>ownedGroupIds.includes(id)));
+    return manualEventVisibleToProf(en, ownedGroupIds);
   });
   const matches = all.filter(en=> (en.name||'').toLowerCase().includes(q) || (en.city||'').toLowerCase().includes(q));
   wrap.innerHTML = matches.slice(0,50).map(en=>`
