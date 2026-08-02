@@ -1825,6 +1825,17 @@ async function attemptLogin(){
     const json = await res.json();
     if(json && json.ok){
       setSession({ sessionToken: json.sessionToken, accountId: json.accountId, role: json.role, groupIds: json.groupIds||[], name: json.name, username });
+      // Le cache local (dojo-data / dojo-synced-snapshot) n'est PAS séparé par compte : sur un
+      // appareil déjà utilisé pour un autre compte (ex: l'admin qui teste un compte prof sur son
+      // propre navigateur), il contient encore la version complète, non filtrée par rôle, du
+      // dernier compte connecté. Sans ce nettoyage, la phase 1 de loadData() l'affiche brièvement
+      // tel quel, ET la fusion protectrice de pullFromBackend (pensée pour ne jamais perdre une
+      // modif locale pas encore envoyée) le réinjecte ensuite dans les données pourtant filtrées
+      // par le serveur pour CE compte — d'où des cours/groupes visibles par un prof alors que son
+      // compte n'y a pas accès. On repart d'une ardoise vierge à chaque connexion réussie : la
+      // vraie donnée (déjà correctement filtrée côté serveur) arrive de toute façon immédiatement
+      // après via startApp() -> loadData() -> pullFromBackend().
+      try{ localStorage.removeItem('dojo-data'); localStorage.removeItem('dojo-synced-snapshot'); }catch(e){}
       passwordEl.value = '';
       hideLoginScreen();
       startApp();
