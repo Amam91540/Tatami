@@ -9893,16 +9893,20 @@ function buildCalendarGridHtml(monthBlocks, logoSrc, title, showLegend){
         </div>`).join('')}
     </div>`;
 }
-async function generateCalendarPdf(categoryFilter){
+// entriesOverride/buttonId permettent de réutiliser exactement la même génération de PDF pour un
+// sous-ensemble déjà filtré du calendrier (ex: seulement les événements visibles par un prof, voir
+// myVisibleCalendarEntries()/renderDisciplineCalendarCard) sans dupliquer toute cette fonction —
+// par défaut (admin, "Réglages > Calendrier"), le comportement reste inchangé.
+async function generateCalendarPdf(categoryFilter, entriesOverride, buttonId){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
     showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
     return;
   }
-  const allEntries = getAllCalendarEntries();
+  const allEntries = entriesOverride || getAllCalendarEntries();
   const entries = categoryFilter==='all' ? allEntries : allEntries.filter(en=>calendarEntryAppliesToCategory(en.ageCategories, categoryFilter));
   if(entries.length===0){ showToast('Aucun événement à inclure pour cette sélection'); return; }
 
-  const btn = document.getElementById(categoryFilter==='all' ? 'generateGeneralCalendarBtn' : 'generateCategoryCalendarBtn');
+  const btn = document.getElementById(buttonId || (categoryFilter==='all' ? 'generateGeneralCalendarBtn' : 'generateCategoryCalendarBtn'));
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
   try{
@@ -11068,8 +11072,8 @@ function deriveDisciplineFromCourseIds(courseIds){
   }
   return '';
 }
-function courseCheckboxesHtml(courseIds){
-  const courses = calendarSelectableCourses();
+function courseCheckboxesHtml(courseIds, availableCourses){
+  const courses = availableCourses || calendarSelectableCourses();
   if(courses.length===0) return '';
   const selected = Array.isArray(courseIds) ? courseIds : [];
   return `
@@ -11092,6 +11096,26 @@ function calendarCourseTagsHtml(courseIds){
 function myOwnedGroupIds(){
   const session = getSession();
   return (session && Array.isArray(session.groupIds)) ? session.groupIds : [];
+}
+// Cours "réels" (voir calendarSelectableCourses) qui appartiennent au prof connecté, pour lui
+// proposer UNIQUEMENT ses propres cours dans le sélecteur de ciblage de son formulaire d'événement
+// (jamais la liste complète des cours du club, réservée à l'admin).
+function myOwnedCourses(){
+  const ownedGroupIds = myOwnedGroupIds();
+  return calendarSelectableCourses().filter(g=>ownedGroupIds.includes(g.id));
+}
+// Entrées de calendrier (compétitions/stages importés ET événements manuels, forme "à plat" de
+// getAllCalendarEntries) réellement visibles par le prof connecté — même règle de cloisonnement
+// stricte par cours que renderCalendarOtherSearchResults/manualEventVisibleToProf. Utilisé pour
+// générer un PDF de calendrier qui ne contient QUE ce que ce prof a le droit de voir.
+function myVisibleCalendarEntries(){
+  const session = getSession();
+  if(!session || session.role!=='prof') return [];
+  const ownedGroupIds = myOwnedGroupIds();
+  return getAllCalendarEntries().filter(en=>{
+    if(en.kind==='imported') return Array.isArray(en.courseIds) && en.courseIds.length>0 && en.courseIds.some(id=>ownedGroupIds.includes(id));
+    return manualEventVisibleToProf(en, ownedGroupIds);
+  });
 }
 // Catégories d'âge réellement représentées parmi les élèves des cours d'un prof (même logique que
 // groupedCategoriesAvailable(), restreinte à ses propres cours) : pour son formulaire d'ajout
@@ -11653,17 +11677,10 @@ function renderCalendarOtherSearchResults(query){
   if(!q){ wrap.innerHTML = ''; return; }
   const session = getSession();
   const isProf = !!(session && session.role==='prof');
-  const ownedGroupIds = isProf ? myOwnedGroupIds() : [];
   // Un prof ne doit pas pouvoir retrouver ici (et donc convoquer pour) une compétition/un stage qui
-  // n'a pas été rattaché à un de ses cours — voir importedCompetitionVisibleToProf/manualEventVisibleToProf.
-  // Cloisonnement STRICT dans les deux cas (imported ET manuel) : sans cours coché intersectant les
-  // siens, un prof ne doit jamais pouvoir le retrouver ici, même si courseIds est absent/vide — voir
-  // le commentaire de manualEventVisibleToProf (remplace l'ancien cloisonnement par discipline).
-  const all = getAllCalendarEntries().filter(en=>{
-    if(!isProf) return true;
-    if(en.kind==='imported') return Array.isArray(en.courseIds) && en.courseIds.length>0 && en.courseIds.some(id=>ownedGroupIds.includes(id));
-    return manualEventVisibleToProf(en, ownedGroupIds);
-  });
+  // n'a pas été rattaché à un de ses cours — voir myVisibleCalendarEntries() (même règle stricte,
+  // partagée avec la génération de PDF de son calendrier).
+  const all = isProf ? myVisibleCalendarEntries() : getAllCalendarEntries();
   const matches = all.filter(en=> (en.name||'').toLowerCase().includes(q) || (en.city||'').toLowerCase().includes(q));
   wrap.innerHTML = matches.slice(0,50).map(en=>`
     <div class="convoc-row" data-action="pick-calendar-other" data-key="${escapeHtml(en.key)}" style="cursor:pointer;">
@@ -12085,6 +12102,7 @@ function renderDisciplineCalendarCard(){
   section.style.display = '';
   if(ui.addingOwnCalendarEvent===undefined) ui.addingOwnCalendarEvent = false;
   const ownedAgeCategories = myOwnedAgeCategories();
+  const ownedCourses = myOwnedCourses();
   const label = disciplines.map(d=>CALENDAR_DISCIPLINE_LABELS[d]).join(' / ');
   const rows = disciplineCalendarRows(disciplines);
   const today = new Date(); today.setHours(0,0,0,0);
@@ -12094,19 +12112,19 @@ function renderDisciplineCalendarCard(){
     const f = r.kind==='imported' ? {
       name: effectiveCompetitionName(r.c), city: effectiveCompetitionCity(r.c),
       icon: r.c.type==='stage' ? '🥋' : '🏆', mine: false, id: null, dateLabel: r.date?fmtDate(r.date):escapeHtml(r.c.dayLabel||''),
-      ageCategories: importedCompetitionAgeCategories(r.c)
+      ageCategories: importedCompetitionAgeCategories(r.c), courseIds: importedCompetitionCourses(r.c)
     } : {
       name: r.e.name||'', city: r.e.city||'',
       icon: r.e.type==='stage' ? '🥋' : '🏆', mine: session.accountId && r.e.createdByAccountId===session.accountId,
       id: r.e.id, dateLabel: r.e.date?fmtDateRange(r.e.date, r.e.dateEnd):'',
-      ageCategories: r.e.ageCategories!==undefined ? r.e.ageCategories : []
+      ageCategories: r.e.ageCategories!==undefined ? r.e.ageCategories : [], courseIds: r.e.courseIds
     };
     return `
     <div class="convoc-row" data-row-key="${r.kind}-${escapeHtml(f.id||competitionKey(r.c))}" style="align-items:flex-start;">
       <div class="info">
         <div class="n">${f.icon} ${escapeHtml(f.name)}${f.mine?' <span class="tag">Ajouté par toi</span>':''}</div>
         <div class="e">${f.dateLabel}${f.city?' · '+escapeHtml(f.city):''}</div>
-        <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(f.ageCategories)}</div>
+        <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(f.ageCategories)}${calendarCourseTagsHtml(f.courseIds)}</div>
       </div>
       ${f.mine ? `
       <div style="display:flex; gap:4px; flex-shrink:0;">
@@ -12120,6 +12138,20 @@ function renderDisciplineCalendarCard(){
   wrap.innerHTML = `
     <h2 style="margin-top:0;">📅 Calendrier ${escapeHtml(label)}</h2>
     <p style="font-size:12.5px; color:var(--ink-dim); margin:-4px 0 10px;">Compétitions et stages de ta discipline. Tu peux ajouter tes propres événements ; seuls ceux que tu as toi-même ajoutés peuvent être modifiés ou supprimés depuis ici.</p>
+    <div class="row" style="margin-bottom:${ownedAgeCategories.length>0 ? '8' : '10'}px;">
+      <button class="primary" id="generateProfGeneralCalendarBtn" style="flex:1;">📅 Calendrier (PDF)</button>
+      ${ownedAgeCategories.length>0 ? `<button class="ghost" id="generateProfCategoryCalendarBtn" style="flex:1;">🎯 PDF de cette catégorie</button>` : ''}
+    </div>
+    ${ownedAgeCategories.length>0 ? `
+    <div class="row" style="margin-bottom:10px;">
+      <div style="flex:1;">
+        <label class="small">Catégorie du PDF</label>
+        <select id="profCalendarCategorySelect">
+          <option value="all" ${(ui.profCalendarCategoryFilter||'all')==='all'?'selected':''}>Toutes les catégories</option>
+          ${ownedAgeCategories.map(l=>`<option value="${escapeHtml(l)}" ${ui.profCalendarCategoryFilter===l?'selected':''}>${escapeHtml(l)}</option>`).join('')}
+        </select>
+      </div>
+    </div>` : ''}
     <button class="ghost icon-btn" id="toggleAddOwnCalendarEvent" style="width:100%; margin-bottom:10px;">${ui.addingOwnCalendarEvent ? '✕ Annuler l’ajout' : '+ Ajouter un événement'}</button>
     ${ui.addingOwnCalendarEvent ? `
     <div class="convoc-row" style="flex-direction:column; align-items:stretch; gap:8px; background:var(--surface-2); border-radius:10px; padding:10px; margin-bottom:10px;" data-form="add-own-calendar-event">
@@ -12150,6 +12182,7 @@ function renderDisciplineCalendarCard(){
         <select data-field="discipline">${disciplines.map(d=>`<option value="${d}">${CALENDAR_DISCIPLINE_LABELS[d]}</option>`).join('')}</select>
       </div>` : ''}
       ${ownedAgeCategories.length>0 ? ageCategoryCheckboxesHtml([], ownedAgeCategories) : ''}
+      ${ownedCourses.length>0 ? courseCheckboxesHtml(myOwnedGroupIds(), ownedCourses) : ''}
       <div class="row" style="margin-top:2px;">
         <button class="primary" data-action="save-own-calendar-event" style="flex:1;">✓ Ajouter</button>
         <button class="ghost" data-action="cancel-add-own-calendar-event" style="flex:1;">Annuler</button>
@@ -12179,6 +12212,7 @@ function renderDisciplineCalendarCard(){
         <input type="text" data-field="city" value="${escapeHtml(editingEntry.city||'')}">
       </div>
       ${ownedAgeCategories.length>0 ? ageCategoryCheckboxesHtml(editingEntry.ageCategories!==undefined?editingEntry.ageCategories:[], ownedAgeCategories) : ''}
+      ${ownedCourses.length>0 ? courseCheckboxesHtml(editingEntry.courseIds!==undefined?editingEntry.courseIds:myOwnedGroupIds(), ownedCourses) : ''}
       <div class="row" style="margin-top:2px;">
         <button class="primary" data-action="save-edit-own-calendar-event" style="flex:1;">✓ Enregistrer</button>
         <button class="ghost" data-action="cancel-edit-own-calendar-event" style="flex:1;">Annuler</button>
@@ -12191,6 +12225,13 @@ function renderDisciplineCalendarCard(){
     ${past.map(rowHtml).join('')}` : ''}
   `;
 
+  if(!ui.profCalendarCategoryFilter) ui.profCalendarCategoryFilter = 'all';
+  const genProfGeneralBtn = document.getElementById('generateProfGeneralCalendarBtn');
+  if(genProfGeneralBtn) genProfGeneralBtn.addEventListener('click', ()=> generateCalendarPdf('all', myVisibleCalendarEntries(), 'generateProfGeneralCalendarBtn'));
+  const genProfCatBtn = document.getElementById('generateProfCategoryCalendarBtn');
+  if(genProfCatBtn) genProfCatBtn.addEventListener('click', ()=> generateCalendarPdf(ui.profCalendarCategoryFilter, myVisibleCalendarEntries(), 'generateProfCategoryCalendarBtn'));
+  const profCatSelect = document.getElementById('profCalendarCategorySelect');
+  if(profCatSelect) profCatSelect.addEventListener('change', ()=>{ ui.profCalendarCategoryFilter = profCatSelect.value; });
   const toggleBtn = document.getElementById('toggleAddOwnCalendarEvent');
   if(toggleBtn) toggleBtn.addEventListener('click', ()=>{
     ui.addingOwnCalendarEvent = !ui.addingOwnCalendarEvent;
@@ -12223,11 +12264,12 @@ function renderDisciplineCalendarCard(){
         address: '',
         ageCategories: readAgeCategoriesFromForm(addForm),
         discipline,
-        // Ce mini-formulaire ne propose pas de choisir un cours précis (un prof n'a pas cette
-        // granularité ici) : on rattache directement l'événement à TOUS ses cours, sinon il
-        // deviendrait invisible même pour lui-même sous le nouveau cloisonnement strict par cours
-        // (voir manualEventVisibleToProf / filterDataForRole côté Code.gs).
-        courseIds: myOwnedGroupIds(),
+        // Le prof choisit lequel de SES cours est concerné (parmi ownedCourses uniquement — voir
+        // courseCheckboxesHtml(myOwnedGroupIds(), ownedCourses) ci-dessus). S'il ne coche rien
+        // (ou n'a qu'un seul cours et ne touche pas au réglage), on retombe sur tous ses cours par
+        // défaut, pour ne jamais créer un événement invisible pour lui-même (voir
+        // manualEventVisibleToProf / filterDataForRole côté Code.gs).
+        courseIds: (()=>{ const chosen = readCourseIdsFromForm(addForm); return chosen.length>0 ? chosen : myOwnedGroupIds(); })(),
         createdByAccountId: session.accountId || ''
       };
       if(!data.calendarEvents) data.calendarEvents = [];
@@ -12256,6 +12298,9 @@ function renderDisciplineCalendarCard(){
       entry.date = newDateVal;
       entry.city = editForm.querySelector('[data-field="city"]').value.trim();
       entry.ageCategories = readAgeCategoriesFromForm(editForm);
+      // Voir save-own-calendar-event : même repli sur tous ses cours si rien n'est coché.
+      const chosenCourseIds = readCourseIdsFromForm(editForm);
+      entry.courseIds = chosenCourseIds.length>0 ? chosenCourseIds : myOwnedGroupIds();
       saveData();
       ui.editingOwnCalendarEventId = null;
       renderDisciplineCalendarCard();
