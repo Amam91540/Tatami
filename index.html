@@ -1448,7 +1448,8 @@ function openBirthdayOverlay(celebrants){
 /* ---------------- CATÉGORIES D'ÂGE ---------------- */
 function defaultAgeBands(){
   return [
-    { label:'Baby Judo/Karaté', minAge:4, maxAge:5 },
+    { label:'Baby Judo', minAge:4, maxAge:5 },
+    { label:'Baby Karate', minAge:4, maxAge:5 },
     { label:'Mini-Poussins', minAge:6, maxAge:7 },
     { label:'Poussins', minAge:8, maxAge:9 },
     { label:'Benjamins', minAge:10, maxAge:11 },
@@ -1546,13 +1547,35 @@ function cleanupUnvalidatedSessions(){
   data.settings[flag] = true;
   return toRemove.length > 0;
 }
-function computeCategory(birthDate){
+// Deux bandes d'âge (Baby Judo / Baby Karate) peuvent couvrir la même tranche d'âge (4-5 ans) —
+// voir defaultAgeBands(). Dans ce cas, on désambiguïse par le cours réel de l'élève : un enfant en
+// cours "Baby Judo" est TOUJOURS Baby Judo, jamais Baby Karaté, et inversement (demande explicite
+// de Thomas : plus question d'afficher un libellé combiné qui ne correspond à aucun cours précis).
+// `member` est optionnel (undefined) pour les rares appels sans contexte élève — dans ce cas on
+// retombe sur la première bande qui correspond à l'âge, comme avant.
+function resolveAgeBand(age, member){
+  const bands = data.settings.ageBands||[];
+  const matches = [];
+  bands.forEach((b,i)=>{ if(age>=b.minAge && age<=b.maxAge) matches.push({ band:b, index:i }); });
+  if(matches.length<=1) return matches[0] || null;
+  if(member){
+    const group = data.groups.find(g=>g.id===member.groupId);
+    const disc = group ? courseToDiscipline(group.name) : null;
+    if(disc){
+      const preferred = matches.find(({band})=>band.label===disc);
+      if(preferred) return preferred;
+    }
+  }
+  return matches[0];
+}
+function computeCategory(birthDate, member){
   if(!birthDate) return null;
   const birthYear = parseInt(birthDate.slice(0,4), 10);
   if(!birthYear) return null;
   const age = data.settings.seasonStartYear - birthYear;
-  const band = (data.settings.ageBands||[]).find(b=>age>=b.minAge && age<=b.maxAge);
-  if(!band) return null;
+  const match = resolveAgeBand(age, member);
+  if(!match) return null;
+  const band = match.band;
   const span = band.maxAge - band.minAge + 1;
   if(span<=1 || band.label==='Seniors') return band.label;
   const suffix = age - band.minAge + 1;
@@ -1584,8 +1607,8 @@ function veteranLabelForMember(m){
   const letter = m.gender==='F' ? 'F' : 'M';
   return `${letter}${bracket.num}`;
 }
-function categoryYearLabelWithVeteran(birthDate, gender){
-  const base = categoryYearLabel(birthDate);
+function categoryYearLabelWithVeteran(birthDate, gender, member){
+  const base = categoryYearLabel(birthDate, member);
   const vLabel = veteranLabelForMember({ birthDate, gender });
   if(!vLabel) return base;
   return base ? `${base} - Vétérans ${vLabel}` : `Vétérans ${vLabel}`;
@@ -1598,9 +1621,9 @@ function categoryLabelForResultsPdf(birthDate, gender, viaVeterans, member){
   if(viaVeterans){
     return `Vétérans ${veteranLabelForMember(member) || ''}`.trim();
   }
-  const cat = computeCategory(birthDate);
+  const cat = computeCategory(birthDate, member);
   if(!cat) return '';
-  const rank = categoryRank(birthDate);
+  const rank = categoryRank(birthDate, member);
   const bands = data.settings.ageBands||[];
   const cadetIdx = bands.findIndex(b=>b.label.toLowerCase().includes('cadet'));
   const hideYear = cadetIdx>=0 && rank.bandIdx >= cadetIdx;
@@ -1755,6 +1778,37 @@ function nextSeasonStartYear(){
 // un drapeau posé en phase 1 empêchait la correction de se réappliquer en phase 2 sur les données
 // serveur qui contenaient encore "Poussinets". Cette fonction est donc idempotente et se relance à
 // chaque chargement (comparaison insensible à la casse/aux espaces, coût négligeable).
+// Migration ponctuelle : l'ancienne bande combinée "Baby Judo/Karaté" ne permettait pas de savoir
+// si un·e élève en Baby Judo devait être catégorisé·e "Baby Judo" ou "Baby Karaté" — on la remplace
+// par deux bandes distinctes (même tranche d'âge 4-5 ans), resolveAgeBand() se chargeant ensuite de
+// choisir la bonne selon le cours réel de l'élève. Nécessaire pour les données déjà enregistrées
+// (defaultAgeBands() ne sert qu'à l'amorçage d'une toute nouvelle installation, voir ensureSettings).
+function splitBabyJudoKarateAgeBandOnce(){
+  let changed = false;
+  const bands = data.settings.ageBands||[];
+  const idx = bands.findIndex(b=> b && typeof b.label==='string' && b.label.trim().toLowerCase()==='baby judo/karaté');
+  if(idx!==-1){
+    const old = bands[idx];
+    bands.splice(idx, 1,
+      { label:'Baby Judo', minAge:old.minAge, maxAge:old.maxAge },
+      { label:'Baby Karate', minAge:old.minAge, maxAge:old.maxAge }
+    );
+    data.settings.ageBands = bands;
+    changed = true;
+  }
+  (data.calendarEvents||[]).forEach(ev=>{
+    if(Array.isArray(ev.ageCategories) && ev.ageCategories.some(c=>typeof c==='string' && c.trim().toLowerCase()==='baby judo/karaté')){
+      const mapped = [];
+      ev.ageCategories.forEach(c=>{
+        if(typeof c==='string' && c.trim().toLowerCase()==='baby judo/karaté'){ mapped.push('Baby Judo', 'Baby Karate'); }
+        else mapped.push(c);
+      });
+      ev.ageCategories = mapped;
+      changed = true;
+    }
+  });
+  return changed;
+}
 function renamePoussinetsToMiniPoussins(){
   let changed = false;
   const isPoussinets = s => typeof s === 'string' && s.trim().toLowerCase() === 'poussinets';
@@ -1796,6 +1850,13 @@ function setSession(session){
 }
 function clearSession(){
   localStorage.removeItem('dojo-session');
+}
+// Un prof ne doit jamais voir les informations financières d'un élève (montant dû, payé ou non) —
+// utilisé pour masquer le bloc Cotisation de la fiche élève (voir renderGroupsTab) et bloquer en
+// défense l'ouverture de son détail même si ce point d'entrée était atteint autrement un jour.
+function isProfSession(){
+  const session = getSession();
+  return !!(session && session.role === 'prof');
 }
 
 function showLoginScreen(errorMsg){
@@ -1874,6 +1935,7 @@ function applyDataInvariants(){
   if(ensureLicensePendingGroupOnce()){ saveData(); }
   if(dedupeSpecialGroup(isLicensePendingGroup)){ saveData(); }
   if(renamePoussinetsToMiniPoussins()){ saveData(); }
+  if(splitBabyJudoKarateAgeBandOnce()){ saveData(); }
   if(renumberBordereauFoliosIfDuplicated()){ saveData(); }
   if(ensureBordereauFolioCounterConsistency()){ saveData(); }
   if(autoAssignAllPendingPaymentsToBordereaux()){ saveData(); }
@@ -2678,7 +2740,7 @@ function renderGroupsTab(){
       <div class="small" style="color:var(--ink-dim); margin-top:4px;">Ajoute une fiche liée (déjà existante ailleurs) dans ce groupe, sans la retirer de son cours d'origine.</div>
       ` : ''}
       ${members.map((m, idx)=>{
-        const cat = computeCategory(m.birthDate);
+        const cat = computeCategory(m.birthDate, m);
         const nameParts = String(m.name||'').trim().split(/\s+/);
         const prenom = nameParts[0]||'';
         const nom = nameParts.slice(1).join(' ');
@@ -2689,7 +2751,7 @@ function renderGroupsTab(){
             <div class="fiche-summary-name">
               ${genderBadgeHtml(m.gender)}
               <span class="fs-prenom">${escapeHtml(prenom)}</span> <strong>${escapeHtml(nom)}</strong>
-              ${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender))}</span>` : ''}
+              ${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender, m))}</span>` : ''}
             </div>
             <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
               ${m.belt ? beltSwatchHtml(m.belt, true) : ''}
@@ -2711,7 +2773,7 @@ function renderGroupsTab(){
                 <div style="margin-top:8px;"><span class="field-label">Certificat médical</span><div>${m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">N° de licence</span><div>${m.licenseNumber ? escapeHtml(m.licenseNumber) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Cours</span><div>${curGroup ? escapeHtml(curGroup.name) : '—'}</div></div>
-                <div style="margin-top:8px;"><span class="field-label">Cotisation</span><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">${memberDueBadgeHtml(m)}<button class="ghost" data-action="open-member-cotisation" data-id="${m.id}" style="padding:4px 10px; font-size:12px;">Détail &amp; paiements</button></div></div>
+                ${isProfSession() ? '' : `<div style="margin-top:8px;"><span class="field-label">Cotisation</span><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">${memberDueBadgeHtml(m)}<button class="ghost" data-action="open-member-cotisation" data-id="${m.id}" style="padding:4px 10px; font-size:12px;">Détail &amp; paiements</button></div></div>`}
                 ${committee ? `<div style="margin-top:8px;"><span class="field-label">Fonction</span><div>${m.committeeRole ? escapeHtml(m.committeeRole) : '—'}</div></div>` : ''}
                 ${m.note ? `<div style="margin-top:8px;"><span class="field-label">Note</span><div style="white-space:pre-wrap;">${escapeHtml(m.note)}</div></div>` : ''}
                 ${(m.linkedMemberId && !isLicensePendingGroup(curGroup)) ? `<div style="margin-top:8px; color:var(--ink-dim); font-size:12.5px;">🔗 Fiche liée déjà créée dans « Licence à prendre » pour la saison prochaine — synchronisée automatiquement.</div>` : ''}
@@ -5083,6 +5145,7 @@ function closeMemberCotisationOverlay(){
   overlay.innerHTML = '';
 }
 function openMemberCotisationOverlay(memberId){
+  if(isProfSession()) return; // garde-fou : jamais de détail financier pour un compte prof
   const overlay = document.getElementById('member-cotisation-overlay');
   if(!overlay) return;
   renderMemberCotisationOverlay(memberId);
@@ -5563,7 +5626,7 @@ function buildChequeSportHtml(m, feeAmount, caf, passSport, inscriptionDate, sea
   const genderLabel = m.gender==='F' ? 'Féminin' : (m.gender==='M' ? 'Masculin' : '—');
   const group = data.groups.find(g=>g.id===m.groupId);
   const disciplineLabel = group ? (courseToDiscipline(group.name) || group.name) : '—';
-  const categoryLabel = computeCategory(m.birthDate) || '—';
+  const categoryLabel = computeCategory(m.birthDate, m) || '—';
   const F = v => (v!==undefined && v!==null && v!=='') ? String(v).replace('.',',') : '';
   const fmtDateSlash = fmtDateShort;
   // Reproduit le style "à points" du formulaire papier d'origine : la valeur remplie est écrite
@@ -8052,7 +8115,7 @@ function renderSuiviContent(){
       return `
         <div class="member-stat">
           <div class="stat-line">
-            <span class="who">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${computeCategory(m.birthDate) ? `<span class="tag">${escapeHtml(categoryYearLabel(m.birthDate))}</span>` : ''}</span>
+            <span class="who">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${computeCategory(m.birthDate, m) ? `<span class="tag">${escapeHtml(categoryYearLabel(m.birthDate, m))}</span>` : ''}</span>
             <span class="pct">${pct}%</span>
           </div>
           <div class="frac">${present}/${totalForMember} séance${totalForMember===1?'':'s'}${guestSessions.length? ` <span style="color:var(--ink-dim);">(dont ${guestSessions.length} en invité(e) dans un autre cours)</span>` : ''}</div>
@@ -10030,27 +10093,24 @@ function displayNameOrder(name){
   const nom = parts.slice(1).join(' ');
   return `${nom} ${prenom}`;
 }
-function categoryRank(birthDate){
+function categoryRank(birthDate, member){
   if(!birthDate) return { bandIdx: 999, suffix: 999 };
   const birthYear = parseInt(birthDate.slice(0,4),10);
   if(!birthYear) return { bandIdx: 999, suffix: 999 };
   const age = (data.settings.seasonStartYear||autoSeasonStartYear()) - birthYear;
-  const bands = data.settings.ageBands||[];
-  for(let i=0;i<bands.length;i++){
-    const b = bands[i];
-    if(age>=b.minAge && age<=b.maxAge) return { bandIdx:i, suffix: age-b.minAge+1 };
-  }
-  return { bandIdx: 999, suffix: 999 };
+  const match = resolveAgeBand(age, member);
+  if(!match) return { bandIdx: 999, suffix: 999 };
+  return { bandIdx: match.index, suffix: age - match.band.minAge + 1 };
 }
 function sortMembersByCategoryThenName(members){
   return [...members].sort((a,b)=>{
-    const ra = categoryRank(a.birthDate), rb = categoryRank(b.birthDate);
+    const ra = categoryRank(a.birthDate, a), rb = categoryRank(b.birthDate, b);
     if(ra.bandIdx !== rb.bandIdx) return ra.bandIdx - rb.bandIdx;
     return memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr');
   });
 }
-function groupedCategoryLabel(birthDate){
-  const rank = categoryRank(birthDate);
+function groupedCategoryLabel(birthDate, member){
+  const rank = categoryRank(birthDate, member);
   const bands = data.settings.ageBands||[];
   if(rank.bandIdx>=0 && rank.bandIdx<bands.length) return bands[rank.bandIdx].label;
   return 'Sans catégorie';
@@ -10058,7 +10118,7 @@ function groupedCategoryLabel(birthDate){
 function groupedCategoriesAvailable(){
   const labels = [];
   (data.settings.ageBands||[]).forEach(b=>{
-    const hasAny = data.members.some(m=>!m.archived && groupedCategoryLabel(m.birthDate)===b.label);
+    const hasAny = data.members.some(m=>!m.archived && groupedCategoryLabel(m.birthDate, m)===b.label);
     if(hasAny && !labels.includes(b.label)) labels.push(b.label);
   });
   if(data.members.some(m=>!m.archived && veteranLabelForMember(m))) labels.push('Vétérans');
@@ -10066,7 +10126,7 @@ function groupedCategoriesAvailable(){
 }
 function memberMatchesGroupedCategory(member, groupLabel){
   if(groupLabel==='Vétérans') return !!veteranLabelForMember(member);
-  return groupedCategoryLabel(member.birthDate) === groupLabel;
+  return groupedCategoryLabel(member.birthDate, member) === groupLabel;
 }
 function allowedCategoriesForCompetitionName(eventName){
   const matchedLabel = matchConfiguredBandLabel(eventName);
@@ -10092,8 +10152,8 @@ function restrictedCategoriesForCurrentEvent(){
   const filtered = available.filter(c=>allowed.includes(c));
   return filtered.length ? filtered : null;
 }
-function categoryYearLabel(birthDate){
-  const cat = computeCategory(birthDate);
+function categoryYearLabel(birthDate, member){
+  const cat = computeCategory(birthDate, member);
   if(!cat) return '';
   // Les Seniors n'ont pas de sous-catégorie annuelle (contrairement aux jeunes) : on n'affiche donc
   // pas leur année de naissance entre parenthèses, ça n'apporte pas d'information utile.
@@ -10142,11 +10202,11 @@ function categoryLegendListForPdf(){
   const bands = data.settings.ageBands||[];
   return [...bands.map(b=>({ label:b.label, color:categoryColorForLabel(b.label) })), { label:'Vétérans', color:VETERAN_CATEGORY_COLOR }];
 }
-function renderRowsWithCategoryDividers(items, birthDateOf, rowRenderer){
+function renderRowsWithCategoryDividers(items, birthDateOf, rowRenderer, memberOf){
   let html = '';
   let lastLabel = null;
   items.forEach(item=>{
-    const label = groupedCategoryLabel(birthDateOf(item));
+    const label = groupedCategoryLabel(birthDateOf(item), memberOf ? memberOf(item) : undefined);
     if(label !== lastLabel){
       html += `<div class="category-divider">${escapeHtml(bandYearRangeLabel(label))}</div>`;
       lastLabel = label;
@@ -10155,11 +10215,11 @@ function renderRowsWithCategoryDividers(items, birthDateOf, rowRenderer){
   });
   return html;
 }
-function renderRowsWithCollapsibleCategoryDividers(items, birthDateOf, rowRenderer, expandedState){
+function renderRowsWithCollapsibleCategoryDividers(items, birthDateOf, rowRenderer, expandedState, memberOf){
   const groups = {};
   const order = [];
   items.forEach(item=>{
-    const label = (item && item.viaVeterans) ? 'Vétérans' : groupedCategoryLabel(birthDateOf(item));
+    const label = (item && item.viaVeterans) ? 'Vétérans' : groupedCategoryLabel(birthDateOf(item), memberOf ? memberOf(item) : undefined);
     if(!groups[label]){ groups[label]=[]; order.push(label); }
     groups[label].push(item);
   });
@@ -10500,15 +10560,15 @@ function renderConvocTab(){
     ${expanded ? (members.length===0 ? '<div class="empty">Aucun pratiquant pour cette sélection.</div>' : renderRowsWithCategoryDividers(members, m=>m.birthDate, m=>{
       const alreadyInvited = isAlreadyInvited(m);
       const checked = alreadyInvited || ui.convocChecked[m.id] === true;
-      const cat = computeCategory(m.birthDate);
+      const cat = computeCategory(m.birthDate, m);
       return `
       <div class="convoc-row"${alreadyInvited?' style="opacity:.6;"':''}>
         <input type="checkbox" data-member="${m.id}" ${checked?'checked':''} ${alreadyInvited?'disabled':''}>
         <div class="info">
-<div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender))}</span>` : ''}${alreadyInvited ? `<span class="tag">✓ Déjà convoqué(e)</span>` : ''}</div>          <div class="e">${m.email ? escapeHtml(m.email) : 'Pas d’email renseigné'}</div>
+<div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender, m))}</span>` : ''}${alreadyInvited ? `<span class="tag">✓ Déjà convoqué(e)</span>` : ''}</div>          <div class="e">${m.email ? escapeHtml(m.email) : 'Pas d’email renseigné'}</div>
         </div>
       </div>`;
-    })) : ''}
+    }, m=>m)) : ''}
   `;
   const convocBackBtn = membersWrap.querySelector('[data-action="back-to-current-season"]');
   if(convocBackBtn) convocBackBtn.addEventListener('click', ()=>{ ui.viewingSeasonId = null; renderActiveTab(); });
@@ -11540,7 +11600,9 @@ function eventHasMissingResults(ev){
 }
   function allResultsFilledForEvent(ev){
   const presents = recipientsInSeasonView(ev.recipients||[]).filter(r=>r.response==='present');
-  if(presents.length===0) return false;
+  // 0 participant présent (personne n'a répondu présent, ou tout le monde a décliné/n'a pas répondu) :
+  // il n'y a alors aucun résultat à renseigner, donc rien ne doit empêcher d'archiver la compétition.
+  if(presents.length===0) return true;
   return presents.every(r=> !!(r.result && String(r.result).trim()));
 }
 function updateArchiveResultsButton(){
@@ -11554,7 +11616,11 @@ function updateArchiveResultsButton(){
   archiveBtn.title = filled ? '' : 'Renseigne le résultat de tous les présents avant de pouvoir archiver cette compétition';
   archiveBtn.onclick = async ()=>{
     if(!filled){ showToast('Renseigne le résultat de tous les présents avant d’archiver'); return; }
-    if(!(await confirmDialog(`Archiver « ${ev.name} » ? Elle disparaîtra de la liste déroulante mais restera consultable dans l'historique ci-dessous.`, { confirmLabel:'Archiver' }))) return;
+    const presentsCount = recipientsInSeasonView(ev.recipients||[]).filter(r=>r.response==='present').length;
+    const confirmMsg = presentsCount===0
+      ? `Archiver « ${ev.name} » ? Aucun participant n'était présent — elle disparaîtra de la liste déroulante mais restera consultable dans l'historique ci-dessous.`
+      : `Archiver « ${ev.name} » ? Elle disparaîtra de la liste déroulante mais restera consultable dans l'historique ci-dessous.`;
+    if(!(await confirmDialog(confirmMsg, { confirmLabel:'Archiver' }))) return;
     ev.resultsArchived = true;
     saveData();
     ui.resultsEventId = null;
@@ -11564,6 +11630,7 @@ function updateArchiveResultsButton(){
 }
 function renderArchivedEventResultsHtml(ev){
   const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+  const memberOf = r => data.members.find(x=>x.id===r.memberId);
   const presents = recipientsInSeasonView(ev.recipients).filter(r=>r.response==='present');
   if(presents.length===0) return '<div class="empty">Aucun participant présent.</div>';
   const shiai = isShiaiEvent(ev.name);
@@ -12316,7 +12383,7 @@ function refreshAddResultWeightField(){
     return;
   }
   const member = ui.addResultMatchedMemberId ? data.members.find(m=>m.id===ui.addResultMatchedMemberId) : null;
-  const bandLabel = member ? groupedCategoryLabel(member.birthDate) : null;
+  const bandLabel = member ? groupedCategoryLabel(member.birthDate, member) : null;
   const cats = bandLabel ? weightOptionsForBandLabel(bandLabel) : null;
   const dateInput = document.getElementById('addResultDate');
   const suggested = member ? getMemberLastWeight(member.id, dateInput ? dateInput.value : '', ui.addResultDraftEventId) : '';
@@ -12354,7 +12421,7 @@ function refreshAddResultQualification(){
   if(!isQualifyingCompetitionName(nameInput.value)){ wrap.innerHTML = ''; return; }
   const checked = !!ui.addResultQualificationChecked;
   const member = ui.addResultMatchedMemberId ? data.members.find(m=>m.id===ui.addResultMatchedMemberId) : null;
-  const categoryLabel = member ? groupedCategoryLabel(member.birthDate) : null;
+  const categoryLabel = member ? groupedCategoryLabel(member.birthDate, member) : null;
   wrap.innerHTML = `
     <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13.5px; cursor:pointer;">
       <input type="checkbox" id="addResultQualifCheck" ${checked?'checked':''}> Qualification
@@ -12414,11 +12481,12 @@ function renderResultsDashboard(){
   const monthPrefix = `${targetYear}-${String(targetMonth+1).padStart(2,'0')}`;
   const activeCats = groupedCategoriesAvailable().filter(c => ui.recapCategoriesFilter[c] !== false);
   const birthDateOfRecipient = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+  const memberOfRecipient = r => data.members.find(x=>x.id===r.memberId);
 
   const events = (data.convocEvents||[]).filter(ev => (ev.date||'').startsWith(monthPrefix));
   let totalParticipants = 0, gold = 0, silver = 0, bronze = 0, competitionsWithMatch = 0;
   events.forEach(ev=>{
-    const presents = recipientsInSeasonView(ev.recipients).filter(r=> r.response==='present' && activeCats.includes(groupedCategoryLabel(birthDateOfRecipient(r))));
+    const presents = recipientsInSeasonView(ev.recipients).filter(r=> r.response==='present' && activeCats.includes(groupedCategoryLabel(birthDateOfRecipient(r), memberOfRecipient(r))));
     if(presents.length>0) competitionsWithMatch++;
     presents.forEach(r=>{
       totalParticipants++;
@@ -12473,6 +12541,7 @@ function renderResultsList(){
   }
   const shiai = isShiaiEvent(ev.name);
   const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+  const memberOf = r => data.members.find(x=>x.id===r.memberId);
   if(shiai){
     let changed = false;
     presents.forEach(r=>{ if(r.weight !== 'Poule morphologique'){ r.weight = 'Poule morphologique'; changed = true; } });
@@ -12489,7 +12558,7 @@ function renderResultsList(){
     if(changed) saveData();
   }
   const sorted = [...presents].sort((a,b)=>{
-    const ra = categoryRank(birthDateOf(a)), rb = categoryRank(birthDateOf(b));
+    const ra = categoryRank(birthDateOf(a), memberOf(a)), rb = categoryRank(birthDateOf(b), memberOf(b));
     if(ra.bandIdx !== rb.bandIdx) return ra.bandIdx - rb.bandIdx;
     if(ra.suffix !== rb.suffix) return ra.suffix - rb.suffix;
     return memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr');
@@ -12505,7 +12574,7 @@ function renderResultsList(){
         <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; cursor:pointer;">
           <input type="checkbox" data-action="qualif-check" data-event="${ev.id}" data-member="${r.memberId}" ${qualifChecked?'checked':''}> Qualification
         </label>
-        ${qualifChecked ? `<div style="margin-top:5px;">${qualificationSelectHtml(`data-action="qualif-select" data-event="${ev.id}" data-member="${r.memberId}"`, r.qualificationFor||'', groupedCategoryLabel(birthDateOf(r)))}</div>` : ''}
+        ${qualifChecked ? `<div style="margin-top:5px;">${qualificationSelectHtml(`data-action="qualif-select" data-event="${ev.id}" data-member="${r.memberId}"`, r.qualificationFor||'', groupedCategoryLabel(birthDateOf(r), memberOf(r)))}</div>` : ''}
       </div>` : '';
     return `
     <div class="convoc-row" style="flex-direction:column; align-items:stretch; gap:6px;">
@@ -12523,7 +12592,7 @@ function renderResultsList(){
       </div>
       ${qualifSection}
     </div>`;
-  }, ui.resultsCategoryExpanded[expandedKey]);
+  }, ui.resultsCategoryExpanded[expandedKey], memberOf);
   wrap.querySelectorAll('[data-action="toggle-results-category"]').forEach(el=>{
     el.addEventListener('click', ()=>{
       const label = el.dataset.label;
@@ -12634,6 +12703,7 @@ function renderCompetitionDayMode(){
     } else {
       const shiai = isShiaiEvent(ev.name);
       const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+  const memberOf = r => data.members.find(x=>x.id===r.memberId);
       // Même pré-remplissage automatique du poids que dans l'onglet Résultats classique.
       let changed = false;
       if(shiai){
@@ -12648,7 +12718,7 @@ function renderCompetitionDayMode(){
       }
       if(changed) saveData();
       const sorted = [...presents].sort((a,b)=>{
-        const ra = categoryRank(birthDateOf(a)), rb = categoryRank(birthDateOf(b));
+        const ra = categoryRank(birthDateOf(a), memberOf(a)), rb = categoryRank(birthDateOf(b), memberOf(b));
         if(ra.bandIdx !== rb.bandIdx) return ra.bandIdx - rb.bandIdx;
         if(ra.suffix !== rb.suffix) return ra.suffix - rb.suffix;
         return memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr');
@@ -12657,7 +12727,7 @@ function renderCompetitionDayMode(){
       sorted.forEach(r=>{
         const done = !!(r.result && String(r.result).trim());
         if(done) doneCount++;
-        const cat = groupedCategoryLabel(birthDateOf(r));
+        const cat = groupedCategoryLabel(birthDateOf(r), memberOf(r));
         if(cat !== lastCat){ bodyHtml += `<div class="compday-cat-divider">${escapeHtml(cat)}</div>`; lastCat = cat; }
         const resultHtml = shiai
           ? `<div class="compday-points-row">
@@ -12903,7 +12973,7 @@ async function generateMemberPalmaresPdf(memberId){
       });
     }
 
-    const catDisplay = categoryYearLabelWithVeteran(m.birthDate, m.gender);
+    const catDisplay = categoryYearLabelWithVeteran(m.birthDate, m.gender, m);
     const beltDisplay = m.belt ? beltLabelFor(m.belt) : '';
     const buildContextHtml = (isFirst)=> !isFirst ? '' : `
       <div class="recap-header">
@@ -12958,9 +13028,10 @@ function eventMetaLine(ev){
 
 function buildEventRecipientsHtml(ev){
   const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+  const memberOf = r => data.members.find(x=>x.id===r.memberId);
   const beltOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.belt : null; };
   const sortedRecipients = recipientsInSeasonView(ev.recipients).sort((a,b)=>{
-    const ra = categoryRank(birthDateOf(a)), rb = categoryRank(birthDateOf(b));
+    const ra = categoryRank(birthDateOf(a), memberOf(a)), rb = categoryRank(birthDateOf(b), memberOf(b));
     if(ra.bandIdx !== rb.bandIdx) return ra.bandIdx - rb.bandIdx;
     if(ra.suffix !== rb.suffix) return ra.suffix - rb.suffix;
     return memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr');
@@ -13296,8 +13367,9 @@ async function generateConvocEventPdf(eventId){
 
   try{
     const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+  const memberOf = r => data.members.find(x=>x.id===r.memberId);
     const sorted = [...evRecipients].sort((a,b)=>{
-      const ra = categoryRank(birthDateOf(a)), rb = categoryRank(birthDateOf(b));
+      const ra = categoryRank(birthDateOf(a), memberOf(a)), rb = categoryRank(birthDateOf(b), memberOf(b));
       if(ra.bandIdx !== rb.bandIdx) return ra.bandIdx - rb.bandIdx;
       if(ra.suffix !== rb.suffix) return ra.suffix - rb.suffix;
       return memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr');
@@ -13306,7 +13378,7 @@ async function generateConvocEventPdf(eventId){
       const memberForCat = data.members.find(x=>x.id===r.memberId);
       const cat = r.viaVeterans
         ? `🎖️ Vétérans ${veteranLabelForMember(memberForCat) || ''}`.trim()
-        : categoryYearLabelWithVeteran(birthDateOf(r), memberForCat ? memberForCat.gender : '');
+        : categoryYearLabelWithVeteran(birthDateOf(r), memberForCat ? memberForCat.gender : '', memberForCat);
       const statusLabel = r.response==='present' ? '✅ Présent(e)' : (r.response==='absent' ? '❌ Absent(e)' : '⏳ En attente');
       return `<tr><td>${nameWithBoldSurname(r.name)}</td><td>${escapeHtml(cat||'')}</td><td>${statusLabel}</td></tr>`;
     }).join('');
@@ -13684,11 +13756,12 @@ function rankOrderIndex(result){
   const idx = RESULT_PLACEMENT_OPTIONS.indexOf(String(result||''));
   return idx===-1 ? 999 : idx;
 }
-function buildResultRowsHtml(presents, birthDateOf, shiai){
+function buildResultRowsHtml(presents, birthDateOf, shiai, memberOf){
+  memberOf = memberOf || (r => data.members.find(x=>x.id===r.memberId));
   const groups = {};
   const order = [];
   presents.forEach(r=>{
-    const label = r.viaVeterans ? 'Vétérans' : groupedCategoryLabel(birthDateOf(r));
+    const label = r.viaVeterans ? 'Vétérans' : groupedCategoryLabel(birthDateOf(r), memberOf(r));
     if(!groups[label]){ groups[label]=[]; order.push(label); }
     groups[label].push(r);
   });
@@ -13887,6 +13960,7 @@ async function generateSocialMediaVisual(eventId){
   if(btn) btn.disabled = true;
   try{
     const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+  const memberOf = r => data.members.find(x=>x.id===r.memberId);
     const shiaiEvent = isShiaiEvent(ev.name);
     const html = buildSocialVisualHtml(ev, presents, birthDateOf, shiaiEvent);
     if(document.fonts && document.fonts.ready){ try{ await document.fonts.ready; }catch(e){} }
@@ -13918,6 +13992,7 @@ async function generateEventResultsPdfForId(eventId){
 
   try{
     const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+  const memberOf = r => data.members.find(x=>x.id===r.memberId);
     const shiaiEvent = isShiaiEvent(ev.name);
     const { rows, gold, silver, bronze, categoryLabels } = buildResultRowsHtml(presents, birthDateOf, shiaiEvent);
 
@@ -13974,9 +14049,10 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
   }
   const activeCats = groupedCategoriesAvailable().filter(c => ui.recapCategoriesFilter[c] !== false);
   const birthDateOfRecipient = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
+  const memberOfRecipient = r => data.members.find(x=>x.id===r.memberId);
 
   const events = (data.convocEvents||[]).filter(ev => matchesDate(ev.date||''))
-    .map(ev => ({ ev, presents: recipientsInSeasonView(ev.recipients).filter(r=> r.response==='present' && activeCats.includes(groupedCategoryLabel(birthDateOfRecipient(r)))) }))
+    .map(ev => ({ ev, presents: recipientsInSeasonView(ev.recipients).filter(r=> r.response==='present' && activeCats.includes(groupedCategoryLabel(birthDateOfRecipient(r), memberOfRecipient(r)))) }))
     .filter(({presents}) => presents.length>0)
     .sort((a,b)=> (a.ev.date||'').localeCompare(b.ev.date||''));
 
@@ -14095,7 +14171,7 @@ function computeAGReportData(){
   const genderNR = totalMembers - genderF - genderM;
   const byCategoryMap = {};
   activeMembers.forEach(m=>{
-    const label = groupedCategoryLabel(m.birthDate) || 'Non renseignée';
+    const label = groupedCategoryLabel(m.birthDate, m) || 'Non renseignée';
     byCategoryMap[label] = (byCategoryMap[label]||0) + 1;
   });
   const byCategory = Object.keys(byCategoryMap)
@@ -14487,41 +14563,60 @@ async function sendConvocationsWithPdf(){
 }
 
 /* ---------------- ARCHIVES DE SAISON ---------------- */
-function computeCategoryForArchive(birthDate, settings){
+// Résout, comme resolveAgeBand() pour la saison en cours, quelle bande d'âge archivée retenir quand
+// plusieurs bandes se chevauchent (cas Baby Judo / Baby Karate) — via le cours (archive.groups) du
+// membre archivé.
+function resolveArchiveAgeBand(age, bands, member, archiveGroups){
+  const matches = [];
+  bands.forEach((b,i)=>{ if(age>=b.minAge && age<=b.maxAge) matches.push({ band:b, index:i }); });
+  if(matches.length<=1) return matches[0] || null;
+  if(member && archiveGroups){
+    const g = archiveGroups.find(x=>x.id===member.groupId);
+    const disc = g ? courseToDiscipline(g.name) : null;
+    if(disc){
+      const preferred = matches.find(({band})=>band.label===disc);
+      if(preferred) return preferred;
+    }
+  }
+  return matches[0];
+}
+function computeCategoryForArchive(birthDate, settings, member, archiveGroups){
   if(!birthDate) return null;
   const birthYear = parseInt(birthDate.slice(0,4),10);
   if(!birthYear) return null;
   const seasonYear = settings.seasonStartYear;
   const age = seasonYear - birthYear;
-  const band = (settings.ageBands||[]).find(b=>age>=b.minAge && age<=b.maxAge);
+  const resolved = resolveArchiveAgeBand(age, settings.ageBands||[], member, archiveGroups);
+  const band = resolved ? resolved.band : null;
   if(!band) return null;
   const span = band.maxAge - band.minAge + 1;
   if(span<=1 || band.label==='Seniors') return band.label;
   const suffix = age - band.minAge + 1;
   return `${band.label} ${suffix}`;
 }
-function categoryYearLabelForArchive(birthDate, settings){
-  const cat = computeCategoryForArchive(birthDate, settings);
+function categoryYearLabelForArchive(birthDate, settings, member, archiveGroups){
+  const cat = computeCategoryForArchive(birthDate, settings, member, archiveGroups);
   if(!cat) return '';
   if(cat==='Seniors') return cat;
   const birthYear = parseInt((birthDate||'').slice(0,4),10);
   return birthYear ? `${cat} (${birthYear})` : cat;
 }
-function categoryRankForArchive(birthDate, settings){
+function categoryRankForArchive(birthDate, settings, member, archiveGroups){
   if(!birthDate) return { bandIdx: 999, suffix: 999 };
   const birthYear = parseInt(birthDate.slice(0,4),10);
   if(!birthYear) return { bandIdx: 999, suffix: 999 };
   const age = settings.seasonStartYear - birthYear;
   const bands = settings.ageBands||[];
-  for(let i=0;i<bands.length;i++){
-    const b = bands[i];
-    if(age>=b.minAge && age<=b.maxAge) return { bandIdx:i, suffix: age-b.minAge+1 };
-  }
-  return { bandIdx: 999, suffix: 999 };
+  const resolved = resolveArchiveAgeBand(age, bands, member, archiveGroups);
+  if(!resolved) return { bandIdx: 999, suffix: 999 };
+  return { bandIdx: resolved.index, suffix: age-resolved.band.minAge+1 };
 }
 function archiveMemberBirthDate(archive, memberId){
   const m = archive.members.find(x=>x.id===memberId);
   return m ? m.birthDate : null;
+}
+function archiveMemberById(archive, memberId){
+  return archive.members.find(x=>x.id===memberId) || null;
 }
 
 async function archiveCurrentSeason(){
@@ -14632,7 +14727,7 @@ function renderArchiveGroupBody(archive, aid){
     const matches = archive.members.filter(m=>m.name.toLowerCase().includes(query));
     return matches.length===0 ? '<div class="empty">Aucun élève trouvé.</div>' : matches.map(m=>{
       const g = archive.groups.find(x=>x.id===m.groupId);
-      const cat = categoryYearLabelForArchive(m.birthDate, settings);
+      const cat = categoryYearLabelForArchive(m.birthDate, settings, m, archive.groups);
       return `<div class="member-chip">
         <span>${genderBadgeHtml(m.gender)} ${nameWithBoldSurname(m.name)}${m.belt?beltSwatchHtml(m.belt,true):''}${cat?`<span class="tag">${escapeHtml(cat)}</span>`:''}</span>
         <span style="font-size:12px; color:var(--ink-dim); flex-shrink:0;">${g?escapeHtml(g.name):'—'}</span>
@@ -14651,7 +14746,7 @@ function renderArchiveGroupBody(archive, aid){
         </div>
       </div>
       ${expanded ? (members.map(m=>{
-        const cat = categoryYearLabelForArchive(m.birthDate, settings);
+        const cat = categoryYearLabelForArchive(m.birthDate, settings, m, archive.groups);
         return `<div class="member-chip"><span>${genderBadgeHtml(m.gender)} ${nameWithBoldSurname(m.name)}${m.belt?beltSwatchHtml(m.belt,true):''}${cat?`<span class="tag">${escapeHtml(cat)}</span>`:''}</span></div>`;
       }).join('') || '<div class="empty">Aucun élève.</div>') : ''}
     </div>`;
@@ -14765,7 +14860,7 @@ function renderArchivePresenceBody(archive, aid){
     ${members.length===0 ? '<div class="empty">Aucun élève trouvé.</div>' : members.map(m=>{
       const present = sessions.filter(s=>isPresent((archive.attendance[s.id]||{})[m.id])).length;
       const pct = sessions.length ? Math.round((present/sessions.length)*100) : 0;
-      const cat = categoryYearLabelForArchive(m.birthDate, settings);
+      const cat = categoryYearLabelForArchive(m.birthDate, settings, m, archive.groups);
       return `<div class="member-stat">
         <div class="stat-line">
           <span class="who">${genderBadgeHtml(m.gender)} ${nameWithBoldSurname(m.name)}${m.belt?beltSwatchHtml(m.belt,true):''}${cat?`<span class="tag">${escapeHtml(cat)}</span>`:''}</span>
@@ -14801,10 +14896,10 @@ function mountArchivePresenceHandlers(archive, aid){
     });
   }
 }
-function weightDisplayValueForArchive(birthDate, weight, forceMorphological, settings){
+function weightDisplayValueForArchive(birthDate, weight, forceMorphological, settings, member, archiveGroups){
   if(forceMorphological) return 'Poule morphologique';
   if(weight==='Poule morphologique') return weight;
-  const rank = categoryRankForArchive(birthDate, settings);
+  const rank = categoryRankForArchive(birthDate, settings, member, archiveGroups);
   const bandLabel = (settings.ageBands||[])[rank.bandIdx] ? settings.ageBands[rank.bandIdx].label : null;
   const cats = bandLabel ? weightOptionsForBandLabel(bandLabel) : null;
   if(weight) return `${weight} kg`;
@@ -14838,8 +14933,8 @@ function renderArchiveResultsBody(archive, aid){
   const settings = archive.settings||{ageBands:[],seasonStartYear:null};
   const shiai = isShiaiEvent(ev.name);
   const sorted = [...presents].sort((a,b)=>{
-    const ra = categoryRankForArchive(archiveMemberBirthDate(archive,a.memberId), settings);
-    const rb = categoryRankForArchive(archiveMemberBirthDate(archive,b.memberId), settings);
+    const ra = categoryRankForArchive(archiveMemberBirthDate(archive,a.memberId), settings, archiveMemberById(archive,a.memberId), archive.groups);
+    const rb = categoryRankForArchive(archiveMemberBirthDate(archive,b.memberId), settings, archiveMemberById(archive,b.memberId), archive.groups);
     if(ra.bandIdx!==rb.bandIdx) return ra.bandIdx-rb.bandIdx;
     if(ra.suffix!==rb.suffix) return ra.suffix-rb.suffix;
     return memberSurname(a.name).localeCompare(memberSurname(b.name),'fr');
@@ -14849,8 +14944,9 @@ function renderArchiveResultsBody(archive, aid){
     if(!shiai){
       if(String(r.result)==='1') gold++; else if(String(r.result)==='2') silver++; else if(String(r.result)==='3') bronze++;
     }
-    const cat = categoryYearLabelForArchive(archiveMemberBirthDate(archive,r.memberId), settings);
-    const weightLabel = weightDisplayValueForArchive(archiveMemberBirthDate(archive,r.memberId), r.weight, shiai, settings);
+    const archMember = archiveMemberById(archive, r.memberId);
+    const cat = categoryYearLabelForArchive(archiveMemberBirthDate(archive,r.memberId), settings, archMember, archive.groups);
+    const weightLabel = weightDisplayValueForArchive(archiveMemberBirthDate(archive,r.memberId), r.weight, shiai, settings, archMember, archive.groups);
     let resultCell;
     if(!r.result) resultCell = '<span style="color:var(--ink-dim);">—</span>';
     else if(shiai) resultCell = `<span style="font-weight:700;">${escapeHtml(r.result)} Points</span>`;
@@ -15274,7 +15370,7 @@ function initGlobalSearch(){
     } else {
       wrap.innerHTML = matches.map(m=>{
         const g = data.groups.find(x=>x.id===m.groupId);
-        const cat = categoryYearLabel(m.birthDate);
+        const cat = categoryYearLabel(m.birthDate, m);
         return `
         <div class="convoc-row" data-action="goto-member" data-id="${m.id}" data-group="${m.groupId||''}" style="cursor:pointer;">
           <div class="info">
