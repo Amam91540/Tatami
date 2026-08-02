@@ -5993,6 +5993,13 @@ function renderImportedCompetitionsSettings(){
       <input type="checkbox" id="calendarSettingsIncompleteFilter" ${ui.calendarSettingsFilterIncomplete?'checked':''}>
       Compétition incomplète (nom, ville, adresse ou catégorie manquant)
     </label>
+    ${(!data.settings.federationCalendarMigrated && COMPETITION_CALENDAR.length>0) ? `
+    <div style="background:var(--tatami-dim); border:1px solid var(--tatami); border-radius:10px; padding:10px; margin:4px 0 10px;">
+      <div style="font-size:13px; line-height:1.5; color:var(--ink);">
+        Les ${COMPETITION_CALENDAR.length} compétitions/stages ci-dessous viennent d'un fichier intégré à l'application (non modifiable finement, non synchronisé). Tu peux les basculer une bonne fois pour toutes dans le classeur Google Sheets : ils deviendront des événements normaux (modifiables, synchronisés entre comptes) tagués <strong>Judo</strong>.
+      </div>
+      <button class="primary" id="migrateFederationCalendarBtn" style="width:100%; margin-top:8px;">📤 Basculer ces événements vers le classeur (une fois)</button>
+    </div>` : ''}
     <div class="row" style="align-items:flex-end; gap:8px; margin:4px 0 10px; background:var(--surface-2); border-radius:10px; padding:8px 10px;">
       <div style="flex:1;">
         <label class="small">Tagger en masse (discipline)</label>
@@ -6077,6 +6084,15 @@ function renderImportedCompetitionsSettings(){
   if(incompleteFilterCheck) incompleteFilterCheck.addEventListener('change', ()=>{
     ui.calendarSettingsFilterIncomplete = incompleteFilterCheck.checked;
     renderImportedCompetitionsSettings();
+  });
+
+  const migrateBtn = document.getElementById('migrateFederationCalendarBtn');
+  if(migrateBtn) migrateBtn.addEventListener('click', async ()=>{
+    if(!(await confirmDialog(`Basculer les ${COMPETITION_CALENDAR.length} compétitions/stages du calendrier fédéral vers le classeur ? Ils seront tagués Judo et deviendront des événements normaux, modifiables et synchronisés. Cette action est définitive (mais réversible entrée par entrée ensuite, comme n'importe quel événement).`, { confirmLabel:'Basculer' }))) return;
+    migrateFederationCalendarOnce('Judo');
+    renderImportedCompetitionsSettings();
+    renderCompetitionsCalendarCard();
+    showToast(`${COMPETITION_CALENDAR.length} événement${COMPETITION_CALENDAR.length===1?'':'s'} basculé${COMPETITION_CALENDAR.length===1?'':'s'} vers le classeur`);
   });
 
   // Tagger en masse : applique la discipline choisie à tous les événements SANS discipline parmi
@@ -10792,7 +10808,7 @@ function calStripAccents(s){
 function calendarFederationKey(name, type){
   return calStripAccents(name).toUpperCase().replace(/\s+/g,' ').trim() + '|' + (type||'competition');
 }
-function migrateFederationCalendarOnce(){
+function migrateFederationCalendarOnce(defaultDiscipline){
   if(data.settings.federationCalendarMigrated) return;
   if(!data.calendarEvents) data.calendarEvents = [];
   const currentComps = visibleCompetitionCalendar();
@@ -10802,6 +10818,12 @@ function migrateFederationCalendarOnce(){
       id: uid(), type:'competition',
       name: effectiveCompetitionName(c), date: effectiveCompetitionDate(c), city: effectiveCompetitionCity(c),
       address: effectiveCompetitionAddress(c), ageCategories: importedCompetitionAgeCategories(c),
+      // Une discipline déjà posée à la main (override/fiche récurrente) avant la bascule est
+      // conservée telle quelle ; sinon on applique la discipline par défaut du calendrier fédéral
+      // migré (Judo dans le cas de Thomas). L'entrée devient ensuite une ligne normale de
+      // data.calendarEvents, donc modifiable/rattachable comme n'importe quel événement manuel.
+      discipline: importedCompetitionDiscipline(c) || defaultDiscipline || '',
+      createdByAccountId: '',
       validated: ov.validated===true, cancelled: ov.cancelled===true,
       level: c.level||'', dayLabel: c.dayLabel||'', details: c.details||[], weighIn: c.weighIn||[],
       source:'federation', federationKey: calendarFederationKey(c.name, 'competition')
@@ -11046,7 +11068,9 @@ async function handleCalendarExcelImport(file, discipline){
     const wb = XLSX.read(buf, { type:'array', cellDates:false, raw:false });
     const parsed = parseCalendarWorkbook(wb);
     if(parsed.length===0){ showToast('Aucun événement reconnu dans ce fichier — vérifie qu’il s’agit bien du calendrier du Comité de l’Essonne'); return; }
-    migrateFederationCalendarOnce();
+    // Le calendrier fédéral figé dans le code (COMPETITION_CALENDAR) est toujours le calendrier
+    // Judo — cette bascule n'a rien à voir avec la discipline choisie pour CET import ci-dessus.
+    migrateFederationCalendarOnce('Judo');
     const plan = planCalendarImport(parsed);
     plan.toUpdate.forEach(u=> u.incoming.__fk = u.fk);
     plan.toCreate.forEach(c=> c.incoming.__fk = c.fk);
