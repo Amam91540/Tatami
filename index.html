@@ -1496,6 +1496,7 @@ function ensureSettings(){
   if(!data.settings.deletedCalendarCompetitions) data.settings.deletedCalendarCompetitions = [];
   if(!data.settings.competitionOverrides) data.settings.competitionOverrides = {};
   if(!data.settings.competitionProfiles) data.settings.competitionProfiles = {};
+  if(!data.settings.onceFlags || typeof data.settings.onceFlags !== 'object') data.settings.onceFlags = {};
   data.convocEvents.forEach(ev=>{ if(ev.archived===undefined) ev.archived = false; });
   data.groups.forEach(g=>{ g.recurrence ||= []; });
   // Cotisations : carnet de paiements (data.payments) + familles détectées/validées manuellement
@@ -1520,6 +1521,25 @@ function ensureSettings(){
   ['groups','members','sessions','beltPassages','calendarEvents','convocEvents','archivedSeasons','stages','payments'].forEach(k=>{
     if(!Array.isArray(data.deletedIds[k])) data.deletedIds[k] = [];
   });
+}
+// Conteneur unique pour TOUS les drapeaux "migration/initialisation une bonne fois pour toutes"
+// (fédération migrée, calendrier vétérans semé, groupe licence créé, etc.) — voir hasOnceFlag/
+// setOnceFlag ci-dessous. AVANT ce correctif, chacun de ces drapeaux vivait comme une propriété
+// directe de data.settings (ex: data.settings.federationCalendarMigrated = true), MAIS Code.gs
+// réécrit la feuille "Réglages" du classeur à partir d'une liste FIGÉE de clés connues : toute
+// propriété absente de cette liste n'était donc jamais sauvegardée, et redevenait fausse à chaque
+// nouvelle connexion (qui vide le cache local) — relançant la migration correspondante en boucle,
+// et créant des DOUBLONS pour celles qui n'ajoutent pas leurs données sans vérifier l'existant
+// (calendrier fédéral, calendrier vétérans). onceFlags est fusionné côté classeur avec
+// mergeJsonObjectsByKey (comme competitionOverrides), un mécanisme déjà éprouvé qui ne perd jamais
+// une clé — un futur drapeau ajouté ici n'aura donc plus jamais besoin d'une modification côté
+// Code.gs pour être vraiment permanent.
+function hasOnceFlag(flag){
+  return !!(data.settings.onceFlags && data.settings.onceFlags[flag]);
+}
+function setOnceFlag(flag){
+  if(!data.settings.onceFlags || typeof data.settings.onceFlags !== 'object') data.settings.onceFlags = {};
+  data.settings.onceFlags[flag] = true;
 }
 // À appeler juste avant de retirer un élément d'un tableau identifié par id (groups, members,
 // sessions, beltPassages, calendarEvents, convocEvents, archivedSeasons), pour que la suppression
@@ -1677,14 +1697,14 @@ function attendanceClass(v){
 }
 function migrateValidatedFlag(){
   const flag = 'migratedValidated_v1';
-  if(data.settings[flag]) return false;
+  if(hasOnceFlag(flag)) return false;
   data.sessions.forEach(s=>{
     if(s.validated===undefined){
       const att = data.attendance[s.id] || {};
       s.validated = Object.values(att).some(v=>isPresent(v));
     }
   });
-  data.settings[flag] = true;
+  setOnceFlag(flag);
   return true;
 }
 
@@ -1725,10 +1745,10 @@ function removeComiteDirecteurGroupPermanently(){
 // pour qu'un futur import ne vienne plus jamais le repolluer avec la liste complète.
 function renameExportGroupToComiteDirecteurOnce(){
   const flag = 'exportGroupRenamedToComite_v1';
-  if(data.settings[flag]) return false;
+  if(hasOnceFlag(flag)) return false;
   const g = data.groups.find(x=> normalizeCategoryKey(x.name) === 'export');
   if(g) g.name = 'Comité directeur';
-  data.settings[flag] = true;
+  setOnceFlag(flag);
   return !!g;
 }
 
@@ -1745,10 +1765,10 @@ function isLicensePendingGroup(g){
 // d'une UI de création manuelle de cours (qui n'existe pas dans l'appli).
 function ensureLicensePendingGroupOnce(){
   const flag = 'licensePendingGroupCreated_v1';
-  if(data.settings[flag]) return false;
+  if(hasOnceFlag(flag)) return false;
   const exists = data.groups.some(g=>isLicensePendingGroup(g));
   if(!exists) data.groups.push({ id: uid(), name: 'Licence à prendre', recurrence:[] });
-  data.settings[flag] = true;
+  setOnceFlag(flag);
   return !exists;
 }
 // Fusionne les doublons d'un groupe spécial (identifié par son nom via `predicate`), apparus quand 2
@@ -1935,12 +1955,24 @@ async function logout(){
 function applyDataInvariants(){
   ensureSettings();
   ensureKnownRecurrence();
+  // cleanupUnvalidatedSessions() a été retiré de cette liste : c'était un nettoyage ponctuel
+  // (supprimer les séances jamais validées d'avant l'introduction du champ "validated"), mais son
+  // drapeau ne se sauvegardait jamais côté classeur (voir hasOnceFlag plus haut) — il se relançait
+  // donc à CHAQUE reconnexion et supprimait DÉFINITIVEMENT toute séance pas encore validée à ce
+  // moment-là, y compris des séances récentes et légitimes pas encore traitées par un prof. Son
+  // travail d'origine est de toute façon terminé depuis longtemps ; inutile de le relancer.
   if(migrateValidatedFlag()){ saveData(); }
-  if(cleanupUnvalidatedSessions()){ saveData(); }
-  if(seedVeteranCalendar2026Once()){ saveData(); }
-  if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
+  // Migrations/nettoyages réservés à l'admin : aucune raison qu'un compte prof les déclenche (ça ne
+  // ferait que polluer sa vue locale avec des ajouts que le serveur rejette de toute façon pour ce
+  // rôle, voir sanitizePayloadForRole côté Code.gs).
+  const session = getSession();
+  if(session && session.role==='admin'){
+    if(seedVeteranCalendar2026Once()){ saveData(); }
+    if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
+    if(ensureLicensePendingGroupOnce()){ saveData(); }
+    if(dedupeFederationMaterializedEvents()){ saveData(); }
+  }
   if(removeComiteDirecteurGroupPermanently()){ saveData(); }
-  if(ensureLicensePendingGroupOnce()){ saveData(); }
   if(dedupeSpecialGroup(isLicensePendingGroup)){ saveData(); }
   if(renamePoussinetsToMiniPoussins()){ saveData(); }
   if(splitBabyJudoKarateAgeBandOnce()){ saveData(); }
@@ -6190,7 +6222,7 @@ function renderImportedCompetitionsSettings(){
       <input type="checkbox" id="calendarSettingsIncompleteFilter" ${ui.calendarSettingsFilterIncomplete?'checked':''}>
       Compétition incomplète (nom, ville, adresse ou catégorie manquant)
     </label>
-    ${(!data.settings.federationCalendarMigrated && COMPETITION_CALENDAR.length>0) ? `
+    ${(!hasOnceFlag('federationCalendarMigrated') && COMPETITION_CALENDAR.length>0) ? `
     <div style="background:var(--tatami-dim); border:1px solid var(--tatami); border-radius:10px; padding:10px; margin:4px 0 10px;">
       <div style="font-size:13px; line-height:1.5; color:var(--ink);">
         Les ${COMPETITION_CALENDAR.length} compétitions/stages ci-dessous viennent d'un fichier intégré à l'application (non modifiable finement, non synchronisé). Tu peux les basculer une bonne fois pour toutes dans le classeur Google Sheets : ils deviendront des événements normaux (modifiables, synchronisés entre comptes) tagués <strong>Judo</strong>.
@@ -11146,10 +11178,19 @@ function calendarFederationKey(name, type){
   return calStripAccents(name).toUpperCase().replace(/\s+/g,' ').trim() + '|' + (type||'competition');
 }
 function migrateFederationCalendarOnce(defaultDiscipline){
-  if(data.settings.federationCalendarMigrated) return;
+  // Double protection contre les doublons (voir hasOnceFlag/setOnceFlag) : le drapeau seul a
+  // longtemps échoué à se sauvegarder côté classeur (propriété directe de data.settings, absente
+  // de la liste figée que Code.gs écrit réellement), ce qui relançait cette migration à CHAQUE
+  // reconnexion et créait un jeu complet de doublons à chaque fois. En plus du drapeau (désormais
+  // fiable), on vérifie aussi le contenu par federationKey avant d'ajouter quoi que ce soit : même
+  // si le drapeau échouait encore pour une raison quelconque, aucun doublon ne pourrait être créé.
+  if(hasOnceFlag('federationCalendarMigrated')) return;
   if(!data.calendarEvents) data.calendarEvents = [];
+  const existingFederationKeys = new Set(data.calendarEvents.filter(e=>e.source==='federation' && e.federationKey).map(e=>e.federationKey));
   const currentComps = visibleCompetitionCalendar();
   currentComps.forEach(c=>{
+    const federationKey = calendarFederationKey(c.name, 'competition');
+    if(existingFederationKeys.has(federationKey)) return;
     const ov = getCompetitionOverride(c);
     data.calendarEvents.push({
       id: uid(), type:'competition',
@@ -11163,16 +11204,40 @@ function migrateFederationCalendarOnce(defaultDiscipline){
       createdByAccountId: '',
       validated: ov.validated===true, cancelled: ov.cancelled===true,
       level: c.level||'', dayLabel: c.dayLabel||'', details: c.details||[], weighIn: c.weighIn||[],
-      source:'federation', federationKey: calendarFederationKey(c.name, 'competition')
+      source:'federation', federationKey
     });
+    existingFederationKeys.add(federationKey);
   });
   if(!data.settings.deletedCalendarCompetitions) data.settings.deletedCalendarCompetitions = [];
   COMPETITION_CALENDAR.forEach(c=>{
     const k = competitionKey(c);
     if(!data.settings.deletedCalendarCompetitions.includes(k)) data.settings.deletedCalendarCompetitions.push(k);
   });
-  data.settings.federationCalendarMigrated = true;
+  setOnceFlag('federationCalendarMigrated');
   saveData();
+}
+// Nettoie les doublons de compétitions/stages fédéraux déjà matérialisés dans data.calendarEvents,
+// apparus à cause du bug ci-dessus (le drapeau ne se sauvegardait jamais, donc la migration se
+// relançait à chaque connexion et recréait un jeu complet de doublons à chaque fois). Se relance à
+// chaque chargement (idempotente, coût négligeable une fois les doublons résorbés) : ne garde que
+// la PREMIÈRE occurrence de chaque compétition/stage fédéral ou vétéran, jamais les événements
+// ajoutés à la main (qui n'ont pas de federationKey ni source==='veteran-france-judo').
+function dedupeFederationMaterializedEvents(){
+  const seen = new Set();
+  const toRemove = [];
+  (data.calendarEvents||[]).forEach(e=>{
+    let key = null;
+    if(e.source==='federation' && e.federationKey) key = 'fed:'+e.federationKey;
+    else if(e.source==='veteran-france-judo') key = 'vet:'+e.name+'|'+e.date;
+    if(!key) return;
+    if(seen.has(key)) toRemove.push(e.id);
+    else seen.add(key);
+  });
+  if(toRemove.length===0) return false;
+  toRemove.forEach(id=> markDeleted('calendarEvents', id));
+  const removeSet = new Set(toRemove);
+  data.calendarEvents = data.calendarEvents.filter(e=>!removeSet.has(e.id));
+  return true;
 }
 
 /* ---------------- CALENDRIER VÉTÉRANS 2026-2027 (France Judo) ----------------
@@ -11203,19 +11268,27 @@ const VETERAN_CALENDAR_2026_2027 = [
   { name:"Championnats de France Vétérans", city:"Villebon-sur-Yvette", date:"2027-06-12", dateEnd:"2027-06-13", dayLabel:"12 et 13 juin 2027", level:"France" }
 ];
 function seedVeteranCalendar2026Once(){
+  // Voir migrateFederationCalendarOnce : même double protection (drapeau désormais fiable via
+  // hasOnceFlag/setOnceFlag + vérification du contenu existant par nom+date avant d'ajouter).
   const flag = 'veteranCalendar2026Seeded';
-  if(data.settings[flag]) return false;
+  if(hasOnceFlag(flag)) return false;
   if(!data.calendarEvents) data.calendarEvents = [];
+  const existingKeys = new Set(data.calendarEvents.filter(e=>e.source==='veteran-france-judo').map(e=>e.name+'|'+e.date));
+  let added = false;
   VETERAN_CALENDAR_2026_2027.forEach(v=>{
+    const k = v.name+'|'+v.date;
+    if(existingKeys.has(k)) return;
     data.calendarEvents.push({
       id: uid(), type:'competition', name: v.name, date: v.date, dateEnd: v.dateEnd||'', city: v.city||'', address:'',
       ageCategories:['Vétérans'], validated:false, cancelled:false,
       level: v.level, dayLabel: v.dayLabel, details:[], weighIn:[],
       source:'veteran-france-judo'
     });
+    existingKeys.add(k);
+    added = true;
   });
-  data.settings[flag] = true;
-  return true;
+  setOnceFlag(flag);
+  return added;
 }
 
 const CAL_MONTHS_FR = { SEPTEMBRE:9, OCTOBRE:10, NOVEMBRE:11, DECEMBRE:12, JANVIER:1, FEVRIER:2, MARS:3, AVRIL:4, MAI:5, JUIN:6, JUILLET:7, AOUT:8 };
