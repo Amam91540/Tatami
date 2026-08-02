@@ -718,7 +718,7 @@
       <button id="logoutBtn" class="icon-btn ghost" style="flex-shrink:0; font-size:16px;" aria-label="Se déconnecter" title="Se déconnecter">🚪</button>
     </div>
   </div>
-  <div class="eyebrow">Suivi des présences</div>
+  <div class="eyebrow">Tatami</div>
   <input class="club-name" id="clubName" placeholder="Nom du club" maxlength="60">
   <div class="header-bottom-row" style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:2px; position:relative;">
     <select id="headerSeasonSwitch" style="font-size:11px; color:var(--ink-dim); font-family:'Rajdhani',sans-serif; font-weight:700; letter-spacing:0.03em; flex-shrink:0; background:transparent; border:none; padding:2px 0; cursor:pointer; max-width:120px;"></select>
@@ -11288,13 +11288,18 @@ function pendingFederationMigrationCount(){
   }).length;
 }
 function migrateFederationCalendarOnce(defaultDiscipline){
-  // Double protection contre les doublons (voir hasOnceFlag/setOnceFlag) : le drapeau seul a
-  // longtemps échoué à se sauvegarder côté classeur (propriété directe de data.settings, absente
-  // de la liste figée que Code.gs écrit réellement), ce qui relançait cette migration à CHAQUE
-  // reconnexion et créait un jeu complet de doublons à chaque fois. En plus du drapeau (désormais
-  // fiable), on vérifie aussi le contenu par federationKey avant d'ajouter quoi que ce soit : même
-  // si le drapeau échouait encore pour une raison quelconque, aucun doublon ne pourrait être créé.
-  if(hasOnceFlag('federationCalendarMigrated')) return;
+  // IMPORTANT : ne JAMAIS remettre ici un "if(hasOnceFlag(...)) return;" en début de fonction — ça a
+  // provoqué exactement le bug rapporté par Thomas ("j'ai cliqué sur Basculer mais le message ne
+  // disparaît pas") : le drapeau peut être passé à true lors d'un appel précédent (ex: un premier
+  // clic qui a migré la plupart des entrées) alors qu'il reste, par ailleurs, des entrées non
+  // migrées (nouvelle entrée du fichier fédéral, événement supprimé puis fichier remis à jour,
+  // etc.). Avec un tel garde-fou, cette fonction se serait arrêtée immédiatement sans rien faire,
+  // alors que le bandeau (voir pendingFederationMigrationCount, basé sur le contenu réel) continuait
+  // à juste titre de signaler des entrées manquantes — le clic sur "Basculer" n'aurait alors plus eu
+  // aucun effet, et le bandeau ne pouvait donc plus jamais disparaître. La seule protection anti-
+  // doublon nécessaire est déjà celle ci-dessous, basée sur le contenu (federationKey+date+détails) :
+  // rappeler cette fonction ne peut jamais créer de doublon, donc aucun garde-fou par drapeau n'est
+  // nécessaire ni souhaitable ici.
   if(!data.calendarEvents) data.calendarEvents = [];
   // Clé de dédoublonnage : voir calendarFederationMigrationKey (nom + date + détails, pas
   // federationKey+date seul — deux entrées brutes peuvent partager nom ET date en visant en
