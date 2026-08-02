@@ -6005,7 +6005,6 @@ function incompleteBadgeHtml(incomplete){
 function renderImportedCompetitionRow(c){
   const key = competitionKey(c);
   const editing = ui.editingCompetitionKey === key;
-  const validated = getCompetitionOverride(c).validated === true;
   const cancelled = getCompetitionOverride(c).cancelled === true;
   const disabled = getCompetitionOverride(c).disabled === true;
   if(editing){
@@ -6039,12 +6038,11 @@ function renderImportedCompetitionRow(c){
   return `
   <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${disabledBadgeHtml(disabled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'imported', c}))}</div>
+      <div class="n">🏆 ${escapeHtml(effectiveCompetitionName(c))}${cancelledBadgeHtml(cancelled)}${disabledBadgeHtml(disabled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'imported', c}))}</div>
       <div class="e">${effectiveCompetitionDate(c)?fmtDate(effectiveCompetitionDate(c)):escapeHtml(c.dayLabel)} · ${escapeHtml(effectiveCompetitionCity(c))}</div>
       <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(importedCompetitionAgeCategories(c))}${calendarDisciplineTagHtml(importedCompetitionDiscipline(c))}${calendarCourseTagsHtml(importedCompetitionCourses(c))}</div>
     </div>
     <div style="display:flex; gap:4px; flex-shrink:0;">
-      <button class="ghost icon-btn" data-action="toggle-validate-imported" data-key="${escapeHtml(key)}" title="${validated?'Retirer la validation':'Valider'}" style="padding:6px 9px; font-size:12px; ${validated?'background:var(--tatami-dim); border-color:var(--tatami); color:var(--tatami);':''}">✓</button>
       <button class="ghost icon-btn" data-action="toggle-cancel-imported" data-key="${escapeHtml(key)}" title="${cancelled?'Retirer l’annulation':'Marquer comme annulé'}" style="padding:6px 9px; font-size:12px; ${cancelled?'background:var(--clay-dim); border-color:var(--clay); color:var(--clay);':''}">🚫</button>
       <button class="ghost icon-btn" data-action="toggle-disable-imported" data-key="${escapeHtml(key)}" title="${disabled?'Réactiver (redevient convocable et réapparaît sur les PDF)':'Désactiver (plus de convoc possible, disparaît des PDF calendrier)'}" style="padding:6px 9px; font-size:12px; ${disabled?'background:var(--surface-2); border-color:var(--ink-dim); color:var(--ink-dim);':''}">${disabled?'▶':'⏸'}</button>
       <button class="ghost icon-btn" data-action="edit-imported-competition" data-key="${escapeHtml(key)}" title="Modifier" style="padding:6px 9px; font-size:12px;">✏️</button>
@@ -6096,18 +6094,16 @@ function renderManualEventRow(e){
     </div>`;
   }
   const typeBadge = e.type==='stage' ? '🥋' : '🏆';
-  const validated = e.validated === true;
   const cancelled = e.cancelled === true;
   const disabled = e.disabled === true;
   return `
   <div class="convoc-row" data-row-key="${escapeHtml(key)}" style="align-items:flex-start;">
     <div class="info">
-      <div class="n">${typeBadge} ${escapeHtml(e.name)}${validatedBadgeHtml(validated)}${cancelledBadgeHtml(cancelled)}${disabledBadgeHtml(disabled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'manual', e}))}</div>
+      <div class="n">${typeBadge} ${escapeHtml(e.name)}${cancelledBadgeHtml(cancelled)}${disabledBadgeHtml(disabled)}${incompleteBadgeHtml(isCalendarRowIncomplete({kind:'manual', e}))}</div>
       <div class="e">${e.date?fmtDateRange(e.date, e.dateEnd):''}${e.city?' · '+escapeHtml(e.city):''}</div>
       <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(e.ageCategories!==undefined?e.ageCategories:[])}${(!Array.isArray(e.courseIds) || e.courseIds.length===0) ? '<span class="tag warn">⚠️ Aucun cours — masqué pour tous les profs</span>' : calendarCourseTagsHtml(e.courseIds)}${e.createdByAccountId ? `<span class="tag" style="background:var(--surface-2); color:var(--ink-dim);">👤 Ajouté par ${escapeHtml(accountNameById(e.createdByAccountId) || 'un compte prof')}</span>` : ''}</div>
     </div>
     <div style="display:flex; gap:4px; flex-shrink:0;">
-      <button class="ghost icon-btn" data-action="toggle-validate-manual" data-id="${escapeHtml(e.id)}" title="${validated?'Retirer la validation':'Valider'}" style="padding:6px 9px; font-size:12px; ${validated?'background:var(--tatami-dim); border-color:var(--tatami); color:var(--tatami);':''}">✓</button>
       <button class="ghost icon-btn" data-action="toggle-cancel-manual" data-id="${escapeHtml(e.id)}" title="${cancelled?'Retirer l’annulation':'Marquer comme annulé'}" style="padding:6px 9px; font-size:12px; ${cancelled?'background:var(--clay-dim); border-color:var(--clay); color:var(--clay);':''}">🚫</button>
       <button class="ghost icon-btn" data-action="toggle-disable-manual" data-id="${escapeHtml(e.id)}" title="${disabled?'Réactiver (redevient convocable et réapparaît sur les PDF)':'Désactiver (plus de convoc possible, disparaît des PDF calendrier)'}" style="padding:6px 9px; font-size:12px; ${disabled?'background:var(--surface-2); border-color:var(--ink-dim); color:var(--ink-dim);':''}">${disabled?'▶':'⏸'}</button>
       <button class="ghost icon-btn" data-action="edit-manual-event" data-id="${escapeHtml(e.id)}" title="Modifier" style="padding:6px 9px; font-size:12px;">✏️</button>
@@ -6248,13 +6244,13 @@ function renderImportedCompetitionsSettings(){
       <input type="checkbox" id="calendarSettingsIncompleteFilter" ${ui.calendarSettingsFilterIncomplete?'checked':''}>
       Compétition incomplète (nom, ville, adresse ou catégorie manquant)
     </label>
-    ${(!hasOnceFlag('federationCalendarMigrated') && COMPETITION_CALENDAR.length>0) ? `
+    ${(()=>{ const pendingCount = pendingFederationMigrationCount(); return pendingCount>0 ? `
     <div style="background:var(--tatami-dim); border:1px solid var(--tatami); border-radius:10px; padding:10px; margin:4px 0 10px;">
       <div style="font-size:13px; line-height:1.5; color:var(--ink);">
-        Les ${COMPETITION_CALENDAR.length} compétitions/stages ci-dessous viennent d'un fichier intégré à l'application (non modifiable finement, non synchronisé). Tu peux les basculer une bonne fois pour toutes dans le classeur Google Sheets : ils deviendront des événements normaux (modifiables, synchronisés entre comptes) tagués <strong>Judo</strong>.
+        ${pendingCount} compétition${pendingCount===1?'':'s'}/stage${pendingCount===1?'':'s'} ${pendingCount===1?'vient':'viennent'} d'un fichier intégré à l'application (non modifiable finement, non synchronisé). Tu peux ${pendingCount===1?'la':'les'} basculer dans le classeur Google Sheets : ${pendingCount===1?'elle deviendra un événement normal (modifiable, synchronisé entre comptes) tagué':'ils deviendront des événements normaux (modifiables, synchronisés entre comptes) tagués'} <strong>Judo</strong>.
       </div>
-      <button class="primary" id="migrateFederationCalendarBtn" style="width:100%; margin-top:8px;">📤 Basculer ces événements vers le classeur (une fois)</button>
-    </div>` : ''}
+      <button class="primary" id="migrateFederationCalendarBtn" style="width:100%; margin-top:8px;">📤 Basculer ${pendingCount===1?'cet événement':'ces événements'} vers le classeur</button>
+    </div>` : ''; })()}
     <div class="row" style="margin:10px 0; gap:8px;">
       <button class="ghost icon-btn" id="toggleAddCalendarEvent" style="flex:1;">${ui.addingCalendarEvent ? '✕ Annuler l’ajout' : '+ Ajouter une compétition ou un stage'}</button>
       <div style="flex:1;">
@@ -6333,11 +6329,12 @@ function renderImportedCompetitionsSettings(){
 
   const migrateBtn = document.getElementById('migrateFederationCalendarBtn');
   if(migrateBtn) migrateBtn.addEventListener('click', async ()=>{
-    if(!(await confirmDialog(`Basculer les ${COMPETITION_CALENDAR.length} compétitions/stages du calendrier fédéral vers le classeur ? Ils seront tagués Judo et deviendront des événements normaux, modifiables et synchronisés. Cette action est définitive (mais réversible entrée par entrée ensuite, comme n'importe quel événement).`, { confirmLabel:'Basculer' }))) return;
+    const pendingCount = pendingFederationMigrationCount();
+    if(!(await confirmDialog(`Basculer ${pendingCount===1?'cette compétition/ce stage':`ces ${pendingCount} compétitions/stages`} du calendrier fédéral vers le classeur ? ${pendingCount===1?'Elle sera taguée':'Ils seront tagués'} Judo et ${pendingCount===1?'deviendra un événement normal, modifiable et synchronisé':'deviendront des événements normaux, modifiables et synchronisés'}. Cette action est définitive (mais réversible entrée par entrée ensuite, comme n'importe quel événement).`, { confirmLabel:'Basculer' }))) return;
     migrateFederationCalendarOnce('Judo');
     renderImportedCompetitionsSettings();
     renderCompetitionsCalendarCard();
-    showToast(`${COMPETITION_CALENDAR.length} événement${COMPETITION_CALENDAR.length===1?'':'s'} basculé${COMPETITION_CALENDAR.length===1?'':'s'} vers le classeur`);
+    showToast(`${pendingCount} événement${pendingCount===1?'':'s'} basculé${pendingCount===1?'':'s'} vers le classeur`);
   });
 
   const toggleAddBtn = document.getElementById('toggleAddCalendarEvent');
@@ -6482,30 +6479,6 @@ function renderImportedCompetitionsSettings(){
     showToast('Compétition mise à jour');
   });
 
-  wrap.querySelectorAll('[data-action="toggle-validate-imported"]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      if(!data.settings.competitionOverrides) data.settings.competitionOverrides = {};
-      const key = btn.dataset.key;
-      const existing = data.settings.competitionOverrides[key] || {};
-      const nowValidated = !existing.validated;
-      data.settings.competitionOverrides[key] = { ...existing, validated: nowValidated };
-      saveData();
-      renderImportedCompetitionsSettings();
-      renderCompetitionsCalendarCard();
-      showToast(nowValidated ? 'Compétition validée' : 'Validation retirée');
-    });
-  });
-  wrap.querySelectorAll('[data-action="toggle-validate-manual"]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
-      if(!entry) return;
-      entry.validated = !entry.validated;
-      saveData();
-      renderImportedCompetitionsSettings();
-      renderCompetitionsCalendarCard();
-      showToast(entry.validated ? 'Événement validé' : 'Validation retirée');
-    });
-  });
   wrap.querySelectorAll('[data-action="toggle-cancel-imported"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       if(!data.settings.competitionOverrides) data.settings.competitionOverrides = {};
@@ -8670,7 +8643,7 @@ function buildCalendarTimelineHtml(entries){
         <div class="cal-event type-${en.type}">
           <div class="cal-daybox"><div class="d">${day}</div><div class="m">${MONTH_NAMES_FR[d.getMonth()].slice(0,3)}</div></div>
           <div class="cal-info">
-            <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}${validatedBadgeHtml(en.validated || isPassed)}${cancelledBadgeHtml(en.cancelled)}${disabledBadgeHtml(en.disabled)}</div>
+            <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}${validatedBadgeHtml(isPassed)}${cancelledBadgeHtml(en.cancelled)}${disabledBadgeHtml(en.disabled)}</div>
             <div class="e">${en.dateEnd && en.dateEnd!==en.date ? fmtDateRange(en.date, en.dateEnd)+' — ' : ''}${escapeHtml(en.city||'')}</div>
             <div class="cats">${catsHtml}</div>
           </div>
@@ -11265,6 +11238,24 @@ function calendarFederationKey(name, type){
 // dédoublonner sans les "details" en aurait fait disparaître une des deux par erreur.
 function calendarFederationMigrationKey(federationKey, date, details){
   return federationKey + '|' + date + '|' + (Array.isArray(details) ? details.join(',') : '');
+}
+// Nombre d'entrées BRUTES du fichier fédéral qui n'ont PAS encore leur événement correspondant
+// dans data.calendarEvents. Sert à décider si le bandeau "Basculer ces événements..." doit
+// s'afficher — DÉLIBÉRÉMENT basé sur le contenu réel plutôt que sur le seul drapeau onceFlags
+// (hasOnceFlag('federationCalendarMigrated')) : ce drapeau vit dans data.settings.onceFlags, qui
+// doit être correctement lu/écrit par Code.gs pour persister — si jamais Code.gs n'a pas encore
+// été redéployé après une mise à jour (source déjà rencontrée plusieurs fois avec Thomas), le
+// drapeau resterait à faux à chaque reconnexion et le bandeau réapparaîtrait indéfiniment MÊME SI
+// les 52 compétitions sont déjà bien présentes et à jour dans le classeur. En vérifiant l'état réel
+// (reste-t-il des entrées à créer ?), le bandeau ne peut plus jamais réapparaître à tort une fois
+// la bascule effectivement faite, peu importe l'état du drapeau côté serveur.
+function pendingFederationMigrationCount(){
+  const existingKeys = new Set((data.calendarEvents||[]).filter(e=>e.source==='federation' && e.federationKey).map(e=>calendarFederationMigrationKey(e.federationKey, e.date, e.details)));
+  return COMPETITION_CALENDAR.filter(c=>{
+    const federationKey = calendarFederationKey(c.name, 'competition');
+    const migrationKey = calendarFederationMigrationKey(federationKey, effectiveCompetitionDate(c), c.details);
+    return !existingKeys.has(migrationKey);
+  }).length;
 }
 function migrateFederationCalendarOnce(defaultDiscipline){
   // Double protection contre les doublons (voir hasOnceFlag/setOnceFlag) : le drapeau seul a
