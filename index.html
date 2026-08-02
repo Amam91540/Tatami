@@ -11177,6 +11177,17 @@ function calStripAccents(s){
 function calendarFederationKey(name, type){
   return calStripAccents(name).toUpperCase().replace(/\s+/g,' ').trim() + '|' + (type||'competition');
 }
+// Clé utilisée UNIQUEMENT pour détecter si une entrée du fichier fédéral brut a déjà été migrée
+// en événement normal (migrateFederationCalendarOnce) ou pour repérer un doublon déjà créé
+// (dedupeFederationMaterializedEvents). Contrairement à calendarFederationKey (nom seul, pour le
+// rapprochement d'une saison à l'autre), celle-ci doit être unique par ENTRÉE BRUTE du fichier :
+// federationKey+date ne suffit pas, certaines compétitions du fichier partagent le même nom ET la
+// même date mais concernent en réalité deux catégories d'âge bien distinctes (ex: "Coupe de
+// rentrée" le même jour pour les cadets et pour les minimes, avec des horaires de pesée séparés) —
+// dédoublonner sans les "details" en aurait fait disparaître une des deux par erreur.
+function calendarFederationMigrationKey(federationKey, date, details){
+  return federationKey + '|' + date + '|' + (Array.isArray(details) ? details.join(',') : '');
+}
 function migrateFederationCalendarOnce(defaultDiscipline){
   // Double protection contre les doublons (voir hasOnceFlag/setOnceFlag) : le drapeau seul a
   // longtemps échoué à se sauvegarder côté classeur (propriété directe de data.settings, absente
@@ -11186,15 +11197,29 @@ function migrateFederationCalendarOnce(defaultDiscipline){
   // si le drapeau échouait encore pour une raison quelconque, aucun doublon ne pourrait être créé.
   if(hasOnceFlag('federationCalendarMigrated')) return;
   if(!data.calendarEvents) data.calendarEvents = [];
-  const existingFederationKeys = new Set(data.calendarEvents.filter(e=>e.source==='federation' && e.federationKey).map(e=>e.federationKey));
-  const currentComps = visibleCompetitionCalendar();
+  // Clé de dédoublonnage : voir calendarFederationMigrationKey (nom + date + détails, pas
+  // federationKey+date seul — deux entrées brutes peuvent partager nom ET date en visant en
+  // réalité deux catégories d'âge distinctes, voir le commentaire de la fonction).
+  const existingFederationKeys = new Set(data.calendarEvents.filter(e=>e.source==='federation' && e.federationKey).map(e=>calendarFederationMigrationKey(e.federationKey, e.date, e.details)));
+  // On itère sur COMPETITION_CALENDAR (le fichier brut complet) et non visibleCompetitionCalendar()
+  // : cette dernière EXCLUT les entrées déjà tombstonées dans deletedCalendarCompetitions, ce qui
+  // inclut normalement les entrées déjà migrées (c'est même tout le but de ce tombstone). Mais si
+  // les événements manuels résultant d'une migration précédente ont depuis été supprimés (ex: par
+  // "Réinitialiser toutes les données", qui ne devrait plus toucher ces entrées désormais — voir
+  // resetBtn — mais a pu le faire par le passé), le tombstone reste alors qu'il n'y a plus aucun
+  // événement pour le remplacer : la compétition disparaît partout, sans recours. Itérer sur la
+  // liste brute permet de rattraper ce cas ; la protection anti-doublon ci-dessus empêche toujours
+  // de recréer une entrée qui existe déjà réellement.
+  const currentComps = COMPETITION_CALENDAR;
   currentComps.forEach(c=>{
     const federationKey = calendarFederationKey(c.name, 'competition');
-    if(existingFederationKeys.has(federationKey)) return;
+    const effectiveDate = effectiveCompetitionDate(c);
+    const migrationKey = calendarFederationMigrationKey(federationKey, effectiveDate, c.details);
+    if(existingFederationKeys.has(migrationKey)) return;
     const ov = getCompetitionOverride(c);
     data.calendarEvents.push({
       id: uid(), type:'competition',
-      name: effectiveCompetitionName(c), date: effectiveCompetitionDate(c), city: effectiveCompetitionCity(c),
+      name: effectiveCompetitionName(c), date: effectiveDate, city: effectiveCompetitionCity(c),
       address: effectiveCompetitionAddress(c), ageCategories: importedCompetitionAgeCategories(c),
       // Une discipline déjà posée à la main (override/fiche récurrente) avant la bascule est
       // conservée telle quelle ; sinon on applique la discipline par défaut du calendrier fédéral
@@ -11206,7 +11231,7 @@ function migrateFederationCalendarOnce(defaultDiscipline){
       level: c.level||'', dayLabel: c.dayLabel||'', details: c.details||[], weighIn: c.weighIn||[],
       source:'federation', federationKey
     });
-    existingFederationKeys.add(federationKey);
+    existingFederationKeys.add(migrationKey);
   });
   if(!data.settings.deletedCalendarCompetitions) data.settings.deletedCalendarCompetitions = [];
   COMPETITION_CALENDAR.forEach(c=>{
@@ -11227,7 +11252,7 @@ function dedupeFederationMaterializedEvents(){
   const toRemove = [];
   (data.calendarEvents||[]).forEach(e=>{
     let key = null;
-    if(e.source==='federation' && e.federationKey) key = 'fed:'+e.federationKey;
+    if(e.source==='federation' && e.federationKey) key = 'fed:'+calendarFederationMigrationKey(e.federationKey, e.date, e.details);
     else if(e.source==='veteran-france-judo') key = 'vet:'+e.name+'|'+e.date;
     if(!key) return;
     if(seen.has(key)) toRemove.push(e.id);
@@ -15636,12 +15661,20 @@ footer.querySelector('#resetBtn').addEventListener('click', async ()=>{
   // ligne fusionne au lieu d'écraser (pour ne jamais perdre les données saisies en parallèle par
   // un autre appareil), donc une remise à zéro purement locale ne serait jamais répercutée sur le
   // classeur et tout reviendrait au prochain rechargement.
+  // Les événements de calendrier issus de la migration fédérale/vétérans (source==='federation' ou
+  // 'veteran-france-judo') ne sont PAS des événements "ajoutés manuellement" — le texte même de la
+  // confirmation ci-dessus ne vise que ceux-là. Les effacer ici les rendait irrécupérables : le
+  // tombstone (deletedCalendarCompetitions) reste posé, mais il n'y a plus rien pour le remplacer,
+  // donc la compétition disparaît partout sans recours (voir migrateFederationCalendarOnce, qui
+  // sait désormais rattraper ce cas si jamais ça se reproduisait malgré tout).
+  const preservedCalendarEvents = (data.calendarEvents||[]).filter(c=> c.source==='federation' || c.source==='veteran-france-judo');
+  const manualCalendarEvents = (data.calendarEvents||[]).filter(c=> c.source!=='federation' && c.source!=='veteran-france-judo');
   const wipedIds = {
     groups: data.groups.map(g=>g.id),
     members: data.members.map(m=>m.id),
     sessions: data.sessions.map(s=>s.id),
     beltPassages: (data.beltPassages||[]).map(p=>p.id),
-    calendarEvents: (data.calendarEvents||[]).map(c=>c.id),
+    calendarEvents: manualCalendarEvents.map(c=>c.id),
     convocEvents: (data.convocEvents||[]).map(ev=>ev.id),
     archivedSeasons: (data.archivedSeasons||[]).map(a=>a.id),
     stages: (data.stages||[]).map(s=>s.id)
@@ -15656,7 +15689,7 @@ footer.querySelector('#resetBtn').addEventListener('click', async ()=>{
     convocEvents: [],
     stages: [],
     archivedSeasons: [],
-    calendarEvents: [],
+    calendarEvents: preservedCalendarEvents,
     beltPassages: [],
     deletedIds: wipedIds,
     settings: {
