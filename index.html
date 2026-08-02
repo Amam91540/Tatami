@@ -815,6 +815,15 @@
           <div id="competitions-calendar"></div>
         </div>
       </div>
+      <div class="section-group" data-group="resultats-calendrier-discipline" id="discipline-calendar-section" style="display:none;">
+        <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="resultats-calendrier-discipline">
+          <span>📅 Calendrier de ma discipline</span>
+          <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="section-group-body">
+          <div class="card" id="discipline-calendar-card"></div>
+        </div>
+      </div>
     </div>
     <div id="suivi-archive-view" style="display:none;">
       <div class="card" id="archive-view-suivi-banner"></div>
@@ -974,16 +983,6 @@
           <div id="results-list" style="margin-top:10px;"></div>
           <button class="ghost icon-btn" id="archiveResultsEventBtn" style="width:100%; margin-top:10px; display:none;">🗄️ Archiver cette compétition</button>
         </div>
-      </div>
-    </div>
-
-    <div class="section-group" data-group="resultats-calendrier-discipline" id="discipline-calendar-section" style="display:none;">
-      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="resultats-calendrier-discipline">
-        <span>📅 Calendrier de ma discipline</span>
-        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
-      </button>
-      <div class="section-group-body">
-        <div class="card" id="discipline-calendar-card"></div>
       </div>
     </div>
 
@@ -2041,6 +2040,21 @@ async function pullFromBackend({ silent = false } = {}){
       // confirmé serait à tort considéré comme déjà envoyé et ne serait jamais réessayé.
       const preMergeServerSnapshot = snapshotFrom(json);
       data = json;
+      // Auto-guérison de la session locale : le serveur relit toujours le compte à jour (jamais
+      // depuis le jeton lui-même — voir verifySessionToken côté Code.gs), donc si Thomas a modifié
+      // ce compte (rôle, cours assignés) ou régénéré des cours après une réinitialisation pendant
+      // que la personne restait connectée, on reprend ces valeurs fraîches ici plutôt que de rester
+      // sur un session.groupIds local périmé/orphelin jusqu'à une reconnexion manuelle. Sans ça, un
+      // compte prof resté connecté peut voir des fonctionnalités cloisonnées par cours disparaître,
+      // ou se faire silencieusement rejeter ses ajouts par le serveur (voir filterDataForRole /
+      // writeAllData, qui eux appliquent déjà la version à jour).
+      if(json.sessionInfo){
+        const s = getSession();
+        if(s && (JSON.stringify(s.groupIds||[]) !== JSON.stringify(json.sessionInfo.groupIds||[]) || s.role !== json.sessionInfo.role || s.name !== json.sessionInfo.name)){
+          setSession({ ...s, role: json.sessionInfo.role, groupIds: json.sessionInfo.groupIds||[], name: json.sessionInfo.name });
+        }
+        delete data.sessionInfo;
+      }
       if(local && typeof local === 'object'){
         Object.keys(local).forEach(key=>{
           if(data[key] === undefined) data[key] = local[key];
@@ -2354,7 +2368,7 @@ const TAB_ROLE_ACCESS = {
   // sont filtrés côté serveur pour son rôle — voir filterDataForRole). Les sections Cotisations et
   // Calendrier fédéral de cet onglet restent masquées pour lui (voir renderCotisationsCard /
   // renderCompetitionsCalendarCard) : la première est financière, la seconde n'est pas cloisonnée
-  // par discipline (remplacée pour lui par la carte "Calendrier de ma discipline" dans Résultats).
+  // par discipline (remplacée pour lui par la carte "Calendrier de ma discipline" dans Suivi annuel).
   prof: ['presences', 'groupes', 'suivi', 'convoc', 'resultats'],
   comptable: ['suivi']
 };
@@ -2691,6 +2705,7 @@ function renderAll(){
   renderExportCard();
   renderConvocTab();
   renderResultsTab();
+  renderDisciplineCalendarCard();
 }
 
 // Fonctions de rendu regroupées par onglet, pour renderActiveTab() ci-dessous : évite de
@@ -2702,9 +2717,9 @@ function renderAll(){
 const TAB_RENDER_FNS = {
   presences: [renderPresencesTab, renderPresencesAlerts],
   groupes: [renderGroupsTab, renderIncompleteFichesSection, renderBeltPassageSection, renderBeltDiplomasSection, renderBeltValidatedSection],
-  suivi: [renderSuiviTab, renderSuiviAlerts, renderCompetitionsCalendarCard, renderCotisationsCard],
+  suivi: [renderSuiviTab, renderSuiviAlerts, renderCompetitionsCalendarCard, renderCotisationsCard, renderDisciplineCalendarCard],
   convoc: [renderConvocTab],
-  resultats: [renderResultsTab, renderDisciplineCalendarCard],
+  resultats: [renderResultsTab],
   param: [renderDuplicateGroupsCard, renderDuplicateMembersCard, renderFamilySuggestionsCard, renderFamilyGroupsCard, renderAgeSettings, renderMembershipFeesSettings, renderAttestationSettings, renderImportedCompetitionsSettings, renderBackendSettings, renderAccountsCard, renderLicensePendingCard, renderArchiveCard, renderBirthdaysCard, renderExportCard]
 };
 function renderActiveTab(){
@@ -6318,7 +6333,9 @@ function renderImportedCompetitionsSettings(){
       const name = addForm.querySelector('[data-field="name"]').value.trim();
       const dateVal = addForm.querySelector('[data-field="date"]').value;
       if(!name || !dateVal){ showToast('Renseigne au moins le nom et la date'); return; }
-      if(!(await confirmIfSeasonMismatch(dateVal))) return;
+      // Contrairement aux présences/résultats, un événement de calendrier peut légitimement
+      // concerner une saison future (planifier une compétition à venir) ou passée (compléter
+      // l'historique) : pas d'avertissement de saison ici, la création est toujours acceptée.
       let dateEndVal = addForm.querySelector('[data-field="dateEnd"]').value;
       if(dateEndVal && dateEndVal < dateVal){ showToast('La date de fin ne peut pas être avant la date de début — ignorée'); dateEndVal = ''; }
       const cityVal = addForm.querySelector('[data-field="city"]').value.trim();
@@ -6473,8 +6490,8 @@ function renderImportedCompetitionsSettings(){
       const id = manualEditForm.dataset.entryId;
       const entry = (data.calendarEvents||[]).find(e=>e.id===id);
       if(!entry) return;
+      // Voir save-add-calendar-event : pas d'avertissement de saison pour un événement de calendrier.
       const newDateVal = manualEditForm.querySelector('[data-field="date"]').value;
-      if(newDateVal !== entry.date && !(await confirmIfSeasonMismatch(newDateVal))) return;
       entry.type = manualEditForm.querySelector('[data-field="type"]').value;
       entry.name = manualEditForm.querySelector('[data-field="name"]').value.trim();
       entry.date = newDateVal;
@@ -9714,7 +9731,7 @@ function renderCompetitionsCalendarCard(){
   const wrap = document.getElementById('competitions-calendar');
   if(!wrap) return;
   // Ce calendrier montre TOUTES les disciplines sans filtrage (voir getAllCalendarEntries) : pour
-  // un prof, on le masque au profit de la carte "Calendrier de ma discipline" dans Résultats, qui
+  // un prof, on le masque au profit de la carte "Calendrier de ma discipline" dans Suivi annuel, qui
   // elle est correctement cloisonnée (voir renderDisciplineCalendarCard).
   const session = getSession();
   const calendarSection = document.querySelector('[data-group="suivi-calendrier"]');
@@ -12053,7 +12070,8 @@ function renderDisciplineCalendarCard(){
       const name = addForm.querySelector('[data-field="name"]').value.trim();
       const dateVal = addForm.querySelector('[data-field="date"]').value;
       if(!name || !dateVal){ showToast('Renseigne au moins le nom et la date'); return; }
-      if(!(await confirmIfSeasonMismatch(dateVal))) return;
+      // Voir save-add-calendar-event : pas d'avertissement de saison pour un événement de calendrier
+      // (compétition/stage à venir la saison prochaine, par exemple).
       const disciplineField = addForm.querySelector('[data-field="discipline"]');
       const discipline = disciplineField ? disciplineField.value : disciplines[0];
       const entry = {
@@ -12091,8 +12109,8 @@ function renderDisciplineCalendarCard(){
       const id = editForm.dataset.entryId;
       const entry = (data.calendarEvents||[]).find(e=>e.id===id);
       if(!entry) return;
+      // Voir save-add-calendar-event : pas d'avertissement de saison pour un événement de calendrier.
       const newDateVal = editForm.querySelector('[data-field="date"]').value;
-      if(newDateVal !== entry.date && !(await confirmIfSeasonMismatch(newDateVal))) return;
       entry.type = editForm.querySelector('[data-field="type"]').value;
       entry.name = editForm.querySelector('[data-field="name"]').value.trim();
       entry.date = newDateVal;
