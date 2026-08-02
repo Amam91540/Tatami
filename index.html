@@ -2141,6 +2141,12 @@ function triggerAutoSync(){
 }
 let saveInFlight = false;
 let savePendingAfter = false;
+// Champs additionnels ponctuels à glisser dans le PROCHAIN envoi (ex: resetBordereauLog, voir
+// deleteAllBordereaux) — mémorisés à part de `data` (qui ne les contient jamais) pour survivre à un
+// report si une sauvegarde était déjà en cours au moment de l'appel (voir savePendingAfter juste en
+// dessous : le renvoi automatique appelle saveData() sans arguments, donc sans ce drapeau si on ne
+// le conservait pas ici).
+let pendingExtraPayloadFields = null;
 
 // Protection générale contre l'écrasement de données par des sauvegardes concurrentes (plusieurs
 // appareils connectés au même classeur en ligne). Chaque sauvegarde envoyait TOUT le contenu local
@@ -2246,7 +2252,7 @@ function mergeLocalPendingAttendance(serverAtt, localAtt, snapshotAtt){
   return any ? merged : (serverAtt||{});
 }
 
-async function saveData(){
+async function saveData(opts){
   try{
     localStorage.setItem('dojo-data', JSON.stringify(data));
   }catch(e){
@@ -2254,10 +2260,15 @@ async function saveData(){
   }
   const session = getSession();
   if(!session || !session.sessionToken) return;
+  if(opts && opts.extraPayloadFields){
+    pendingExtraPayloadFields = { ...(pendingExtraPayloadFields||{}), ...opts.extraPayloadFields };
+  }
   if(saveInFlight){
     savePendingAfter = true; // une sauvegarde est déjà en cours : on en referont une juste après avec l'état le plus récent
     return;
   }
+  const extraPayloadFields = pendingExtraPayloadFields;
+  pendingExtraPayloadFields = null;
   saveInFlight = true;
   try{
     const snap = syncedSnapshot || {};
@@ -2280,7 +2291,7 @@ async function saveData(){
     // suivant (c'est exactement le bug des passages de grade qui repartaient en arrière).
     const sentChanged = JSON.parse(JSON.stringify(changed));
     const sentDeletedIds = JSON.parse(JSON.stringify(data.deletedIds || {}));
-    const payload = { ...data, ...changed, sessionToken: session.sessionToken };
+    const payload = { ...data, ...changed, sessionToken: session.sessionToken, ...(extraPayloadFields||{}) };
     const res = await fetch(BACKEND_URL, {
       method:'POST',
       headers:{ 'Content-Type':'text/plain;charset=utf-8' },
@@ -5170,6 +5181,44 @@ async function deletePayment(paymentId, onDeleted){
   renderActiveTab();
   if(typeof onDeleted === 'function') onDeleted();
   showToast('Paiement supprimé');
+}
+// Supprime TOUTES les cotisations (tous élèves, toutes saisons confondues) — voir demande de
+// Thomas : supprimer des lignes à la main dans le classeur Google Sheets ne suffit pas, elles
+// réapparaissent dès qu'un appareil se resynchronise, car la protection anti-perte de données
+// (voir pickChangedById/saveData) ne renvoie que ce qui a changé depuis le dernier chargement de CET
+// appareil — sans savoir qu'une suppression a eu lieu ailleurs, il continue de renvoyer sa propre
+// copie locale, non supprimée. Passer par markDeleted() ici (comme deletePayment) trace la
+// suppression correctement (data.deletedIds.payments) pour qu'elle soit respectée par tous les
+// appareils lors de leur prochaine synchronisation, au lieu d'être silencieusement annulée.
+async function deleteAllPayments(){
+  const count = (data.payments||[]).length;
+  if(count===0){ showToast('Aucune cotisation enregistrée à supprimer'); return; }
+  if(!(await confirmDialog(`Supprimer DÉFINITIVEMENT les ${count} cotisation${count===1?'':'s'} enregistrée${count===1?'':'s'} dans l'application (tous élèves et toutes saisons confondus) ? Les fiches élèves et les cours ne sont pas touchés, seuls les paiements le sont. Cette action est irréversible depuis l'application — seule la sauvegarde quotidienne du classeur (si activée) permettrait de les retrouver.`, { danger:true, confirmLabel:`Supprimer les ${count} cotisations` }))) return;
+  (data.payments||[]).forEach(p=> markDeleted('payments', p.id));
+  data.payments = [];
+  saveData();
+  renderActiveTab();
+  showToast(`${count} cotisation${count===1?'':'s'} supprimée${count===1?'':'s'} définitivement`);
+}
+// Supprime TOUS les bordereaux de banque (journal des dépôts déjà générés). Contrairement aux
+// cotisations, le journal des bordereaux (data.settings.bordereauLog) n'est PAS une collection avec
+// tombstones individuels (comme payments/groups/members) : c'est un simple objet JSON dans les
+// réglages, fusionné côté serveur par union d'id (voir mergeJsonArrayById dans Code.gs) pour ne
+// jamais perdre l'entrée générée par un autre appareil — ce qui, par construction, empêche aussi de
+// le vider complètement depuis un seul appareil (un tableau vide envoyé se fait "réunioner" avec
+// l'ancien, qui revient donc en entier). Le drapeau resetBordereauLog (voir saveData/writeAllData
+// côté Code.gs) court-circuite exprès cette protection pour CETTE action précise, réservée à
+// l'admin. Nécessite d'avoir redéployé la dernière version de Code.gs pour fonctionner.
+async function deleteAllBordereaux(){
+  const count = (data.settings.bordereauLog||[]).length;
+  if(count===0){ showToast('Aucun bordereau enregistré à supprimer'); return; }
+  if(!(await confirmDialog(`Supprimer DÉFINITIVEMENT les ${count} bordereau${count===1?'':'x'} de banque enregistré${count===1?'':'s'} ? Les paiements déjà encaissés ne sont pas supprimés, seul leur rattachement à un bordereau est retiré (tu pourras les rattacher à un nouveau bordereau si besoin). Cette action est irréversible depuis l'application.`, { danger:true, confirmLabel:`Supprimer les ${count} bordereaux` }))) return;
+  (data.payments||[]).forEach(p=>{ p.bordereauFolio = null; p.bordereauSection = null; });
+  data.settings.bordereauLog = [];
+  data.settings.bordereauFolioCounters = {};
+  await saveData({ extraPayloadFields: { resetBordereauLog: true } });
+  renderActiveTab();
+  showToast(`${count} bordereau${count===1?'':'x'} supprimé${count===1?'':'s'} définitivement`);
 }
 
 function memberDueBadgeHtml(m){
@@ -15314,6 +15363,16 @@ function renderArchiveCard(){
     <button class="danger" id="archiveSeasonBtn" style="width:100%;">Archiver la saison en cours et tout vider</button>
     <button class="ghost" id="importArchiveBtn" style="width:100%; margin-top:8px;">Importer une archive (.json)</button>
     <input type="file" id="importArchiveInput" accept=".json" style="display:none">
+    <div style="margin-top:16px; padding-top:14px; border-top:1px dashed var(--line);">
+      <p style="font-size:12px; color:var(--ink-dim); margin:0 0 8px; line-height:1.5;">
+        Supprimer une ligne de cotisation directement dans le classeur Google Sheets ne suffit pas : elle réapparaît dès qu'un appareil se resynchronise (protection anti-perte de données de l'appli). Utilise ce bouton pour supprimer définitivement <strong>toutes</strong> les cotisations enregistrées, quel que soit l'élève ou la saison.
+      </p>
+      <button class="danger" id="deleteAllPaymentsBtn" style="width:100%;">🗑️ Supprimer TOUTES les cotisations (${(data.payments||[]).length})</button>
+      <p style="font-size:12px; color:var(--ink-dim); margin:12px 0 8px; line-height:1.5;">
+        Même chose pour les bordereaux de banque déjà générés : les paiements concernés restent enregistrés, seul leur rattachement à un bordereau est retiré.
+      </p>
+      <button class="danger" id="deleteAllBordereauxBtn" style="width:100%;">🗑️ Supprimer TOUS les bordereaux (${(data.settings.bordereauLog||[]).length})</button>
+    </div>
     ${archives.length===0 ? '<div class="empty" style="margin-top:12px;">Aucune saison archivée pour l’instant.</div>' : archives.map(a=>{
       const expanded = !!ui.archiveExpanded[a.id];
       return `
@@ -15334,6 +15393,8 @@ function renderArchiveCard(){
     }).join('')}
   `;
   document.getElementById('archiveSeasonBtn').addEventListener('click', archiveCurrentSeason);
+  document.getElementById('deleteAllPaymentsBtn').addEventListener('click', deleteAllPayments);
+  document.getElementById('deleteAllBordereauxBtn').addEventListener('click', deleteAllBordereaux);
   document.getElementById('importArchiveBtn').addEventListener('click', ()=> document.getElementById('importArchiveInput').click());
   document.getElementById('importArchiveInput').addEventListener('change', importArchiveFile);
   document.getElementById('toggleArchiveCardHiddenBtn').addEventListener('click', ()=>{ saveArchiveCardHidden(true); renderArchiveCard(); });
@@ -15444,10 +15505,14 @@ footer.querySelector('#resetBtn').addEventListener('click', async ()=>{
       // les drapeaux de migration "one-shot" (ex: licensePendingGroupCreated_v1,
       // veteranCalendar2026Seeded...) — sinon, une fois effacés, ils se redéclenchent tout seuls au
       // prochain chargement et recréent le cours "Licence à prendre" ou le calendrier Vétérans, qui
-      // "réapparaissent" alors qu'ils viennent d'être réinitialisés.
+      // "réapparaissent" alors qu'ils viennent d'être réinitialisés. Pour la même raison,
+      // deletedCalendarCompetitions et competitionOverrides ne doivent PLUS être remis à zéro ici :
+      // ce sont eux qui masquent le vieux calendrier fédéral statique (COMPETITION_CALENDAR) une fois
+      // basculé vers data.calendarEvents (voir migrateFederationCalendarOnce) — les vider faisait
+      // réapparaître toutes les compétitions Judo juste après une réinitialisation, avant de
+      // disparaître à nouveau à la prochaine synchro (la fusion côté serveur, en union, les
+      // remasquait) : source de confusion sans aucun bénéfice, corrigé en les laissant intacts.
       ...data.settings,
-      deletedCalendarCompetitions: [],
-      competitionOverrides: {},
       preparedSeasonYear: null
     }
   };
