@@ -11972,7 +11972,7 @@ function renderDisciplineCalendarCard(){
       id: r.e.id, dateLabel: r.e.date?fmtDateRange(r.e.date, r.e.dateEnd):''
     };
     return `
-    <div class="convoc-row" data-row-key="${r.kind}-${escapeHtml(r.id||competitionKey(r.c))}" style="align-items:flex-start;">
+    <div class="convoc-row" data-row-key="${r.kind}-${escapeHtml(f.id||competitionKey(r.c))}" style="align-items:flex-start;">
       <div class="info">
         <div class="n">${f.icon} ${escapeHtml(f.name)}${f.mine?' <span class="tag">Ajouté par toi</span>':''}</div>
         <div class="e">${f.dateLabel}${f.city?' · '+escapeHtml(f.city):''}</div>
