@@ -14762,6 +14762,30 @@ function computeAGReportData(){
     .sort((a,b)=> categoryBandSortIndex(a) - categoryBandSortIndex(b))
     .map(label=>({ label, count: byCategoryMap[label].count, countF: byCategoryMap[label].countF, countM: byCategoryMap[label].countM }));
 
+  // Répartition par ceinture (blanche à noire 8ème dan, etc.) — même principe que par cours/catégorie
+  // ci-dessus. Ordonné selon BELT_RANKS (progression réelle des grades), pas alphabétiquement. Les
+  // fiches sans ceinture renseignée (ex: discipline Taïso, qui n'a pas de système de ceinture — voir
+  // commentaire près de BELT_RANKS) sont regroupées sous "Non renseignée", en toute fin de liste.
+  const beltOrder = BELT_RANKS.map(b=>b.key);
+  const byBeltMap = {};
+  activeMembers.forEach(m=>{
+    const key = m.belt && beltOrder.includes(m.belt) ? m.belt : '__nr__';
+    if(!byBeltMap[key]) byBeltMap[key] = { count:0, countF:0, countM:0 };
+    byBeltMap[key].count++;
+    if(m.gender==='F') byBeltMap[key].countF++;
+    else if(m.gender==='M') byBeltMap[key].countM++;
+  });
+  const byBelt = Object.keys(byBeltMap)
+    .sort((a,b)=>{
+      if(a==='__nr__') return 1;
+      if(b==='__nr__') return -1;
+      return beltOrder.indexOf(a) - beltOrder.indexOf(b);
+    })
+    .map(key=>({
+      label: key==='__nr__' ? 'Non renseignée' : beltLabelFor(key),
+      count: byBeltMap[key].count, countF: byBeltMap[key].countF, countM: byBeltMap[key].countM
+    }));
+
   // Origine géographique × majorité, au 1er septembre de la saison en cours (majorité légale,
   // calculée jour près — contrairement aux catégories d'âge sportives ci-dessus).
   const sept1Ref = `${seasonYear}-09-01`;
@@ -14811,7 +14835,7 @@ function computeAGReportData(){
   const stagesParticipations = seasonStages.reduce((a,s)=>a+((s.participants||[]).length),0);
 
   return {
-    seasonYear, totalMembers, byGroup, genderF, genderM, genderNR, byCategory,
+    seasonYear, totalMembers, byGroup, genderF, genderM, genderNR, byCategory, byBelt,
     mennecyMajeurs, mennecyMineurs, exterieurMajeurs, exterieurMineurs,
     byGroupAttendance, avgAttendancePct, totalSessions,
     competitionsCount, totalParticipations, gold, silver, bronze,
@@ -14854,6 +14878,12 @@ function buildAGReportBlocks(r, logoSrc){
     <table class="recap-table" style="margin-top:14px;">
       <tr><th>Catégorie</th><th>Licenciés</th><th>Filles</th><th>Garçons</th></tr>
       ${r.byCategory.map(c=>`<tr><td>${escapeHtml(bandYearRangeLabel(c.label))}</td><td>${c.count}</td><td style="color:#9B3866; font-weight:700;">${c.countF}</td><td style="color:#2A5F8C; font-weight:700;">${c.countM}</td></tr>`).join('')}
+    </table>`);
+
+  blocks.push(`
+    <table class="recap-table" style="margin-top:14px;">
+      <tr><th>Ceinture</th><th>Licenciés</th><th>Filles</th><th>Garçons</th></tr>
+      ${r.byBelt.map(b=>`<tr><td>${escapeHtml(b.label)}</td><td>${b.count}</td><td style="color:#9B3866; font-weight:700;">${b.countF}</td><td style="color:#2A5F8C; font-weight:700;">${b.countM}</td></tr>`).join('')}
     </table>`);
 
   blocks.push(`
