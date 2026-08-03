@@ -1839,6 +1839,8 @@ function isCommitteeGroup(g){
 }
 // Fonctions disponibles sur une fiche du Comité directeur uniquement (bureau de l'association).
 const COMMITTEE_ROLES = ['Président(e)', 'Président(e) Adjoint(e)', 'Secrétaire', 'Secrétaire Adjoint(e)', 'Trésorier(e)', 'Trésorier(e) Adjointe', 'Secrétaire permanente', 'Membre', 'Professeur', 'Assistant(e)'];
+// Statuts du questionnaire de santé (à côté du certificat médical sur la fiche élève).
+const QUESTIONNAIRE_STATUSES = ['Sportif en compétition', 'Sportif', 'En attente', 'Non pratiquant'];
 // Suppression DÉFINITIVE du groupe "Comité directeur" (demande explicite du club) : retire le
 // groupe et toutes les fiches qui y étaient rattachées (fiches liées créées spécifiquement pour ce
 // groupe via createLinkedMemberRecord — la fiche "élève" d'origine de la même personne, dans son
@@ -2311,6 +2313,7 @@ async function attemptFamilyPortalLogin(token, isoBirthDate, opts){
 }
 
 const FAMILY_PORTAL_TABS = [
+  { key:'inscription', label:'Inscription' },
   { key:'presences', label:'Présences' },
   { key:'convocations', label:'Convocations' },
   { key:'calendrier', label:'Calendrier' },
@@ -2339,21 +2342,32 @@ function renderFamilyPortalMain(){
 function renderFamilyPortalTabContent(){
   const body = document.getElementById('fpBody');
   if(!body) return;
-  if(familyPortalUi.tab==='presences'){ body.innerHTML = familyPortalPresencesHtml(); }
+  if(familyPortalUi.tab==='inscription'){ body.innerHTML = familyPortalInscriptionHtml(); }
+  else if(familyPortalUi.tab==='presences'){ body.innerHTML = familyPortalPresencesHtml(); }
   else if(familyPortalUi.tab==='convocations'){ body.innerHTML = familyPortalConvocationsHtml(); wireFamilyPortalConvocations(body); }
   else if(familyPortalUi.tab==='calendrier'){ body.innerHTML = familyPortalCalendarHtml(); }
   else if(familyPortalUi.tab==='resultats'){ body.innerHTML = familyPortalResultsHtml(); wireFamilyPortalResults(body); }
   else if(familyPortalUi.tab==='palmares'){ body.innerHTML = familyPortalPalmaresHtml(); wireFamilyPortalPalmares(body); }
 }
 
-// ---- Fiche de l'élève : lecture seule, affichée en haut de la page d'accueil de l'espace famille
-// (onglet Présences). Aucun champ n'est modifiable ici — voir demande de Thomas : la famille doit
-// pouvoir VÉRIFIER les informations et signaler une erreur à Nathalie, pas les modifier elle-même.
-function familyPortalFicheHtml(){
+// ---- Inscription : statut du dossier (documents rendus/manquants — voir MEMBER_DOCUMENT_ITEMS,
+// même liste que côté admin) puis la fiche complète, en lecture seule. Voir demande de Thomas :
+// on affiche s'il manque un document (jamais le montant de la cotisation, qui reste une info admin),
+// et la famille doit pouvoir VÉRIFIER ses informations et signaler une erreur à Nathalie, pas les
+// modifier elle-même.
+function familyPortalDocumentStatus(m){
+  const missing = MEMBER_DOCUMENT_ITEMS.filter(item=>memberDocumentItemApplies(m, item) && !m[item.key]).map(item=>item.label);
+  return { complete: missing.length===0, missing };
+}
+function familyPortalInscriptionHtml(){
   const members = data.members||[];
-  if(!members.length) return '';
+  if(!members.length) return '<div class="fp-card"><div class="fp-empty">Aucune information disponible.</div></div>';
   const cards = members.map(m=>{
     const curGroup = (data.groups||[]).find(g=>g.id===m.groupId);
+    const status = familyPortalDocumentStatus(m);
+    const statusHtml = status.complete
+      ? `<div class="fp-empty" style="margin:2px 0 10px; color:var(--tatami); font-weight:700;">✅ Inscription complète</div>`
+      : `<div class="fp-empty" style="margin:2px 0 10px; color:var(--clay); font-weight:700;">⚠️ Inscription incomplète — il manque : ${status.missing.map(l=>escapeHtml(l)).join(', ')}</div>`;
     const rows = [['Date de naissance', m.birthDate ? fmtDate(m.birthDate) : '—']];
     rows.push(['Sexe', m.gender ? (m.gender==='F'?'Fille':'Garçon') : '—']);
     if(!groupHasNoBelt(curGroup) && m.belt) rows.push(['Ceinture', beltLabelFor(m.belt)]);
@@ -2363,10 +2377,11 @@ function familyPortalFicheHtml(){
     const addr = (m.address || m.postalCode || m.city) ? [m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') : '—';
     rows.push(['Adresse', addr]);
     rows.push(['Certificat médical', m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—']);
+    rows.push(['Questionnaire', m.questionnaireStatus || '—']);
     rows.push(['N° de licence', m.licenseNumber || '—']);
     rows.push(['Cours', curGroup ? curGroup.name : '—']);
     const rowsHtml = rows.map(([label, value])=>`<div style="margin-top:8px;"><span class="field-label">${escapeHtml(label)}</span><div>${escapeHtml(String(value))}</div></div>`).join('');
-    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div><div style="font-size:14px; line-height:1.7;">${rowsHtml}</div></div>`;
+    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${statusHtml}<div style="font-size:14px; line-height:1.7;">${rowsHtml}</div></div>`;
   }).join('');
   return `<div class="fp-card" style="background:var(--surface-2); border-style:dashed;"><div class="fp-empty" style="font-size:13px;">📋 Merci de vérifier ces informations et de signaler à Nathalie toute modification à effectuer.</div></div>${cards}`;
 }
@@ -2375,8 +2390,7 @@ function familyPortalFicheHtml(){
 function familyPortalPresencesHtml(){
   const members = data.members||[];
   if(!members.length) return '<div class="fp-card"><div class="fp-empty">Aucune information disponible.</div></div>';
-  const ficheHtml = familyPortalFicheHtml();
-  const presenceCards = members.map(m=>{
+  return members.map(m=>{
     const sessions = (data.sessions||[]).filter(s=>s.groupId===m.groupId && s.validated).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,20);
     const rows = sessions.map(s=>{
       const status = (data.attendance[s.id]||{})[m.id];
@@ -2386,7 +2400,6 @@ function familyPortalPresencesHtml(){
     }).join('');
     return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${rows || '<div class="fp-empty">Aucun cours pointé pour l’instant.</div>'}</div>`;
   }).join('');
-  return ficheHtml + presenceCards;
 }
 
 // ---- Convocations : réponse Présent(e)/Absent(e) directement depuis l’espace famille ----
@@ -3635,6 +3648,7 @@ function renderGroupsTab(){
                 <div style="margin-top:8px;"><span class="field-label">Téléphone</span><div>${m.phone ? escapeHtml(m.phone) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Adresse</span><div>${(m.address || m.postalCode || m.city) ? escapeHtml([m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Certificat médical</span><div>${m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—'}</div></div>
+                <div style="margin-top:8px;"><span class="field-label">Questionnaire</span><div>${m.questionnaireStatus ? escapeHtml(m.questionnaireStatus) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">N° de licence</span><div>${m.licenseNumber ? escapeHtml(m.licenseNumber) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Cours</span><div>${curGroup ? escapeHtml(curGroup.name) : '—'}</div></div>
                 ${isProfSession() ? '' : `<div style="margin-top:8px;"><span class="field-label">Cotisation</span><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">${memberDueBadgeHtml(m)}<button class="ghost" data-action="open-member-cotisation" data-id="${m.id}" style="padding:4px 10px; font-size:12px;">Détail &amp; paiements</button></div></div>`}
@@ -3737,6 +3751,15 @@ function renderGroupsTab(){
               <span class="field-label">Certificat médical</span>
               <input type="date" data-action="edit-medicalcert" data-id="${m.id}" value="${m.medicalCertDate||''}">
             </div>
+            <div class="fiche-field">
+              <span class="field-label">Questionnaire</span>
+              <select data-action="edit-questionnaire" data-id="${m.id}">
+                <option value="" ${!m.questionnaireStatus?'selected':''}>Non renseigné</option>
+                ${QUESTIONNAIRE_STATUSES.map(s=>`<option value="${escapeHtml(s)}" ${m.questionnaireStatus===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field">
               <span class="field-label">N° de licence</span>
               <input type="text" data-action="edit-license" data-id="${m.id}" value="${escapeHtml(m.licenseNumber||'')}" placeholder="M08102009ACHAR01">
@@ -4279,7 +4302,8 @@ function createLinkedMemberRecord(sourceMember, targetGroupId){
     gender: sourceMember.gender, beltHistory: (!noBelt && sourceMember.belt) ? [{ belt: sourceMember.belt, date: todayStr() }] : [],
     archived:false, phone: sourceMember.phone||'', address: sourceMember.address||'',
     postalCode: sourceMember.postalCode||'', city: sourceMember.city||'',
-    medicalCertDate: sourceMember.medicalCertDate||null, licenseNumber: sourceMember.licenseNumber||'',
+    medicalCertDate: sourceMember.medicalCertDate||null, questionnaireStatus: sourceMember.questionnaireStatus||'',
+    licenseNumber: sourceMember.licenseNumber||'',
     note: sourceMember.note||''
   };
   data.members.push(newMember);
@@ -4291,7 +4315,7 @@ function createLinkedMemberRecord(sourceMember, targetGroupId){
 // doivent rester propres à chaque fiche (l'une reste active dans son cours réel, l'autre patiente
 // dans "Licence à prendre"). Contrairement aux fiches liées du Comité directeur (indépendantes une
 // fois créées), celles-ci restent synchronisées tant que la fiche en attente n'a pas été validée.
-const LINKED_MEMBER_SYNC_FIELDS = ['name','birthDate','gender','email','phone','address','postalCode','city','medicalCertDate','licenseNumber','note'];
+const LINKED_MEMBER_SYNC_FIELDS = ['name','birthDate','gender','email','phone','address','postalCode','city','medicalCertDate','questionnaireStatus','licenseNumber','note'];
 function syncLinkedMember(m){
   if(!m || !m.linkedMemberId) return;
   const other = data.members.find(x=>x.id===m.linkedMemberId);
@@ -4421,6 +4445,12 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   if(certInput){
     const m = data.members.find(x=>x.id===certInput.dataset.id);
     if(m){ m.medicalCertDate = certInput.value || null; syncLinkedMember(m); saveData(); }
+    return;
+  }
+  const questionnaireSel = e.target.closest('[data-action="edit-questionnaire"]');
+  if(questionnaireSel){
+    const m = data.members.find(x=>x.id===questionnaireSel.dataset.id);
+    if(m){ m.questionnaireStatus = questionnaireSel.value || ''; syncLinkedMember(m); saveData(); }
     return;
   }
   const licenseInput = e.target.closest('[data-action="edit-license"]');
@@ -16880,7 +16910,8 @@ function createPendingLicenseRecord(sourceMember, licenseGroupId){
     gender: sourceMember.gender, beltHistory: cloneArr(sourceMember.beltHistory),
     archived:false, phone: sourceMember.phone||'', address: sourceMember.address||'',
     postalCode: sourceMember.postalCode||'', city: sourceMember.city||'',
-    medicalCertDate: sourceMember.medicalCertDate||null, licenseNumber: sourceMember.licenseNumber||'',
+    medicalCertDate: sourceMember.medicalCertDate||null, questionnaireStatus: sourceMember.questionnaireStatus||'',
+    licenseNumber: sourceMember.licenseNumber||'',
     note: sourceMember.note||'', pendingGroupId: sourceMember.groupId, linkedMemberId: sourceMember.id,
     forNextSeason: true
   };
