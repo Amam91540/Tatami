@@ -981,6 +981,7 @@
               <select id="resultsEventSel"></select>
             </div>
           </div>
+          <div id="event-photos-gallery" style="margin-top:10px;"></div>
           <div id="results-list" style="margin-top:10px;"></div>
           <button class="ghost icon-btn" id="archiveResultsEventBtn" style="width:100%; margin-top:10px; display:none;">🗄️ Archiver cette compétition</button>
         </div>
@@ -1881,6 +1882,85 @@ function activeNextSeasonYear(){
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbw5azI4IySpLdWlay3kw3QgAYjhA4QjUy-grFLnEEtqZXRbS7OZyaAwg8lOzKnxUOnuiw/exec';
 
 const ROLE_LABELS = { admin: 'Administrateur', prof: 'Professeur', comptable: 'Comptable' };
+
+// ---------------- PHOTOS (podium, pesées de compétition) ----------------
+// Jamais stockées dans `data` (donc jamais dans la synchro classeur classique) : seul l'id du
+// fichier Drive circule (voir ev.photoFileIds / recipient.photoFileId, et Code.gs — uploadPhoto/
+// getPhotosBase64). Ce cache mémoire évite de re-télécharger la même photo à chaque rendu/export PDF.
+const photoDataCache = new Map(); // fileId -> data URI (ou null si introuvable/supprimée)
+
+async function fetchPhotosBase64(fileIds){
+  const s = getSession();
+  const missing = [...new Set((fileIds||[]).filter(Boolean))].filter(id=>!photoDataCache.has(id));
+  if(!missing.length || !s || !s.sessionToken) return;
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'getPhotos', sessionToken: s.sessionToken, fileIds: missing })
+    });
+    const json = await res.json();
+    const photos = (json && json.ok) ? (json.photos||{}) : {};
+    missing.forEach(id=> photoDataCache.set(id, photos[id] || null));
+  }catch(e){
+    // Pas de connexion : on retentera au prochain rendu, rien à afficher pour l'instant.
+  }
+}
+async function getPhotoDataUri(fileId){
+  if(!fileId) return null;
+  if(!photoDataCache.has(fileId)) await fetchPhotosBase64([fileId]);
+  return photoDataCache.get(fileId) || null;
+}
+
+// Redimensionne/compresse une photo avant envoi (podium, pesée) : un fichier de plusieurs Mo tel
+// quel alourdirait inutilement l'upload (souvent fait depuis un téléphone, en salle de compétition,
+// parfois en 4G) et le poids du fichier Drive stocké au final. 1600px de plus grand côté suffit
+// largement pour un affichage en vignette ou dans un PDF.
+function resizeImageFileToBase64(file, maxDim, quality){
+  maxDim = maxDim || 1600; quality = quality || 0.8;
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=> reject(new Error('Lecture du fichier impossible'));
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=> reject(new Error('Image invalide'));
+      img.onload = ()=>{
+        let width = img.width, height = img.height;
+        if(width>maxDim || height>maxDim){
+          const ratio = Math.min(maxDim/width, maxDim/height);
+          width = Math.round(width*ratio); height = Math.round(height*ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Envoie une photo sur Drive (voir Code.gs — uploadPhoto) et renvoie son id, ou null en cas
+// d'échec (toast déjà affiché dans ce cas, l'appelant n'a rien à faire de plus).
+async function uploadPhotoToServer(file){
+  const s = getSession();
+  if(!s || !s.sessionToken){ showToast('Non connecté'); return null; }
+  try{
+    const { base64, mimeType } = await resizeImageFileToBase64(file);
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'uploadPhoto', sessionToken: s.sessionToken, base64, mimeType })
+    });
+    const json = await res.json();
+    if(json && json.ok && json.fileId) return json.fileId;
+    showToast((json && json.error) || 'Échec de l’envoi de la photo');
+    return null;
+  }catch(e){
+    showToast('Impossible d’envoyer la photo (connexion ?)');
+    return null;
+  }
+}
 
 function getSession(){
   try{ return JSON.parse(localStorage.getItem('dojo-session')||'null'); }catch(e){ return null; }
@@ -12231,6 +12311,25 @@ function buildWeightFieldHtml(birthDate, currentValue, dataAttrs, forceMorpholog
     <optgroup label="Filles">${cats.f.map(w=>`<option value="${w}" ${String(currentValue)===w?'selected':''}>${w} kg</option>`).join('')}</optgroup>
   </select>`;
 }
+// Photo du podium pour UN résultat individuel (r.photoFileId) — distincte des photos de la
+// compétition elle-même (ev.photoFileIds, plusieurs, voir renderEventPhotosGallery). Affiche une
+// vignette cliquable (ouvre la photo en grand dans un nouvel onglet) + bouton retirer si une photo
+// est déjà attachée, sinon un simple bouton d'ajout déclenchant la caméra/galerie du téléphone.
+function buildResultPhotoHtml(r, eventId){
+  if(r.photoFileId){
+    return `
+    <div style="display:flex; align-items:center; gap:8px; margin-top:2px; padding-top:6px; border-top:1px dashed var(--line);">
+      <img data-action="view-result-photo" data-fileid="${escapeHtml(r.photoFileId)}" style="width:36px; height:36px; object-fit:cover; border-radius:6px; cursor:pointer; background:#EEE; display:block;" title="Voir la photo du podium">
+      <span style="font-size:12px; color:var(--ink-dim); flex:1;">Photo du podium</span>
+      <button type="button" class="ghost icon-btn" data-action="remove-result-photo" data-event="${eventId}" data-member="${r.memberId}" style="padding:4px 8px; font-size:11px;">✕</button>
+    </div>`;
+  }
+  return `
+    <label class="ghost icon-btn" style="cursor:pointer; padding:5px 10px; font-size:12px; display:inline-flex; align-items:center; gap:4px; margin-top:2px; align-self:flex-start;">
+      📷 Photo podium
+      <input type="file" accept="image/*" capture="environment" data-action="upload-result-photo" data-event="${eventId}" data-member="${r.memberId}" style="display:none;">
+    </label>`;
+}
 function weightDisplayValue(birthDate, weight, forceMorphological){
   if(forceMorphological) return 'Poule morphologique';
   if(weight==='Poule morphologique') return weight;
@@ -13327,8 +13426,59 @@ function renderResultsDashboard(){
   document.getElementById('dashboardNextMonthBtn').addEventListener('click', ()=>{ ui.dashboardMonthOffset++; renderResultsDashboard(); });
 }
 
+// Photos de la compétition elle-même (pesées, combattants...) — potentiellement plusieurs, voir
+// ev.photoFileIds. Bloc distinct de renderResultsList (mais toujours appelé depuis là, même
+// ui.resultsEventId) : une photo du podium propre à CHAQUE résultat individuel est affichée plus
+// bas, directement sur la ligne du concerné (voir renderResultsList).
+function renderEventPhotosGallery(){
+  const wrap = document.getElementById('event-photos-gallery');
+  if(!wrap) return;
+  const ev = ui.resultsEventId ? data.convocEvents.find(e=>e.id===ui.resultsEventId) : null;
+  if(!ev){ wrap.innerHTML = ''; return; }
+  const photoIds = ev.photoFileIds || [];
+  wrap.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+      <label class="small" style="margin:0;">📸 Photos de la compétition (pesées, combattants...)</label>
+      <label class="ghost icon-btn" style="cursor:pointer; padding:5px 10px; font-size:12px; display:inline-flex; align-items:center; gap:4px;">
+        + Ajouter
+        <input type="file" accept="image/*" capture="environment" multiple data-action="upload-event-photo" style="display:none;">
+      </label>
+    </div>
+    <div style="display:flex; flex-wrap:wrap; gap:8px;">
+      ${photoIds.length===0 ? `<div style="font-size:12.5px; color:var(--ink-dim);">Aucune photo ajoutée pour l'instant.</div>` : photoIds.map(fid=>`
+        <div style="position:relative;">
+          <img data-action="view-event-photo" data-fileid="${escapeHtml(fid)}" style="width:64px; height:64px; object-fit:cover; border-radius:8px; cursor:pointer; background:#EEE; display:block;">
+          <button type="button" data-action="remove-event-photo" data-fileid="${escapeHtml(fid)}" title="Retirer cette photo" style="position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%; border:none; background:#B3492F; color:#fff; font-size:11px; line-height:1; cursor:pointer; padding:0;">✕</button>
+        </div>`).join('')}
+    </div>`;
+  wrap.querySelectorAll('[data-action="view-event-photo"]').forEach(img=>{
+    getPhotoDataUri(img.dataset.fileid).then(uri=>{ if(uri){ img.src = uri; img.dataset.loadedUri = uri; } });
+    img.addEventListener('click', ()=>{ if(img.dataset.loadedUri) window.open(img.dataset.loadedUri, '_blank'); });
+  });
+  wrap.querySelectorAll('[data-action="remove-event-photo"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      ev.photoFileIds = (ev.photoFileIds||[]).filter(id=>id!==btn.dataset.fileid);
+      saveData();
+      renderEventPhotosGallery();
+    });
+  });
+  const uploadInput = wrap.querySelector('[data-action="upload-event-photo"]');
+  if(uploadInput) uploadInput.addEventListener('change', async ()=>{
+    const files = [...uploadInput.files];
+    if(!files.length) return;
+    showToast(`Envoi de ${files.length} photo${files.length>1?'s':''}...`);
+    for(const file of files){
+      const fileId = await uploadPhotoToServer(file);
+      if(fileId) ev.photoFileIds = [...(ev.photoFileIds||[]), fileId];
+    }
+    saveData();
+    renderEventPhotosGallery();
+    showToast('Photo(s) ajoutée(s)');
+  });
+}
 function renderResultsList(){
   const wrap = document.getElementById('results-list');
+  renderEventPhotosGallery();
   if(!ui.resultsEventId){
     wrap.innerHTML = '';
     return;
@@ -13403,6 +13553,7 @@ function renderResultsList(){
              </select>`}
       </div>
       ${qualifSection}
+      ${buildResultPhotoHtml(r, ev.id)}
     </div>`;
   }, ui.resultsCategoryExpanded[expandedKey], memberOf);
   wrap.querySelectorAll('[data-action="toggle-results-category"]').forEach(el=>{
@@ -13430,6 +13581,29 @@ function renderResultsList(){
       if(!rec) return;
       rec.weight = sel.value.trim();
       saveData();
+    });
+  });
+  wrap.querySelectorAll('[data-action="view-result-photo"]').forEach(img=>{
+    getPhotoDataUri(img.dataset.fileid).then(uri=>{ if(uri){ img.src = uri; img.dataset.loadedUri = uri; } });
+    img.addEventListener('click', ()=>{ if(img.dataset.loadedUri) window.open(img.dataset.loadedUri, '_blank'); });
+  });
+  wrap.querySelectorAll('[data-action="remove-result-photo"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const evObj = data.convocEvents.find(e=>e.id===btn.dataset.event);
+      const rec = evObj && evObj.recipients.find(x=>x.memberId===btn.dataset.member);
+      if(rec){ rec.photoFileId = ''; saveData(); renderResultsList(); }
+    });
+  });
+  wrap.querySelectorAll('[data-action="upload-result-photo"]').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const file = inp.files[0];
+      if(!file) return;
+      const evObj = data.convocEvents.find(e=>e.id===inp.dataset.event);
+      const rec = evObj && evObj.recipients.find(x=>x.memberId===inp.dataset.member);
+      if(!rec) return;
+      showToast('Envoi de la photo...');
+      const fileId = await uploadPhotoToServer(file);
+      if(fileId){ rec.photoFileId = fileId; saveData(); renderResultsList(); showToast('Photo ajoutée'); }
     });
   });
   wrap.querySelectorAll('[data-action="qualif-check"]').forEach(cb=>{
@@ -14594,7 +14768,7 @@ function buildResultRowsHtml(presents, birthDateOf, shiai, memberOf){
     }
     if(order.length>1){
       rows.push({
-        html: `<td colspan="4" style="background:#EDEEE7; font-weight:800; font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:7px 10px;">${escapeHtml(bandYearRangeLabel(label))}</td>`,
+        html: `<td colspan="5" style="background:#EDEEE7; font-weight:800; font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:7px 10px;">${escapeHtml(bandYearRangeLabel(label))}</td>`,
         isDivider: true, dividerType: 'category', categoryLabel: label
       });
     }
@@ -14615,8 +14789,13 @@ function buildResultRowsHtml(presents, birthDateOf, shiai, memberOf){
       } else {
         resultCell = `<span style="display:inline-block; padding:3px 10px; border-radius:6px; ${medalStyle(r.result)||'background:#EEE; color:#333; font-weight:700;'}">${escapeHtml(r.result)}</span>`;
       }
+      // Photo du podium (voir buildResultPhotoHtml côté saisie) : déjà pré-téléchargée en base64
+      // dans photoDataCache par l'appelant (voir fetchPhotosBase64) avant de construire ce tableau —
+      // html2canvas ne sait pas attendre un chargement d'image asynchrone pendant la capture.
+      const photoUri = r.photoFileId ? photoDataCache.get(r.photoFileId) : null;
+      const photoCell = photoUri ? `<img src="${photoUri}" style="width:34px; height:34px; object-fit:cover; border-radius:5px; display:block;">` : '';
       rows.push({
-        html: `<td>${genderBadgeHtml(data.members.find(x=>x.id===r.memberId)?.gender)} ${nameWithBoldSurname(r.name)}${r.qualificationFor ? `<div style="font-size:9.5px; color:#6B8F3D; font-weight:600; margin-top:2px;">🎫 Qualifié(e) : ${escapeHtml(r.qualificationFor)}</div>` : ''}</td><td>${escapeHtml(cat||'')}</td><td>${escapeHtml(weightLabel)}</td><td>${resultCell}</td>`,
+        html: `<td>${genderBadgeHtml(data.members.find(x=>x.id===r.memberId)?.gender)} ${nameWithBoldSurname(r.name)}${r.qualificationFor ? `<div style="font-size:9.5px; color:#6B8F3D; font-weight:600; margin-top:2px;">🎫 Qualifié(e) : ${escapeHtml(r.qualificationFor)}</div>` : ''}</td><td>${escapeHtml(cat||'')}</td><td>${escapeHtml(weightLabel)}</td><td>${resultCell}</td><td>${photoCell}</td>`,
         isDivider: false, categoryLabel: label
       });
     });
@@ -14807,11 +14986,22 @@ async function generateEventResultsPdfForId(eventId){
     const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
   const memberOf = r => data.members.find(x=>x.id===r.memberId);
     const shiaiEvent = isShiaiEvent(ev.name);
+    // Photos (podium par résultat + galerie de la compétition) : pré-téléchargées ici en une seule
+    // fois AVANT de construire le HTML du PDF — html2canvas capture une image statique, il ne peut
+    // pas attendre qu'une <img src="..."> distante finisse de charger pendant la capture.
+    await fetchPhotosBase64([...presents.map(r=>r.photoFileId).filter(Boolean), ...(ev.photoFileIds||[])]);
     const { rows, gold, silver, bronze, categoryLabels } = buildResultRowsHtml(presents, birthDateOf, shiaiEvent);
 
     const totalMedals = gold+silver+bronze;
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
+    const eventPhotosHtml = (ev.photoFileIds||[]).length ? `
+      <div class="recap-summary" style="flex-wrap:wrap;">
+        ${ev.photoFileIds.map(fid=>{
+          const uri = photoDataCache.get(fid);
+          return uri ? `<img src="${uri}" style="width:90px; height:90px; object-fit:cover; border-radius:8px;">` : '';
+        }).join('')}
+      </div>` : '';
 
  const buildContextHtml = (isFirst)=> !isFirst ? '' : `
       <div class="recap-header">
@@ -14831,14 +15021,15 @@ async function generateEventResultsPdfForId(eventId){
         <div class="chip" style="${medalStyle('1')}">🥇 ${gold}</div>
         <div class="chip" style="${medalStyle('2')}">🥈 ${silver}</div>
         <div class="chip" style="${medalStyle('3')}">🥉 ${bronze}</div>
-      </div>`}`;
+      </div>`}
+      ${eventPhotosHtml}`;
 
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
     const margin = 24;
     await paginateRowsIntoPdf(pdf, {
       rows,
-      tableHeadHtml: '<th>Élève</th><th>Catégorie</th><th>Poids</th><th>Résultat</th>',
+      tableHeadHtml: '<th>Élève</th><th>Catégorie</th><th>Poids</th><th>Résultat</th><th>Photo</th>',
       buildContextHtml,
       containerClass: 'recap-doc',
       containerWidthPx: 700,
@@ -14883,6 +15074,10 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
     let totalParticipants = 0, gold = 0, silver = 0, bronze = 0;
     const allCategoryLabels = new Set();
     const combinedRows = [];
+    // Pré-téléchargement de toutes les photos de podium nécessaires, toutes compétitions du récap
+    // confondues, avant de construire le HTML (voir buildResultRowsHtml — html2canvas a besoin que
+    // l'image soit déjà en mémoire, il ne peut pas attendre un chargement asynchrone pendant la capture).
+    await fetchPhotosBase64(events.flatMap(({presents})=> presents.map(r=>r.photoFileId).filter(Boolean)));
     events.forEach(({ev, presents})=>{
       totalParticipants += presents.length;
       const birthDateOf = birthDateOfRecipient;
@@ -14890,10 +15085,10 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
       gold+=g; silver+=s; bronze+=b;
       categoryLabels.forEach(c=>allCategoryLabels.add(c));
       combinedRows.push({
-        html: `<td colspan="4" style="background:#2A2F26; color:#fff; font-weight:800; font-size:12.5px; padding:9px 10px;">${escapeHtml(ev.name)}${ev.date?' — '+escapeHtml(fmtDate(ev.date)):''} — ${presents.length} participant${presents.length===1?'':'s'}</td>`,
+        html: `<td colspan="5" style="background:#2A2F26; color:#fff; font-weight:800; font-size:12.5px; padding:9px 10px;">${escapeHtml(ev.name)}${ev.date?' — '+escapeHtml(fmtDate(ev.date)):''} — ${presents.length} participant${presents.length===1?'':'s'}</td>`,
         isDivider: true, dividerType: 'event', eventLabel: ev.name, eventDate: ev.date?fmtDate(ev.date):''
       });
-      combinedRows.push(...(rows.length ? rows : [{ html:'<td colspan="4" style="color:#999; padding:10px;">Aucun participant présent</td>', isDivider:false, categoryLabel:null }]));
+      combinedRows.push(...(rows.length ? rows : [{ html:'<td colspan="5" style="color:#999; padding:10px;">Aucun participant présent</td>', isDivider:false, categoryLabel:null }]));
     });
 
     const totalMedals = gold+silver+bronze;
@@ -14927,7 +15122,7 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
 
     await paginateRowsIntoPdf(pdf, {
       rows: combinedRows,
-      tableHeadHtml: '<th>Élève</th><th>Catégorie</th><th>Poids</th><th>Résultat</th>',
+      tableHeadHtml: '<th>Élève</th><th>Catégorie</th><th>Poids</th><th>Résultat</th><th>Photo</th>',
       buildContextHtml,
       containerClass: 'recap-doc',
       containerWidthPx: 700,
