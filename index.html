@@ -1688,6 +1688,55 @@ function memberAge(birthDate){
   return data.settings.seasonStartYear - birthYear;
 }
 
+// Un élève majeur reçoit et lit lui-même sa convocation/son lien d'espace personnel : il n'y a plus
+// de sens à parler de "votre enfant" dans ces messages, voir demande de Thomas. Basé sur l'âge RÉEL
+// au jour de l'envoi (ageAtDate, défini plus bas mais hoisté comme toute déclaration `function`),
+// le même calcul déjà utilisé pour l'attestation de paiement (buildAttestationHtml, "L'enfant"/"Mr")
+// — PAS l'âge "sportif" (memberAge ci-dessus, saison - année de naissance) utilisé pour les
+// catégories de compétition, qui n'a aucune valeur légale pour déterminer une majorité.
+function isMajeurMember(m){
+  const age = ageAtDate(m && m.birthDate, todayStr());
+  return age !== null && age >= 18;
+}
+// Formule utilisée quand UN SEUL élève est concerné (message personnalisé : WhatsApp individuel,
+// email avec PDF joint, lien d'espace personnel).
+function convocSubjectPhrase(member){
+  return isMajeurMember(member) ? 'Vous êtes convoqué(e)' : 'Votre enfant est convoqué(e)';
+}
+// Pour un message personnalisé (1 seul destinataire) : un élève majeur est salué par son prénom
+// ("Bonjour Léo,") plutôt qu'un "Bonjour," générique — cohérent avec le fait que le message
+// s'adresse maintenant directement à lui, pas à son parent (voir demande de Thomas : "marque le nom
+// à la limite mais supprime 'votre enfant'"). Un mineur garde le "Bonjour," générique habituel
+// (le message reste adressé au parent).
+function convocGreetingLine(member){
+  if(member && isMajeurMember(member)){
+    const prenom = String(member.name||'').trim().split(/\s+/)[0] || '';
+    if(prenom) return `Bonjour ${prenom},`;
+  }
+  return 'Bonjour,';
+}
+// Pour un message partagé par plusieurs élèves à la fois (ex: brouillon email groupé) : un seul
+// texte pour tout le monde, donc une seule formulation possible. Si le groupe est mixte (majeurs et
+// mineurs), on retombe sur une formulation neutre plutôt que de mal s'adresser à une partie d'entre eux.
+function convocSubjectPhraseForMembers(members){
+  const list = members || [];
+  if(!list.length) return 'Vous êtes convoqué(e)';
+  const allMajeur = list.every(isMajeurMember);
+  const allMineur = list.every(m=>!isMajeurMember(m));
+  if(allMajeur) return 'Vous êtes convoqué(e)';
+  if(allMineur) return 'Votre enfant est convoqué(e)';
+  return 'Votre enfant (ou vous-même si vous êtes majeur) est convoqué(e)';
+}
+// Indication de "mot de passe" (date de naissance) pour le lien d'espace personnel famille : si tous
+// les membres couverts par ce lien sont majeurs, on demande LEUR PROPRE date de naissance ("votre
+// date de naissance"), pas celle d'un "enfant" qui n'existe pas dans ce contexte.
+function familyPortalBirthdateHintForMembers(members){
+  const list = members || [];
+  const allMajeur = list.length>0 && list.every(isMajeurMember);
+  if(allMajeur) return list.length>1 ? 'la date de naissance de l\'un d\'entre vous' : 'votre date de naissance';
+  return 'la date de naissance de votre enfant';
+}
+
 /* ---------------- CATÉGORIE VÉTÉRANS (FFJDA) ---------------- */
 const VETERAN_BRACKETS = [
   { min:30, max:34, num:1 }, { min:35, max:39, num:2 }, { min:40, max:44, num:3 },
@@ -2104,11 +2153,23 @@ async function openFamilyPortalLinkOverlay(memberId){
   const m = data.members.find(x=>x.id===memberId);
   const namesLabel = (info.memberNames||[]).join(' et ');
   const waNumber = m ? phoneToWhatsappNumber(m.phone) : '';
-  const shareText = `Bonjour,\n\nVoici le lien de votre espace personnel ${data.clubName||'du club'} pour suivre ${namesLabel} : présences, convocations, calendrier, résultats et photos.\n\n${url}\n\nPour vous identifier, indiquez simplement la date de naissance de votre enfant au format JJMMAAAA (ex : 14032012).\n\nSportivement,\n${data.clubName||'Le club'}`;
+  // Mêmes membres que ceux couverts par ce lien côté serveur (familyId si validé, sinon l'élève
+  // seul) — voir familyKeyForMember/familyPortalMembersForKey côté Code.gs — recalculé ici pour
+  // savoir si le message doit s'adresser à l'élève directement (majeur) ou à son parent (mineur).
+  const familyMembers = m && m.familyId ? data.members.filter(x=>x.familyId===m.familyId && !x.archived) : (m ? [m] : []);
+  const birthdateHint = familyPortalBirthdateHintForMembers(familyMembers);
+  const allMajeur = familyMembers.length>0 && familyMembers.every(isMajeurMember);
+  const introLine = allMajeur
+    ? `Voici le lien de votre espace personnel ${data.clubName||'du club'} : présences, convocations, calendrier, résultats et photos.`
+    : `Voici le lien de votre espace personnel ${data.clubName||'du club'} pour suivre ${namesLabel} : présences, convocations, calendrier, résultats et photos.`;
+  // Salutation par le prénom quand le lien ne couvre qu'un seul élève majeur (message vraiment
+  // adressé à lui) — même logique que convocGreetingLine pour les convocations.
+  const greeting = (familyMembers.length===1 && allMajeur) ? convocGreetingLine(familyMembers[0]) : 'Bonjour,';
+  const shareText = `${greeting}\n\n${introLine}\n\n${url}\n\nPour vous identifier, indiquez simplement ${birthdateHint} au format JJMMAAAA (ex : 14032012).\n\nSportivement,\n${data.clubName||'Le club'}`;
   overlay.innerHTML = `
     <div class="rio-card">
       <h3 style="margin:0 0 6px;">🔗 Espace personnel famille</h3>
-      <p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 12px;">Pour ${escapeHtml(namesLabel)}. Ce lien est permanent — la famille l'ouvre à chaque visite, sans recréer de compte. Elle s'identifie avec la date de naissance de l'enfant (format JJMMAAAA).</p>
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 12px;">Pour ${escapeHtml(namesLabel)}. Ce lien est permanent — la famille l'ouvre à chaque visite, sans recréer de compte. Elle s'identifie avec ${escapeHtml(birthdateHint)} (format JJMMAAAA).</p>
       <div class="fpl-link">${escapeHtml(url)}</div>
       <div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">
         <button class="primary" id="fplCopyBtn">📋 Copier le lien</button>
@@ -2196,7 +2257,7 @@ function renderFamilyPortalGate(token, prefillIso, loading){
       <div class="fp-gate-card">
         <div class="fp-gate-eyebrow">Tatami</div>
         <h1>Espace personnel famille</h1>
-        <label>Date de naissance de votre enfant
+        <label>Date de naissance (la vôtre si vous êtes majeur, sinon celle de votre enfant)
           <input type="date" id="fpGateBirthDate" value="${escapeHtml(prefillIso||'')}">
         </label>
         <p class="fp-gate-error" id="fpGateError">${loading ? 'Connexion en cours…' : ''}</p>
@@ -2206,7 +2267,7 @@ function renderFamilyPortalGate(token, prefillIso, loading){
   const submit = ()=>{
     const input = document.getElementById('fpGateBirthDate');
     const val = input ? input.value : '';
-    if(!val){ const err = document.getElementById('fpGateError'); if(err) err.textContent = 'Indique la date de naissance de ton enfant'; return; }
+    if(!val){ const err = document.getElementById('fpGateError'); if(err) err.textContent = 'Indique une date de naissance'; return; }
     attemptFamilyPortalLogin(token, val, { silent:false });
   };
   const btn = document.getElementById('fpGateSubmitBtn');
@@ -11279,7 +11340,10 @@ async function buildConvocTextMessage(){
   const event = document.getElementById('convocEvent').value.trim() || 'Convocation';
   const selected = convocSelectedMembers();
 
-  let body = `Bonjour,\n\nVotre enfant est convoqué(e) à : ${ctx.event}\n`;
+  // Nom en salutation uniquement quand un seul destinataire est concerné (message vraiment
+  // personnalisé) — un brouillon partagé par plusieurs élèves garde un "Bonjour," générique.
+  const greeting = selected.length===1 ? convocGreetingLine(selected[0]) : 'Bonjour,';
+  let body = `${greeting}\n\n${convocSubjectPhraseForMembers(selected)} à : ${ctx.event}\n`;
   if(ctx.dateLabel) body += `Date : ${ctx.dateLabel}\n`;
   if(ctx.lieu) body += `Lieu : ${ctx.lieu}\n`;
   if(ctx.ville) body += `Ville : ${ctx.ville}\n`;
@@ -11323,7 +11387,7 @@ function phoneToWhatsappNumber(phone){
 // destinataire est sélectionné au total), on peut toujours le fournir ici puisque chaque envoi
 // WhatsApp cible une personne à la fois de toute façon (un numéro = une conversation ouverte).
 function buildConvocPersonalMessage(ctx, ev, member){
-  let body = `Bonjour,\n\nVotre enfant est convoqué(e) à : ${ctx.event}\n`;
+  let body = `${convocGreetingLine(member)}\n\n${convocSubjectPhrase(member)} à : ${ctx.event}\n`;
   if(ctx.dateLabel) body += `Date : ${ctx.dateLabel}\n`;
   if(ctx.lieu) body += `Lieu : ${ctx.lieu}\n`;
   if(ctx.ville) body += `Ville : ${ctx.ville}\n`;
@@ -12901,7 +12965,7 @@ function buildResultPhotoHtml(r, eventId){
   return `
     <label class="ghost icon-btn" style="cursor:pointer; padding:5px 10px; font-size:12px; display:inline-flex; align-items:center; gap:4px; margin-top:2px; align-self:flex-start;">
       📷 Photo podium
-      <input type="file" accept="image/*" capture="environment" data-action="upload-result-photo" data-event="${eventId}" data-member="${r.memberId}" style="display:none;">
+      <input type="file" accept="image/*" data-action="upload-result-photo" data-event="${eventId}" data-member="${r.memberId}" style="display:none;">
     </label>`;
 }
 function weightDisplayValue(birthDate, weight, forceMorphological){
@@ -14020,7 +14084,7 @@ function renderEventPhotosGallery(){
       <label class="small" style="margin:0;">📸 Photos de la compétition (pesées, combattants...)</label>
       <label class="ghost icon-btn" style="cursor:pointer; padding:5px 10px; font-size:12px; display:inline-flex; align-items:center; gap:4px;">
         + Ajouter
-        <input type="file" accept="image/*" capture="environment" multiple data-action="upload-event-photo" style="display:none;">
+        <input type="file" accept="image/*" multiple data-action="upload-event-photo" style="display:none;">
       </label>
     </div>
     <div style="display:flex; flex-wrap:wrap; gap:8px;">
@@ -14714,7 +14778,7 @@ async function sendSingleConvocationEmail(eventId, memberId, btn){
   if(btn){ btn.disabled = true; btn.innerHTML = '⏳'; }
 
   const ctx = buildConvocContext(ev);
-  let baseTextBody = `Bonjour,\n\nVotre enfant est convoqué(e) à : ${ctx.event}\n`;
+  let baseTextBody = `${convocGreetingLine(m)}\n\n${convocSubjectPhrase(m)} à : ${ctx.event}\n`;
   if(ctx.dateLabel) baseTextBody += `Date : ${ctx.dateLabel}\n`;
   if(ctx.lieu) baseTextBody += `Lieu : ${ctx.lieu}\n`;
   if(ctx.ville) baseTextBody += `Ville : ${ctx.ville}\n`;
@@ -16123,7 +16187,10 @@ async function sendConvocationsWithPdf(){
   // Ne vide plus le formulaire ici : à ce stade, aucun email n'est encore parti (la boucle
   // d'envoi et ses éventuelles erreurs arrivent plus bas) — le vider maintenant ferait perdre
   // titre/date/lieu/sélection en cas d'échec de génération de PDF pour un ou plusieurs élèves.
-  let baseTextBody = `Bonjour,\n\nVotre enfant est convoqué(e) à : ${ctx.event}\n`;
+  // La formule d'appel ("Vous êtes convoqué(e)" vs "Votre enfant est convoqué(e)") dépend de CHAQUE
+  // destinataire (majeur ou non) : elle est donc construite individuellement dans la boucle
+  // d'envoi plus bas, pas ici où un seul texte serait partagé par tout le monde.
+  let baseTextBody = '';
   if(ctx.dateLabel) baseTextBody += `Date : ${ctx.dateLabel}\n`;
   if(ctx.lieu) baseTextBody += `Lieu : ${ctx.lieu}\n`;
   if(ctx.ville) baseTextBody += `Ville : ${ctx.ville}\n`;
@@ -16169,8 +16236,9 @@ async function sendConvocationsWithPdf(){
     }
     document.body.removeChild(holder);
 
-    let textBody = baseTextBody;
-    let htmlBody = escapeHtml(baseTextBody).replace(/\n/g,'<br>');
+    const greetingLine = `${convocGreetingLine(m)}\n\n${convocSubjectPhrase(m)} à : ${ctx.event}\n`;
+    let textBody = greetingLine + baseTextBody;
+    let htmlBody = escapeHtml(greetingLine + baseTextBody).replace(/\n/g,'<br>');
     if(link){
       textBody += `\nRépondez en un clic — Présent(e) ou Absent(e) :\n${link}\n`;
       htmlBody += `<br>Répondez en un clic — Présent(e) ou Absent(e) :<br><a href="${link}" style="color:#1a73e8; font-weight:bold;">Confirme ta présence ici</a><br>`;
