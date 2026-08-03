@@ -11525,17 +11525,25 @@ function seedVeteranCalendar2026Once(){
 }
 
 const CAL_MONTHS_FR = { SEPTEMBRE:9, OCTOBRE:10, NOVEMBRE:11, DECEMBRE:12, JANVIER:1, FEVRIER:2, MARS:3, AVRIL:4, MAI:5, JUIN:6, JUILLET:7, AOUT:8 };
-const CAL_NAME_CONTINUATION_STOP_KEYWORDS = ['POUSSIN','BENJAMIN','MINIME','CADET','JUNIOR','SENIOR','VETERAN','ESPOIR',
-  'M&F','MASC','MIXTE','JU-JITSU','JUJITSU','KATA','DUO','NE WAZA','NEWAZA',
-  'EQUIPE','INDIVIDUEL','VOIR ','INSCRIPTION','HORAIRES','ACCUEIL','CONFIRMATION','1ERE DIV',
-  '2EME DIV','3EME DIV','DAN','UV1','UV2','PARA JUDO','TIVP','FCD'];
+// Lignes purement administratives/logistiques (jamais la catégorie d'âge ni un intitulé) : seules
+// celles-ci arrêtent la fusion dans le nom (voir calIsNoteLine ci-dessous). Contrairement à l'ancien
+// CAL_NAME_CONTINUATION_STOP_KEYWORDS (qui arrêtait la fusion dès qu'une catégorie d'âge apparaissait
+// — ex: "MINIMES M&F" restait alors hors du nom), Thomas veut le nom COMPLET de la compétition/du
+// stage, catégorie d'âge comprise (ex: "COUPE DE RENTREE" + "MINIMES M&F" → "COUPE DE RENTREE
+// MINIMES M&F") — seules les notes logistiques (pesée déjà captée par calIsWeighInLine, inscription,
+// horaires, public visé d'un stage, etc.) restent séparées dans "details".
+const CAL_NAME_NOTE_STOP_PHRASES = [
+  'VOIR PLAQUETTE', 'INSCRIPTION SUR EXTRANET', 'HORAIRES SUR LE SITE', 'ACCUEIL A', 'ACCUEIL À',
+  'DURANT L', 'SUR SELECTION', 'SUR SÉLECTION', 'OUVERT AUX', 'CANDIDATS AUX', 'ENSEIGNANTS,',
+  'ENSEIGNANTS ', 'A PARTIR DE', 'CONFIRMATION'
+];
 function calIsWeighInLine(line){
   const l = calStripAccents(line).toLowerCase();
   return l.includes('esee') || /\d{1,2}h\d{0,2}/.test(l);
 }
-function calIsNameContinuationLine(line){
+function calIsNoteLine(line){
   const lu = calStripAccents(line).toUpperCase();
-  return !CAL_NAME_CONTINUATION_STOP_KEYWORDS.some(k=> lu.includes(k));
+  return CAL_NAME_NOTE_STOP_PHRASES.some(p=> lu.includes(calStripAccents(p).toUpperCase()));
 }
 function calSeasonYearsFromTitle(title){
   const m = String(title||'').match(/(\d{4})\s*-\s*(\d{4})/);
@@ -11632,13 +11640,17 @@ function parseCalendarGridSheet(ws, defaultType){
       if(lines.length===0) return;
       const cityRaw = (rows[r+7]||[])[c] || '';
       const city = String(cityRaw).replace(/^lieu\s*:?\s*/i,'').trim();
-      let stillName = (defaultType==='stage');
+      // Le nom complet inclut désormais la catégorie d'âge et tout intitulé sur plusieurs lignes
+      // (ex: "COUPE DE RENTREE" + "MINIMES M&F" → "COUPE DE RENTREE MINIMES M&F") — pour compétitions
+      // ET stages : seules les notes purement logistiques (calIsNoteLine) ou de pesée
+      // (calIsWeighInLine) restent séparées dans "details"/"weighIn", jamais la catégorie elle-même.
+      let stillName = true;
       const nameParts = [lines[0]];
       const details = [], weighIn = [];
       for(let i=1;i<lines.length;i++){
         const l = lines[i];
         if(calIsWeighInLine(l)){ stillName=false; weighIn.push(l); }
-        else if(stillName && calIsNameContinuationLine(l)){ nameParts.push(l); }
+        else if(stillName && !calIsNoteLine(l)){ nameParts.push(l); }
         else { stillName=false; details.push(l); }
       }
       const name = nameParts.join(' ');
