@@ -2308,13 +2308,21 @@ function familyPortalConvocationsHtml(){
     const rows = (ev.recipients||[]).map(r=>{
       const m = (data.members||[]).find(x=>x.id===r.memberId);
       if(!m) return '';
-      const statusHtml = r.response
-        ? `<span class="tag" style="background:${r.response==='present'?'var(--tatami-dim)':'var(--clay-dim)'}; color:${r.response==='present'?'var(--tatami)':'var(--clay)'}; font-weight:700;">${r.response==='present'?'✅ Présent(e)':'❌ Absent(e)'}</span>`
-        : `<div style="display:flex; gap:8px; margin-top:6px;">
-             <button class="primary" data-fp-respond="present" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px;">✅ Présent(e)</button>
-             <button class="ghost" data-fp-respond="absent" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px;">❌ Absent(e)</button>
+      // Les deux boutons restent toujours affichés (jamais remplacés par un simple statut figé) :
+      // la famille peut changer d'avis après coup, voir demande de Thomas — chaque clic (premier ou
+      // modification) revalide côté serveur et déclenche à nouveau la notification par email au club.
+      const presentActive = r.response==='present';
+      const absentActive = r.response==='absent';
+      const presentStyle = presentActive ? 'background:var(--tatami-dim); border-color:var(--tatami); color:var(--tatami); font-weight:700;' : '';
+      const absentStyle = absentActive ? 'background:var(--clay-dim); border-color:var(--clay); color:var(--clay); font-weight:700;' : '';
+      const statusLine = r.response
+        ? `<div class="fp-empty" style="margin:2px 0 6px;">Réponse enregistrée${r.respondedAt?' le '+fmtDate(r.respondedAt):''} — tu peux la modifier à tout moment.</div>`
+        : '';
+      const buttonsHtml = `<div style="display:flex; gap:8px; margin-top:6px;">
+             <button class="ghost" data-fp-respond="present" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px; ${presentStyle}">✅ Présent(e)</button>
+             <button class="ghost" data-fp-respond="absent" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px; ${absentStyle}">❌ Absent(e)</button>
            </div>`;
-      return `<div style="margin-bottom:10px;"><div class="fp-member-label" style="margin:0 0 4px;">${escapeHtml(m.name)}</div>${statusHtml}</div>`;
+      return `<div style="margin-bottom:10px;"><div class="fp-member-label" style="margin:0 0 4px;">${escapeHtml(m.name)}</div>${statusLine}${buttonsHtml}</div>`;
     }).join('');
     if(!rows) return '';
     return `<div class="fp-card">
@@ -2353,16 +2361,31 @@ async function familyPortalRespond(eventId, memberId, status){
   }
 }
 
-// ---- Calendrier de la/des catégorie(s) d’âge de la famille : déjà cloisonné côté serveur par
-// cours (courseIds), comme pour un compte prof — voir buildFamilyPortalData dans Code.gs. ----
+// ---- Calendrier de la/des catégorie(s) d’âge de CHAQUE enfant : déjà cloisonné côté serveur par
+// cours (courseIds), comme pour un compte prof (voir buildFamilyPortalData dans Code.gs), puis
+// affiné ici par catégorie d'âge précise (ev.ageCategories) — un même cours peut couvrir plusieurs
+// catégories, on ne veut montrer à chaque enfant que ce qui concerne VRAIMENT la sienne. Un
+// événement affecté à AUCUNE catégorie n'est pas affiché (même logique que côté admin : non taggé
+// = masqué par défaut plutôt que de tout montrer). Affiché par enfant (et non un calendrier commun),
+// puisque deux enfants d'une même famille peuvent être dans des catégories différentes.
+function calendarEventMatchesMember(ev, member){
+  if(ev.ageCategories==='all') return true;
+  if(!Array.isArray(ev.ageCategories) || !ev.ageCategories.length) return false;
+  if(ev.ageCategories.includes('Vétérans') && veteranLabelForMember(member)) return true;
+  return calendarEntryAppliesToCategory(ev.ageCategories, groupedCategoryLabel(member.birthDate, member));
+}
 function familyPortalCalendarHtml(){
-  const events = (data.calendarEvents||[]).filter(ev=>!ev.disabled).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  if(!events.length) return '<div class="fp-card"><div class="fp-empty">Aucun événement à venir pour l’instant.</div></div>';
-  return `<div class="fp-card">${events.map(ev=>`
-    <div class="fp-row">
-      <span>${fmtDateRange(ev.date, ev.dateEnd)} — ${escapeHtml(ev.name)}${cancelledBadgeHtml(ev.cancelled)}</span>
-      <span class="fp-empty">${escapeHtml(ev.city||'')}</span>
-    </div>`).join('')}</div>`;
+  const members = data.members||[];
+  if(!members.length) return '<div class="fp-card"><div class="fp-empty">Aucune information disponible.</div></div>';
+  return members.map(m=>{
+    const events = (data.calendarEvents||[]).filter(ev=>!ev.disabled && calendarEventMatchesMember(ev, m)).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    const rows = events.map(ev=>`
+      <div class="fp-row">
+        <span>${fmtDateRange(ev.date, ev.dateEnd)} — ${escapeHtml(ev.name)}${cancelledBadgeHtml(ev.cancelled)}</span>
+        <span class="fp-empty">${escapeHtml(ev.city||'')}</span>
+      </div>`).join('');
+    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${rows || '<div class="fp-empty">Aucun événement à venir pour l’instant.</div>'}</div>`;
+  }).join('');
 }
 
 // ---- Résultats : compétitions déjà disputées (réponse présent + résultat saisi), photos
@@ -2385,7 +2408,21 @@ function familyPortalResultsHtml(){
         : `<span class="tag" style="${medalStyle(r.result)||'background:var(--surface-2); color:var(--ink-dim);'} font-weight:700;">${escapeHtml(r.result)}</span>`;
       const photoIds = [...(ev.photoFileIds||[]), r.photoFileId].filter(Boolean);
       const safeName = String(ev.name||'competition').replace(/[^\w-]+/g,'-');
-      const photosHtml = photoIds.map(fid=>`<img data-fp-photo="${fid}" data-fp-photo-name="photo-${safeName}.jpg" src="" style="width:70px; height:70px; object-fit:cover; border-radius:8px; margin:4px 4px 0 0; cursor:pointer; background:var(--surface-2);" alt="Photo">`).join('');
+      // Chaque photo a son propre bouton de téléchargement (en plus du clic pour zoomer, qui ouvre
+      // aussi la visionneuse avec téléchargement — voir openPhotoLightbox) : demande explicite de
+      // Thomas de pouvoir récupérer les photos directement depuis Résultats, sans étape intermédiaire.
+      // Désactivé tant que la photo n'est pas encore chargée (uri pas encore reçue du serveur).
+      // Un "uid" (plutôt que le fileId brut) relie img/bouton : deux enfants d'une même famille
+      // peuvent partager la MÊME photo de compétition (photoFileIds au niveau de l'événement), le
+      // fileId seul ne serait alors plus unique dans la page.
+      const photosHtml = photoIds.map((fid,idx)=>{
+        const filename = `photo-${safeName}-${idx+1}.jpg`;
+        const uid = `${ev.id}-${m.id}-${idx}`;
+        return `<div style="display:inline-flex; flex-direction:column; align-items:center; margin:0 8px 8px 0; gap:4px;">
+          <img data-fp-photo="${fid}" data-fp-photo-uid="${uid}" data-fp-photo-name="${filename}" src="" style="width:70px; height:70px; object-fit:cover; border-radius:8px; cursor:pointer; background:var(--surface-2);" alt="Photo">
+          <button class="ghost" data-fp-photo-download-for="${uid}" data-fp-photo-download-name="${filename}" style="padding:3px 8px; font-size:11px;" disabled>⬇️ Télécharger</button>
+        </div>`;
+      }).join('');
       const feedbackKey = ev.id+'|'+m.id;
       const feedbackVal = familyPortalUi.feedbackDrafts[feedbackKey] !== undefined ? familyPortalUi.feedbackDrafts[feedbackKey] : (r.parentFeedback||'');
       html += `<div class="fp-card">
@@ -2407,8 +2444,22 @@ function familyPortalResultsHtml(){
 function wireFamilyPortalResults(body){
   body.querySelectorAll('[data-fp-photo]').forEach(img=>{
     const fileId = img.dataset.fpPhoto;
-    getFamilyPortalPhotoDataUri(fileId).then(uri=>{ if(uri){ img.src = uri; img.dataset.loadedUri = uri; } });
+    getFamilyPortalPhotoDataUri(fileId).then(uri=>{
+      if(!uri) return;
+      img.src = uri;
+      img.dataset.loadedUri = uri;
+      // Active le bouton "Télécharger" correspondant (voir data-fp-photo-uid) une fois la photo
+      // effectivement reçue du serveur — inutile avant, il n'y aurait rien à télécharger.
+      const downloadBtn = body.querySelector(`[data-fp-photo-download-for="${img.dataset.fpPhotoUid}"]`);
+      if(downloadBtn) downloadBtn.disabled = false;
+    });
     img.addEventListener('click', ()=>{ if(img.dataset.loadedUri) openPhotoLightbox(img.dataset.loadedUri, img.dataset.fpPhotoName||'photo.jpg'); });
+  });
+  body.querySelectorAll('[data-fp-photo-download-for]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const img = body.querySelector(`[data-fp-photo-uid="${btn.dataset.fpPhotoDownloadFor}"]`);
+      if(img && img.dataset.loadedUri) downloadDataUri(img.dataset.loadedUri, btn.dataset.fpPhotoDownloadName||'photo.jpg');
+    });
   });
   body.querySelectorAll('[data-fp-feedback-input]').forEach(ta=>{
     ta.addEventListener('input', ()=>{ familyPortalUi.feedbackDrafts[ta.dataset.event+'|'+ta.dataset.member] = ta.value; });
