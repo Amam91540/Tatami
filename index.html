@@ -1839,8 +1839,9 @@ function isCommitteeGroup(g){
 }
 // Fonctions disponibles sur une fiche du Comité directeur uniquement (bureau de l'association).
 const COMMITTEE_ROLES = ['Président(e)', 'Président(e) Adjoint(e)', 'Secrétaire', 'Secrétaire Adjoint(e)', 'Trésorier(e)', 'Trésorier(e) Adjointe', 'Secrétaire permanente', 'Membre', 'Professeur', 'Assistant(e)'];
-// Statuts du questionnaire de santé (à côté du certificat médical sur la fiche élève).
-const QUESTIONNAIRE_STATUSES = ['Sportif en compétition', 'Sportif', 'En attente', 'Non pratiquant'];
+// Type de certificat médical (à côté de la date du certificat sur la fiche élève) : "Questionnaire"
+// est l'une des réponses possibles (questionnaire de santé auto-déclaré, sans certificat papier).
+const QUESTIONNAIRE_STATUSES = ['Questionnaire', 'Sportif en compétition', 'Sportif', 'En attente', 'Non pratiquant'];
 // Suppression DÉFINITIVE du groupe "Comité directeur" (demande explicite du club) : retire le
 // groupe et toutes les fiches qui y étaient rattachées (fiches liées créées spécifiquement pour ce
 // groupe via createLinkedMemberRecord — la fiche "élève" d'origine de la même personne, dans son
@@ -2377,7 +2378,7 @@ function familyPortalInscriptionHtml(){
     const addr = (m.address || m.postalCode || m.city) ? [m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') : '—';
     rows.push(['Adresse', addr]);
     rows.push(['Certificat médical', m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—']);
-    rows.push(['Questionnaire', m.questionnaireStatus || '—']);
+    rows.push(['Type de certificat médical', m.questionnaireStatus || '—']);
     rows.push(['N° de licence', m.licenseNumber || '—']);
     rows.push(['Cours', curGroup ? curGroup.name : '—']);
     const rowsHtml = rows.map(([label, value])=>`<div style="margin-top:8px;"><span class="field-label">${escapeHtml(label)}</span><div>${escapeHtml(String(value))}</div></div>`).join('');
@@ -3648,7 +3649,7 @@ function renderGroupsTab(){
                 <div style="margin-top:8px;"><span class="field-label">Téléphone</span><div>${m.phone ? escapeHtml(m.phone) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Adresse</span><div>${(m.address || m.postalCode || m.city) ? escapeHtml([m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Certificat médical</span><div>${m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—'}</div></div>
-                <div style="margin-top:8px;"><span class="field-label">Questionnaire</span><div>${m.questionnaireStatus ? escapeHtml(m.questionnaireStatus) : '—'}</div></div>
+                <div style="margin-top:8px;"><span class="field-label">Type de certificat médical</span><div>${m.questionnaireStatus ? escapeHtml(m.questionnaireStatus) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">N° de licence</span><div>${m.licenseNumber ? escapeHtml(m.licenseNumber) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Cours</span><div>${curGroup ? escapeHtml(curGroup.name) : '—'}</div></div>
                 ${isProfSession() ? '' : `<div style="margin-top:8px;"><span class="field-label">Cotisation</span><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">${memberDueBadgeHtml(m)}<button class="ghost" data-action="open-member-cotisation" data-id="${m.id}" style="padding:4px 10px; font-size:12px;">Détail &amp; paiements</button></div></div>`}
@@ -3752,7 +3753,7 @@ function renderGroupsTab(){
               <input type="date" data-action="edit-medicalcert" data-id="${m.id}" value="${m.medicalCertDate||''}">
             </div>
             <div class="fiche-field">
-              <span class="field-label">Questionnaire</span>
+              <span class="field-label">Type de certificat médical</span>
               <select data-action="edit-questionnaire" data-id="${m.id}">
                 <option value="" ${!m.questionnaireStatus?'selected':''}>Non renseigné</option>
                 ${QUESTIONNAIRE_STATUSES.map(s=>`<option value="${escapeHtml(s)}" ${m.questionnaireStatus===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
