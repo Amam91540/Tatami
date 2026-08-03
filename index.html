@@ -1053,6 +1053,7 @@
         </div>
         <div class="card" id="backend-settings"></div>
         <div class="card" id="accounts-settings" style="display:none;"></div>
+        <div class="card" id="activity-log-card" style="display:none;"></div>
       </div>
     </div>
 
@@ -1503,6 +1504,11 @@ function ensureSettings(){
   if(!data.settings.competitionOverrides) data.settings.competitionOverrides = {};
   if(!data.settings.competitionProfiles) data.settings.competitionProfiles = {};
   if(!data.settings.onceFlags || typeof data.settings.onceFlags !== 'object') data.settings.onceFlags = {};
+  // Journal d'activité des comptes non-admin (voir logActivity) — visible uniquement par l'admin
+  // (renderActivityLogCard), pour savoir ce qui a été modifié sur les autres comptes sans avoir à
+  // le lui demander. Un prof/comptable ne peut qu'AJOUTER ses propres entrées (jamais modifier ou
+  // supprimer celles des autres) — voir sanitizePayloadForRole côté Code.gs.
+  if(!Array.isArray(data.settings.activityLog)) data.settings.activityLog = [];
   data.convocEvents.forEach(ev=>{ if(ev.archived===undefined) ev.archived = false; });
   data.groups.forEach(g=>{ g.recurrence ||= []; });
   // Cotisations : carnet de paiements (data.payments) + familles détectées/validées manuellement
@@ -1891,6 +1897,21 @@ function clearSession(){
 function isProfSession(){
   const session = getSession();
   return !!(session && session.role === 'prof');
+}
+// Journal d'activité des comptes non-admin (voir data.settings.activityLog, renderActivityLogCard) :
+// un compte prof ou comptable ne voit jamais ce journal (réservé à l'admin), mais chacune de ses
+// actions notables (présences, calendrier, convocations...) y ajoute une entrée pour que l'admin
+// puisse savoir ce qui a été modifié sans avoir à le demander. Volontairement PAS appelé pour un
+// compte admin : l'admin voit déjà tout directement, pas besoin de journaliser ses propres actions.
+function logActivity(action, summary){
+  const session = getSession();
+  if(!session || session.role==='admin') return;
+  if(!Array.isArray(data.settings.activityLog)) data.settings.activityLog = [];
+  data.settings.activityLog.push({
+    id: uid(), ts: new Date().toISOString(),
+    accountId: session.accountId || '', accountName: session.name || '', role: session.role,
+    action, summary
+  });
 }
 
 function showLoginScreen(errorMsg){
@@ -2437,6 +2458,8 @@ function applyRoleUI(){
   }
   const accountsCard = document.getElementById('accounts-settings');
   if(accountsCard) accountsCard.style.display = (session && session.role === 'admin') ? '' : 'none';
+  const activityLogCard = document.getElementById('activity-log-card');
+  if(activityLogCard) activityLogCard.style.display = (session && session.role === 'admin') ? '' : 'none';
 }
 
 document.getElementById('clubName').addEventListener('input', e=>{
@@ -2759,7 +2782,7 @@ const TAB_RENDER_FNS = {
   suivi: [renderSuiviTab, renderSuiviAlerts, renderCompetitionsCalendarCard, renderCotisationsCard, renderDisciplineCalendarCard],
   convoc: [renderConvocTab],
   resultats: [renderResultsTab],
-  param: [renderDuplicateGroupsCard, renderDuplicateMembersCard, renderFamilySuggestionsCard, renderFamilyGroupsCard, renderAgeSettings, renderMembershipFeesSettings, renderAttestationSettings, renderImportedCompetitionsSettings, renderBackendSettings, renderAccountsCard, renderLicensePendingCard, renderArchiveCard, renderBirthdaysCard, renderExportCard]
+  param: [renderDuplicateGroupsCard, renderDuplicateMembersCard, renderFamilySuggestionsCard, renderFamilyGroupsCard, renderAgeSettings, renderMembershipFeesSettings, renderAttestationSettings, renderImportedCompetitionsSettings, renderBackendSettings, renderAccountsCard, renderActivityLogCard, renderLicensePendingCard, renderArchiveCard, renderBirthdaysCard, renderExportCard]
 };
 function renderActiveTab(){
   if(!ready) return;
@@ -6691,6 +6714,57 @@ function renderAccountsCard(){
   document.getElementById('newAccountBtn').addEventListener('click', openNewAccountOverlay);
   refreshAccountsList();
 }
+
+/* ---------------- JOURNAL D'ACTIVITÉ DES AUTRES COMPTES (admin uniquement) ---------------- */
+// Chaque action notable d'un compte prof (ou comptable) — voir logActivity() — ajoute une entrée
+// ici, pour que l'admin sache ce qui a été modifié sur les autres comptes sans avoir à le demander.
+// L'admin n'y voit JAMAIS ses propres actions (logActivity ne journalise jamais un compte admin).
+const ACTIVITY_ACTION_ICONS = {
+  'presence-validee': '📋', 'calendrier-ajout': '📅', 'calendrier-modif': '✏️',
+  'calendrier-suppression': '🗑️', 'calendrier-desactivation': '⏸', 'calendrier-reactivation': '▶',
+  'convocation': '✉️'
+};
+function fmtActivityDateTime(iso){
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  return d.toLocaleString('fr-FR', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+function renderActivityLogCard(){
+  const wrap = document.getElementById('activity-log-card');
+  if(!wrap) return;
+  const session = getSession();
+  if(!session || session.role !== 'admin'){ wrap.innerHTML = ''; return; }
+  const log = (data.settings.activityLog || []).slice().sort((a,b)=> (b.ts||'').localeCompare(a.ts||''));
+  const DISPLAY_LIMIT = 200;
+  const shown = log.slice(0, DISPLAY_LIMIT);
+  wrap.innerHTML = `
+    <h2>🕵️ Journal d'activité (autres comptes)</h2>
+    <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">
+      Ce que les comptes prof et comptable ont ajouté, modifié ou supprimé (présences, calendrier, convocations...). Tes propres actions à toi n'y apparaissent pas — tu les vois déjà directement.
+    </p>
+    ${shown.length===0 ? '<div class="empty">Aucune activité enregistrée pour l’instant.</div>' : `
+    <div style="display:flex; flex-direction:column; gap:2px; max-height:420px; overflow-y:auto;">
+      ${shown.map(entry=>`
+        <div class="convoc-row" style="align-items:flex-start;">
+          <div class="info">
+            <div class="n">${ACTIVITY_ACTION_ICONS[entry.action]||'•'} ${escapeHtml(entry.summary||'')}</div>
+            <div class="e">${escapeHtml(entry.accountName||'Compte inconnu')} (${escapeHtml(ROLE_LABELS[entry.role]||entry.role||'')}) · ${fmtActivityDateTime(entry.ts)}</div>
+          </div>
+        </div>`).join('')}
+    </div>
+    ${log.length>DISPLAY_LIMIT ? `<p style="font-size:12px; color:var(--ink-dim); margin:10px 0 0;">${log.length-DISPLAY_LIMIT} entrée${log.length-DISPLAY_LIMIT===1?'':'s'} plus ancienne${log.length-DISPLAY_LIMIT===1?'':'s'} non affichée${log.length-DISPLAY_LIMIT===1?'':'s'}.</p>` : ''}
+    <button class="ghost icon-btn" id="clearActivityLogBtn" style="width:100%; margin-top:10px;">🗑️ Vider le journal</button>
+    `}
+  `;
+  const clearBtn = document.getElementById('clearActivityLogBtn');
+  if(clearBtn) clearBtn.addEventListener('click', async ()=>{
+    if(!(await confirmDialog(`Vider tout le journal d'activité (${log.length} entrée${log.length===1?'':'s'}) ? Cette action est irréversible.`, { danger:true, confirmLabel:'Vider' }))) return;
+    data.settings.activityLog = [];
+    await saveData({ extraPayloadFields: { resetActivityLog: true } });
+    renderActivityLogCard();
+    showToast('Journal vidé');
+  });
+}
 async function fetchAccounts(){
   const s = getSession();
   if(!s || !s.sessionToken) return [];
@@ -8070,6 +8144,8 @@ function renderPresenceSheet(){
   if(validateBtn){
     validateBtn.addEventListener('click', ()=>{
       session.validated = true;
+      const g = data.groups.find(x=>x.id===session.groupId);
+      logActivity('presence-validee', `Appel validé — ${g?g.name:'cours'} du ${fmtDate(session.date)}`);
       saveData();
       renderPresenceSheet();
       renderPresenceHistory();
@@ -10245,6 +10321,7 @@ async function ensureConvocEvent(members){
   const ev = findOrCreateConvocEvent(eventName, date);
   members.forEach(m=> getOrCreateRecipientToken(ev, m));
   snapshotConvocFormOntoEvent(ev);
+  logActivity('convocation', `Convocation — ${ev.name}${ev.date?' ('+fmtDate(ev.date)+')':''} — ${members.length} pratiquant${members.length===1?'':'s'}`);
   saveData();
   return ev;
 }
@@ -12364,6 +12441,7 @@ function renderDisciplineCalendarCard(){
       };
       if(!data.calendarEvents) data.calendarEvents = [];
       data.calendarEvents.push(entry);
+      logActivity('calendrier-ajout', `Événement ajouté au calendrier — ${entry.name} (${fmtDate(entry.date)})`);
       saveData();
       ui.addingOwnCalendarEvent = false;
       renderDisciplineCalendarCard();
@@ -12391,6 +12469,7 @@ function renderDisciplineCalendarCard(){
       // Voir save-own-calendar-event : même repli sur tous ses cours si rien n'est coché.
       const chosenCourseIds = readCourseIdsFromForm(editForm);
       entry.courseIds = chosenCourseIds.length>0 ? chosenCourseIds : myOwnedGroupIds();
+      logActivity('calendrier-modif', `Événement modifié — ${entry.name} (${fmtDate(entry.date)})`);
       saveData();
       ui.editingOwnCalendarEventId = null;
       renderDisciplineCalendarCard();
@@ -12411,8 +12490,10 @@ function renderDisciplineCalendarCard(){
   wrap.querySelectorAll('[data-action="delete-own-calendar-event"]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!(await confirmDialog('Supprimer cet événement de ton calendrier ?', { danger:true, confirmLabel:'Supprimer' }))) return;
+      const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
       markDeleted('calendarEvents', btn.dataset.id);
       data.calendarEvents = (data.calendarEvents||[]).filter(e=>e.id!==btn.dataset.id);
+      if(entry) logActivity('calendrier-suppression', `Événement supprimé — ${entry.name}${entry.date?' ('+fmtDate(entry.date)+')':''}`);
       saveData();
       renderDisciplineCalendarCard();
       showToast('Événement supprimé');
@@ -12423,6 +12504,7 @@ function renderDisciplineCalendarCard(){
       const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
       if(!entry) return;
       entry.disabled = !entry.disabled;
+      logActivity(entry.disabled ? 'calendrier-desactivation' : 'calendrier-reactivation', `Événement ${entry.disabled?'désactivé':'réactivé'} — ${entry.name}`);
       saveData();
       renderDisciplineCalendarCard();
       showToast(entry.disabled ? 'Événement désactivé — plus de convoc possible, retiré de ton PDF' : 'Événement réactivé');
@@ -14654,18 +14736,31 @@ function computeAGReportData(){
   // les fiches déjà préparées pour la saison SUIVANTE, elles, ne concernent pas encore cette saison-ci)
   const activeMembers = data.members.filter(m=>!m.archived && !m.forNextSeason);
   const totalMembers = activeMembers.length;
-  const byGroup = data.groups.map(g=>({ name:g.name, count: activeMembers.filter(m=>m.groupId===g.id).length }));
+  // Filles/garçons par cours et par catégorie d'âge (demande Thomas, rapport AG) : les fiches sans
+  // genre renseigné comptent dans le total mais dans aucune des deux colonnes F/G, d'où
+  // count !== countF+countM tant que du genre manque — volontaire, plutôt que de deviner.
+  const byGroup = data.groups.map(g=>{
+    const inGroup = activeMembers.filter(m=>m.groupId===g.id);
+    return {
+      name: g.name, count: inGroup.length,
+      countF: inGroup.filter(m=>m.gender==='F').length,
+      countM: inGroup.filter(m=>m.gender==='M').length,
+    };
+  });
   const genderF = activeMembers.filter(m=>m.gender==='F').length;
   const genderM = activeMembers.filter(m=>m.gender==='M').length;
   const genderNR = totalMembers - genderF - genderM;
   const byCategoryMap = {};
   activeMembers.forEach(m=>{
     const label = groupedCategoryLabel(m.birthDate, m) || 'Non renseignée';
-    byCategoryMap[label] = (byCategoryMap[label]||0) + 1;
+    if(!byCategoryMap[label]) byCategoryMap[label] = { count:0, countF:0, countM:0 };
+    byCategoryMap[label].count++;
+    if(m.gender==='F') byCategoryMap[label].countF++;
+    else if(m.gender==='M') byCategoryMap[label].countM++;
   });
   const byCategory = Object.keys(byCategoryMap)
     .sort((a,b)=> categoryBandSortIndex(a) - categoryBandSortIndex(b))
-    .map(label=>({ label, count: byCategoryMap[label] }));
+    .map(label=>({ label, count: byCategoryMap[label].count, countF: byCategoryMap[label].countF, countM: byCategoryMap[label].countM }));
 
   // Origine géographique × majorité, au 1er septembre de la saison en cours (majorité légale,
   // calculée jour près — contrairement aux catégories d'âge sportives ci-dessus).
@@ -14751,14 +14846,14 @@ function buildAGReportBlocks(r, logoSrc){
 
   blocks.push(`
     <table class="recap-table">
-      <tr><th>Cours</th><th>Licenciés</th></tr>
-      ${r.byGroup.map(g=>`<tr><td>${escapeHtml(g.name)}</td><td>${g.count}</td></tr>`).join('')}
+      <tr><th>Cours</th><th>Licenciés</th><th>Filles</th><th>Garçons</th></tr>
+      ${r.byGroup.map(g=>`<tr><td>${escapeHtml(g.name)}</td><td>${g.count}</td><td>${g.countF}</td><td>${g.countM}</td></tr>`).join('')}
     </table>`);
 
   blocks.push(`
     <table class="recap-table" style="margin-top:14px;">
-      <tr><th>Catégorie</th><th>Licenciés</th></tr>
-      ${r.byCategory.map(c=>`<tr><td>${escapeHtml(bandYearRangeLabel(c.label))}</td><td>${c.count}</td></tr>`).join('')}
+      <tr><th>Catégorie</th><th>Licenciés</th><th>Filles</th><th>Garçons</th></tr>
+      ${r.byCategory.map(c=>`<tr><td>${escapeHtml(bandYearRangeLabel(c.label))}</td><td>${c.count}</td><td>${c.countF}</td><td>${c.countM}</td></tr>`).join('')}
     </table>`);
 
   blocks.push(`
