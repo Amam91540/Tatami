@@ -496,6 +496,12 @@
   #change-password-overlay .rio-card input{
     padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--surface-2); color:var(--ink); font-family:'Inter',sans-serif; font-size:14px;
   }
+  /* Visionneuse plein écran pour les photos (podium / compétition) : ouvre la photo dans l'appli
+     elle-même plutôt qu'un nouvel onglet — window.open() sur une data URI est bloqué par les
+     navigateurs récents (Chrome affiche "about:blank" vide), voir openPhotoLightbox(). */
+  #photo-lightbox-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:150; padding:16px; overflow:auto; }
+  #photo-lightbox-overlay.show{ display:flex; align-items:center; justify-content:center; }
+  #photo-lightbox-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:16px; max-width:min(92vw, 640px); width:100%; box-shadow:0 10px 40px rgba(0,0,0,.35); }
   .cwa-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
   .cwa-row:last-child{ border-bottom:none; }
   .cwa-row .cwa-name{ font-size:13.5px; }
@@ -1157,6 +1163,7 @@
 <div id="compday-overlay"></div>
 <div id="account-form-overlay"></div>
 <div id="change-password-overlay"></div>
+<div id="photo-lightbox-overlay"></div>
 <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" style="display:none">
 
 <!-- defer : ces librairies ne servent qu'à la génération de PDF/QR code (utilisées à la demande,
@@ -1960,6 +1967,46 @@ async function uploadPhotoToServer(file){
     showToast('Impossible d’envoyer la photo (connexion ?)');
     return null;
   }
+}
+
+// Visionneuse plein écran pour une photo (podium ou compétition) : affichée DANS l'appli plutôt
+// qu'ouverte dans un nouvel onglet. window.open(dataUri, '_blank') semblait fonctionner mais ouvrait
+// en réalité une page vide ("about:blank") : les navigateurs récents (Chrome, Edge...) bloquent la
+// NAVIGATION top-level vers une data: URI par sécurité, sans forcément prévenir clairement. Une
+// data URI reste en revanche totalement utilisable comme <img src>, comme lien de téléchargement, ou
+// dans un PDF — seule la navigation directe pose problème, d'où cette visionneuse en overlay plutôt
+// qu'un nouvel onglet. Permet aussi de télécharger la photo (utile depuis un compte différent de
+// celui qui l'a prise, ex: l'admin qui veut récupérer une photo ajoutée par un prof).
+function closePhotoLightbox(){
+  const overlay = document.getElementById('photo-lightbox-overlay');
+  if(overlay){ overlay.classList.remove('show'); overlay.innerHTML = ''; }
+}
+function openPhotoLightbox(dataUri, filename){
+  const overlay = document.getElementById('photo-lightbox-overlay');
+  if(!overlay || !dataUri) return;
+  overlay.innerHTML = `
+    <div class="rio-card" style="display:flex; flex-direction:column; gap:12px;">
+      <img src="${dataUri}" style="max-width:100%; max-height:70vh; border-radius:10px; object-fit:contain; display:block; margin:0 auto; background:#EEE;" alt="Photo">
+      <div style="display:flex; gap:10px;">
+        <button class="primary" id="downloadPhotoLightboxBtn" style="flex:1;">⬇️ Télécharger</button>
+        <button class="ghost" id="closePhotoLightboxBtn" style="flex:1;">Fermer</button>
+      </div>
+    </div>`;
+  overlay.classList.add('show');
+  document.getElementById('closePhotoLightboxBtn').addEventListener('click', closePhotoLightbox);
+  document.getElementById('downloadPhotoLightboxBtn').addEventListener('click', ()=> downloadDataUri(dataUri, filename||'photo.jpg'));
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closePhotoLightbox(); });
+}
+// Téléchargement d'une data URI : un lien <a download> temporaire, jamais ajouté visiblement à la
+// page — contrairement à la navigation (window.open), le téléchargement d'une data URI via un lien
+// n'est PAS bloqué par les navigateurs, donc pas besoin de passer par un Blob ici.
+function downloadDataUri(dataUri, filename){
+  const link = document.createElement('a');
+  link.href = dataUri;
+  link.download = filename || 'photo.jpg';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 function getSession(){
@@ -12315,13 +12362,15 @@ function buildWeightFieldHtml(birthDate, currentValue, dataAttrs, forceMorpholog
 }
 // Photo du podium pour UN résultat individuel (r.photoFileId) — distincte des photos de la
 // compétition elle-même (ev.photoFileIds, plusieurs, voir renderEventPhotosGallery). Affiche une
-// vignette cliquable (ouvre la photo en grand dans un nouvel onglet) + bouton retirer si une photo
-// est déjà attachée, sinon un simple bouton d'ajout déclenchant la caméra/galerie du téléphone.
+// vignette cliquable (ouvre la photo en grand dans la visionneuse, voir openPhotoLightbox) + bouton
+// retirer si une photo est déjà attachée, sinon un simple bouton d'ajout déclenchant la caméra/
+// galerie du téléphone.
 function buildResultPhotoHtml(r, eventId){
   if(r.photoFileId){
+    const safeName = String(r.name||'podium').replace(/[^\w-]+/g,'-');
     return `
     <div style="display:flex; align-items:center; gap:8px; margin-top:2px; padding-top:6px; border-top:1px dashed var(--line);">
-      <img data-action="view-result-photo" data-fileid="${escapeHtml(r.photoFileId)}" style="width:36px; height:36px; object-fit:cover; border-radius:6px; cursor:pointer; background:#EEE; display:block;" title="Voir la photo du podium">
+      <img data-action="view-result-photo" data-fileid="${escapeHtml(r.photoFileId)}" data-filename="podium-${escapeHtml(safeName)}.jpg" style="width:36px; height:36px; object-fit:cover; border-radius:6px; cursor:pointer; background:#EEE; display:block;" title="Voir la photo du podium">
       <span style="font-size:12px; color:var(--ink-dim); flex:1;">Photo du podium</span>
       <button type="button" class="ghost icon-btn" data-action="remove-result-photo" data-event="${eventId}" data-member="${r.memberId}" style="padding:4px 8px; font-size:11px;">✕</button>
     </div>`;
@@ -13452,15 +13501,15 @@ function renderEventPhotosGallery(){
       </label>
     </div>
     <div style="display:flex; flex-wrap:wrap; gap:8px;">
-      ${photoIds.length===0 ? `<div style="font-size:12.5px; color:var(--ink-dim);">Aucune photo ajoutée pour l'instant.</div>` : photoIds.map(fid=>`
+      ${photoIds.length===0 ? `<div style="font-size:12.5px; color:var(--ink-dim);">Aucune photo ajoutée pour l'instant.</div>` : photoIds.map((fid,idx)=>`
         <div style="position:relative;">
-          <img data-action="view-event-photo" data-fileid="${escapeHtml(fid)}" style="width:64px; height:64px; object-fit:cover; border-radius:8px; cursor:pointer; background:#EEE; display:block;">
+          <img data-action="view-event-photo" data-fileid="${escapeHtml(fid)}" data-filename="photo-${escapeHtml(String(ev.name||'competition').replace(/[^\w-]+/g,'-'))}-${idx+1}.jpg" style="width:64px; height:64px; object-fit:cover; border-radius:8px; cursor:pointer; background:#EEE; display:block;">
           <button type="button" data-action="remove-event-photo" data-fileid="${escapeHtml(fid)}" title="Retirer cette photo" style="position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%; border:none; background:#B3492F; color:#fff; font-size:11px; line-height:1; cursor:pointer; padding:0;">✕</button>
         </div>`).join('')}
     </div>`;
   wrap.querySelectorAll('[data-action="view-event-photo"]').forEach(img=>{
     getPhotoDataUri(img.dataset.fileid).then(uri=>{ if(uri){ img.src = uri; img.dataset.loadedUri = uri; } });
-    img.addEventListener('click', ()=>{ if(img.dataset.loadedUri) window.open(img.dataset.loadedUri, '_blank'); });
+    img.addEventListener('click', ()=>{ if(img.dataset.loadedUri) openPhotoLightbox(img.dataset.loadedUri, img.dataset.filename); });
   });
   wrap.querySelectorAll('[data-action="remove-event-photo"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -13609,7 +13658,7 @@ function renderResultsList(){
   });
   wrap.querySelectorAll('[data-action="view-result-photo"]').forEach(img=>{
     getPhotoDataUri(img.dataset.fileid).then(uri=>{ if(uri){ img.src = uri; img.dataset.loadedUri = uri; } });
-    img.addEventListener('click', ()=>{ if(img.dataset.loadedUri) window.open(img.dataset.loadedUri, '_blank'); });
+    img.addEventListener('click', ()=>{ if(img.dataset.loadedUri) openPhotoLightbox(img.dataset.loadedUri, img.dataset.filename); });
   });
   wrap.querySelectorAll('[data-action="remove-result-photo"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -14552,7 +14601,7 @@ function waitForImages(container){
 /* ---------------- RÉCAP PDF MENSUEL ---------------- */
 const MONTH_NAMES_FR = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
 
-async function captureOffscreenSection(innerHtml, className, widthPx){
+async function captureOffscreenSection(innerHtml, className, widthPx, scale){
   const container = document.createElement('div');
   container.style.position = 'absolute';
   container.style.left = '-9999px';
@@ -14562,7 +14611,7 @@ async function captureOffscreenSection(innerHtml, className, widthPx){
   container.innerHTML = innerHtml;
   document.body.appendChild(container);
   await waitForImages(container);
-  const canvas = await html2canvas(container, { scale:1.5, backgroundColor:'#ffffff', useCORS:true });
+  const canvas = await html2canvas(container, { scale: scale||1.5, backgroundColor:'#ffffff', useCORS:true });
   document.body.removeChild(container);
   return canvas;
 }
@@ -14629,7 +14678,7 @@ function addCanvasFitOrTop(pdf, canvas, margin){
 // Rend un tableau (contexte + en-tête + lignes) sur une ou plusieurs pages PDF, en garantissant
 // qu'aucune ligne n'est jamais coupée entre deux pages : on mesure la hauteur réelle de chaque
 // ligne au préalable, puis on répartit les lignes en pages entières avant de générer les images.
-async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml, containerClass, containerWidthPx, margin }){
+async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml, containerClass, containerWidthPx, margin, scale }){
   const probe = document.createElement('div');
   probe.style.position = 'absolute';
   probe.style.left = '-9999px';
@@ -14697,7 +14746,7 @@ async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml,
     }
     rowsForPage += indices.map(i=>`<tr>${rows[i].html}</tr>`).join('');
     const html = `${buildContextHtml(p===0)}<table class="recap-table"><tr>${tableHeadHtml}</tr>${rowsForPage}</table>`;
-    const canvas = await captureOffscreenSection(html, containerClass, containerWidthPx);
+    const canvas = await captureOffscreenSection(html, containerClass, containerWidthPx, scale);
     addCanvasSliced(pdf, canvas, margin);
   }
 }
@@ -14817,7 +14866,11 @@ function buildResultRowsHtml(presents, birthDateOf, shiai, memberOf){
       // dans photoDataCache par l'appelant (voir fetchPhotosBase64) avant de construire ce tableau —
       // html2canvas ne sait pas attendre un chargement d'image asynchrone pendant la capture.
       const photoUri = r.photoFileId ? photoDataCache.get(r.photoFileId) : null;
-      const photoCell = photoUri ? `<img src="${photoUri}" style="width:34px; height:34px; object-fit:cover; border-radius:5px; display:block;">` : '';
+      // Taille volontairement plus grande qu'une simple vignette d'aperçu (34px donnait une photo
+      // quasi illisible une fois imprimée/zoomée dans le PDF) : voir aussi le `scale` plus élevé
+      // passé à paginateRowsIntoPdf par generateEventResultsPdfForId/generateRecapPdf, les deux
+      // jouent ensemble sur la netteté finale de la photo dans le PDF.
+      const photoCell = photoUri ? `<img src="${photoUri}" style="width:60px; height:60px; object-fit:cover; border-radius:6px; display:block;">` : '';
       rows.push({
         html: `<td>${genderBadgeHtml(data.members.find(x=>x.id===r.memberId)?.gender)} ${nameWithBoldSurname(r.name)}${r.qualificationFor ? `<div style="font-size:9.5px; color:#6B8F3D; font-weight:600; margin-top:2px;">🎫 Qualifié(e) : ${escapeHtml(r.qualificationFor)}</div>` : ''}</td><td>${escapeHtml(cat||'')}</td><td>${escapeHtml(weightLabel)}</td><td>${resultCell}</td><td>${photoCell}</td>`,
         isDivider: false, categoryLabel: label
@@ -15023,7 +15076,7 @@ async function generateEventResultsPdfForId(eventId){
       <div class="recap-summary" style="flex-wrap:wrap;">
         ${ev.photoFileIds.map(fid=>{
           const uri = photoDataCache.get(fid);
-          return uri ? `<img src="${uri}" style="width:90px; height:90px; object-fit:cover; border-radius:8px;">` : '';
+          return uri ? `<img src="${uri}" style="width:150px; height:150px; object-fit:cover; border-radius:8px;">` : '';
         }).join('')}
       </div>` : '';
 
@@ -15057,7 +15110,12 @@ async function generateEventResultsPdfForId(eventId){
       buildContextHtml,
       containerClass: 'recap-doc',
       containerWidthPx: 700,
-      margin
+      margin,
+      // Résolution de capture plus élevée que la valeur par défaut (1.5) : nécessaire pour que les
+      // photos insérées (podium + galerie compétition) restent nettes une fois dans le PDF — sans
+      // ça, une photo affichée à 60-150px CSS se retrouvait rasterisée à une résolution ridiculement
+      // basse, floue même à l'écran et pire encore à l'impression (retour de Thomas).
+      scale: 2.5
     });
 
     const safeName = ev.name.replace(/[^\w-]+/g,'-');
@@ -15150,7 +15208,10 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
       buildContextHtml,
       containerClass: 'recap-doc',
       containerWidthPx: 700,
-      margin
+      margin,
+      // Voir le même réglage dans generateEventResultsPdfForId : nécessaire pour que les photos de
+      // podium insérées dans ce récap combiné restent nettes.
+      scale: 2.5
     });
 
     pdf.save(`recap-resultats-${filenameSuffix}.pdf`);
