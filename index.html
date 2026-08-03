@@ -10787,6 +10787,7 @@ async function openConvocWhatsappOverlay(){
   if(selected.length===0){ showToast('Sélectionne au moins un pratiquant à convoquer'); return; }
   const ev = await ensureConvocEvent(selected);
   if(!ev) return;
+  renderConvocCurrent();
   const ctx = buildConvocContext();
   ui.convocWaSent = ui.convocWaSent || {};
   renderConvocWhatsappOverlay(selected, ev, ctx);
@@ -11067,6 +11068,7 @@ function renderConvocTab(){
     if(!ev) return;
     ev.emailSent = true;
     saveData();
+    renderConvocCurrent();
     window.location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     // Ne vide plus le formulaire automatiquement : ouvrir le client mail ne garantit pas que
     // l'envoi a réellement eu lieu (l'utilisateur peut annuler côté client mail).
@@ -13433,7 +13435,12 @@ function renderResultsDashboard(){
 function renderEventPhotosGallery(){
   const wrap = document.getElementById('event-photos-gallery');
   if(!wrap) return;
-  const ev = ui.resultsEventId ? data.convocEvents.find(e=>e.id===ui.resultsEventId) : null;
+  // On retient l'id (pas seulement l'objet ev) : les gestionnaires ci-dessous re-résolvent
+  // l'événement à partir de cet id AU MOMENT où ils s'exécutent plutôt que de capturer `ev` dans
+  // leur fermeture — voir le commentaire détaillé plus bas sur le bouton d'ajout, c'est ce qui
+  // corrige le bug des photos de compétition qui ne s'enregistraient pas.
+  const eventId = ui.resultsEventId;
+  const ev = eventId ? data.convocEvents.find(e=>e.id===eventId) : null;
   if(!ev){ wrap.innerHTML = ''; return; }
   const photoIds = ev.photoFileIds || [];
   wrap.innerHTML = `
@@ -13457,7 +13464,11 @@ function renderEventPhotosGallery(){
   });
   wrap.querySelectorAll('[data-action="remove-event-photo"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      ev.photoFileIds = (ev.photoFileIds||[]).filter(id=>id!==btn.dataset.fileid);
+      // Re-résolu par id plutôt que d'utiliser la fermeture `ev` : geste rapide donc peu de risque
+      // ici, mais autant rester cohérent avec le bouton d'ajout ci-dessous (voir son commentaire).
+      const evNow = data.convocEvents.find(e=>e.id===eventId);
+      if(!evNow) return;
+      evNow.photoFileIds = (evNow.photoFileIds||[]).filter(id=>id!==btn.dataset.fileid);
       saveData();
       renderEventPhotosGallery();
     });
@@ -13467,13 +13478,26 @@ function renderEventPhotosGallery(){
     const files = [...uploadInput.files];
     if(!files.length) return;
     showToast(`Envoi de ${files.length} photo${files.length>1?'s':''}...`);
+    let successCount = 0;
     for(const file of files){
       const fileId = await uploadPhotoToServer(file);
-      if(fileId) ev.photoFileIds = [...(ev.photoFileIds||[]), fileId];
+      if(!fileId) continue;
+      // BUG CORRIGÉ : prendre/choisir une photo peut prendre plusieurs secondes (ouverture de
+      // l'appareil photo, cadrage, retour à l'appli...) — largement le temps qu'une synchro en
+      // arrière-plan (triggerAutoSync, déclenchée entre autres à chaque changement d'onglet)
+      // REMPLACE ENTIÈREMENT `data` par un nouvel objet reçu du serveur (voir loadData: `data =
+      // json`). La fermeture `ev` capturée au moment du rendu pointait alors vers un objet devenu
+      // orphelin, détaché de data.convocEvents : la photo semblait ajoutée un instant puis
+      // disparaissait, sans jamais être envoyée au classeur. On re-résout donc l'événement PAR ID
+      // à l'instant précis de chaque succès d'upload, exactement comme le fait déjà avec succès la
+      // photo de podium par résultat (qui re-cherche evObj/rec via data.convocEvents.find(...) au
+      // moment du clic plutôt que de garder une référence capturée à l'avance).
+      const evNow = data.convocEvents.find(e=>e.id===eventId);
+      if(evNow){ evNow.photoFileIds = [...(evNow.photoFileIds||[]), fileId]; successCount++; }
     }
     saveData();
     renderEventPhotosGallery();
-    showToast('Photo(s) ajoutée(s)');
+    showToast(successCount ? `${successCount} photo${successCount>1?'s':''} ajoutée${successCount>1?'s':''}` : 'Échec de l’envoi des photos — réessaie');
   });
 }
 function renderResultsList(){
@@ -15414,6 +15438,10 @@ async function openConvocPrint(){
   if(members.length===0){ showToast('Sélectionne au moins un pratiquant à convoquer'); return; }
   const ev = await ensureConvocEvent(members);
   if(!ev) return;
+  // ensureConvocEvent vient de créer/mettre à jour l'événement et de l'enregistrer (saveData) : on
+  // rafraîchit tout de suite la carte "Convocations en cours" pour qu'il y apparaisse sans attendre
+  // un rechargement complet de la page (demande Thomas — auparavant il fallait recharger pour le voir).
+  renderConvocCurrent();
   // On NE réinitialise plus la sélection ici : générer le PDF à imprimer n'est pas forcément la
   // dernière étape — il faut pouvoir ensuite partager la même sélection par WhatsApp ou par email
   // sans devoir tout re-cocher. Le formulaire ne se réinitialise qu'une fois l'envoi (email/WhatsApp)
