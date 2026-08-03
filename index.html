@@ -11331,6 +11331,21 @@ function calStripAccents(s){
 function calendarFederationKey(name, type){
   return calStripAccents(name).toUpperCase().replace(/\s+/g,' ').trim() + '|' + (type||'competition');
 }
+// Clé utilisée UNIQUEMENT pour le rapprochement d'un import Excel de saison (voir
+// planCalendarImport) : calendarFederationKey (nom+type seul) ne suffit PAS ici, car un même nom
+// revient plusieurs fois dans le calendrier du Comité pour des catégories d'âge différentes (ex:
+// "CHAMPIONNAT DE FRANCE" apparaît une quinzaine de fois dans une saison, une fois par
+// catégorie/division) — sans les "details" en plus, toutes ces entrées distinctes s'écraseraient
+// les unes les autres lors du rapprochement (une seule mise à jour appliquée au hasard, les autres
+// jamais créées ni mises à jour). On n'inclut PAS la date ici, contrairement à
+// calendarFederationMigrationKey : c'est justement elle qui change d'une saison à l'autre et qu'on
+// cherche à mettre à jour.
+function calendarSeasonMatchKey(name, type, details){
+  const normDetails = (Array.isArray(details) ? details : [])
+    .map(d=> calStripAccents(String(d||'')).toUpperCase().trim())
+    .join('|');
+  return calendarFederationKey(name, type) + '::' + normDetails;
+}
 // Clé utilisée UNIQUEMENT pour détecter si une entrée du fichier fédéral brut a déjà été migrée
 // en événement normal (migrateFederationCalendarOnce) ou pour repérer un doublon déjà créé
 // (dedupeFederationMaterializedEvents). Contrairement à calendarFederationKey (nom seul, pour le
@@ -11531,9 +11546,27 @@ function calMonthYearFor(monthName, startY, endY){
   if(!mnum) return null;
   return mnum<=8 ? endY : startY;
 }
+function calYearForMonthNum(mnum, startY, endY){
+  return mnum<=8 ? endY : startY;
+}
 function calFirstDayNumber(dayLabel){
   const m = String(dayLabel||'').match(/(\d{1,2})/);
   return m ? parseInt(m[1],10) : null;
+}
+// Certains en-têtes de colonne regroupent deux mois (ex: "SEPTEMBRE / OCTOBRE", vu dans le fichier
+// du Comité de l'Essonne pour la rentrée) — on retient le PREMIER mois reconnu comme mois "par
+// défaut" de la colonne, utilisé seulement si la ligne elle-même ne précise pas explicitement le
+// mois (voir calExtractExplicitDayMonth ci-dessous).
+function calFirstMonthNameOf(monthHeader){
+  const parts = calStripAccents(String(monthHeader||'')).toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+  return parts.find(p=> CAL_MONTHS_FR[p]) || null;
+}
+// Sur une colonne à mois composite, chaque ligne du fichier précise explicitement le jour ET le
+// mois (ex: "MARDI 01/09", "SAMEDI 10/10") pour lever l'ambiguïté entre les deux mois regroupés
+// dans l'en-tête — cette indication doit toujours l'emporter sur le mois par défaut de la colonne.
+function calExtractExplicitDayMonth(dayLabel){
+  const m = String(dayLabel||'').match(/(\d{1,2})\s*\/\s*(\d{1,2})\b/);
+  return m ? { day: parseInt(m[1],10), month: parseInt(m[2],10) } : null;
 }
 // Analyse une feuille au format "grille" du calendrier du Comité de l'Essonne : un mois par
 // colonne (une sur deux), chaque événement étalé sur une bande fixe de 9 lignes (jour, niveau,
@@ -11552,17 +11585,42 @@ function parseCalendarGridSheet(ws, defaultType){
     const row = rows[r]||[];
     for(let c=0;c<row.length;c++){
       const v = calStripAccents(String(row[c]||'')).toUpperCase().trim();
-      if(CAL_MONTHS_FR[v]) found[c] = v;
+      // En-tête simple ("NOVEMBRE") OU composite regroupant deux mois ("SEPTEMBRE / OCTOBRE") —
+      // dans ce dernier cas voir calExtractExplicitDayMonth pour la levée d'ambiguïté par ligne.
+      if(CAL_MONTHS_FR[v] || calFirstMonthNameOf(v)) found[c] = v;
     }
     if(Object.keys(found).length >= 3){ headerRowIdx = r; monthCols = found; break; }
   }
   if(headerRowIdx===-1) return [];
   const bandStart = headerRowIdx + 2;
+  // Certains onglets (ex: FORMATIONS-STAGES) réutilisent la MÊME colonne pour deux mois consécutifs
+  // quand l'espace le permet (ex: "MAI" en en-tête, puis un second en-tête "JUIN" ré-inséré plus bas
+  // dans cette même colonne, sans qu'aucun jour n'indique explicitement le changement de mois comme
+  // c'est le cas pour l'en-tête composite "SEPTEMBRE / OCTOBRE" ci-dessus). On construit donc, par
+  // colonne, la liste des bascules de mois rencontrées (une cellule isolée qui EST elle-même un nom
+  // de mois reconnu) pour retrouver le bon mois de chaque bloc selon sa position dans la colonne,
+  // plutôt que de figer le mois de la colonne une bonne fois pour toutes à la lecture de l'en-tête.
+  const monthTimelines = {};
+  Object.keys(monthCols).forEach(cStr=>{
+    const c = parseInt(cStr,10);
+    const timeline = [{ fromRow: headerRowIdx, monthName: monthCols[c] }];
+    for(let r=headerRowIdx+1; r<rows.length; r++){
+      const v = calStripAccents(String((rows[r]||[])[c]||'')).toUpperCase().trim();
+      if(v && CAL_MONTHS_FR[v]) timeline.push({ fromRow:r, monthName:v });
+    }
+    monthTimelines[c] = timeline;
+  });
+  function monthNameForRow(c, r){
+    const timeline = monthTimelines[c];
+    let current = timeline[0].monthName;
+    for(const t of timeline){ if(t.fromRow<=r) current = t.monthName; else break; }
+    return current;
+  }
   const events = [];
   for(let r=bandStart; r<rows.length; r+=9){
     Object.keys(monthCols).forEach(cStr=>{
       const c = parseInt(cStr,10);
-      const monthName = monthCols[c];
+      const monthName = monthNameForRow(c, r);
       const dayLabel = (rows[r]||[])[c];
       if(!dayLabel || !String(dayLabel).trim()) return;
       const level = (rows[r+1]||[])[c] || '';
@@ -11584,9 +11642,15 @@ function parseCalendarGridSheet(ws, defaultType){
         else { stillName=false; details.push(l); }
       }
       const name = nameParts.join(' ');
-      const day = calFirstDayNumber(dayLabel);
-      const yr = calMonthYearFor(monthName, startY, endY);
-      const mnum = CAL_MONTHS_FR[monthName];
+      // Sur une colonne à mois composite (ex: "SEPTEMBRE / OCTOBRE"), le mois par défaut de la
+      // colonne (premier mois reconnu dans l'en-tête) ne suffit pas à lui seul — voir
+      // calExtractExplicitDayMonth : quand la ligne précise elle-même "jj/mm", cette indication
+      // explicite l'emporte toujours sur le mois par défaut de la colonne.
+      const explicitDayMonth = calExtractExplicitDayMonth(dayLabel);
+      const baseMonthName = CAL_MONTHS_FR[monthName] ? monthName : calFirstMonthNameOf(monthName);
+      const mnum = explicitDayMonth ? explicitDayMonth.month : CAL_MONTHS_FR[baseMonthName];
+      const day = explicitDayMonth ? explicitDayMonth.day : calFirstDayNumber(dayLabel);
+      const yr = mnum ? calYearForMonthNum(mnum, startY, endY) : null;
       const date = (day && yr && mnum) ? `${yr}-${String(mnum).padStart(2,'0')}-${String(day).padStart(2,'0')}` : '';
       events.push({ type: defaultType, name, level:String(level).trim(), date, dayLabel:String(dayLabel).trim(), city, details, weighIn });
     });
@@ -11605,12 +11669,22 @@ function parseCalendarWorkbook(wb){
 // nouvelle entrée à créer. N'a jamais aucun effet sur les événements ajoutés à la main par le
 // club (ils n'ont pas de federationKey, donc ne peuvent jamais être "retrouvés" par erreur).
 function planCalendarImport(parsedEvents){
-  const byFedKey = {};
-  (data.calendarEvents||[]).forEach(e=>{ if(e.federationKey) byFedKey[e.federationKey] = e; });
+  // Rapprochement par calendarSeasonMatchKey (nom+type+catégorie), PAS par le seul federationKey
+  // (nom+type) — voir le commentaire de calendarSeasonMatchKey : un même nom revient de nombreuses
+  // fois dans le fichier du Comité pour des catégories différentes (ex: une quinzaine de
+  // "CHAMPIONNAT DE FRANCE" par saison), et les confondre ferait qu'une seule mise à jour au hasard
+  // s'appliquerait tandis que toutes les autres catégories resteraient bloquées sur leur ancienne
+  // date, sans jamais être créées non plus (faussement "déjà trouvées").
+  const byMatchKey = {};
+  (data.calendarEvents||[]).forEach(e=>{
+    if(!e.federationKey) return;
+    byMatchKey[calendarSeasonMatchKey(e.name, e.type, e.details)] = e;
+  });
   const toUpdate = [], toCreate = [];
   parsedEvents.forEach(pe=>{
     const fk = calendarFederationKey(pe.name, pe.type);
-    const existing = byFedKey[fk];
+    const matchKey = calendarSeasonMatchKey(pe.name, pe.type, pe.details);
+    const existing = byMatchKey[matchKey];
     if(existing) toUpdate.push({ existing, incoming: pe, fk });
     else toCreate.push({ incoming: pe, fk });
   });
@@ -11648,17 +11722,23 @@ function openCalendarImportPreview(plan, discipline){
   const overlay = document.getElementById('import-archive-overlay');
   const sortedUpdate = [...plan.toUpdate].sort((a,b)=> (a.incoming.date||'').localeCompare(b.incoming.date||''));
   const sortedCreate = [...plan.toCreate].sort((a,b)=> (a.incoming.date||'').localeCompare(b.incoming.date||''));
-  const updateRows = sortedUpdate.map(({existing, incoming})=>`
+  // Identifiant de sélection UNIQUE par ligne (position dans la liste triée), plutôt que basé sur
+  // le contenu (nom+catégorie, ex: l'ancien data-fk) : plusieurs lignes peuvent légitimement
+  // partager exactement le même nom et la même catégorie (ex: un stage mensuel "Perfectionnement /
+  // Expertise" identique chaque mois de la saison) — un identifiant basé sur le contenu rendrait
+  // alors leurs cases à cocher indissociables (cocher/décocher l'une aurait affecté toutes les
+  // autres lignes partageant ce contenu, au lieu de cette seule occurrence).
+  const updateRows = sortedUpdate.map(({existing, incoming}, idx)=>`
     <label class="iao-row">
-      <input type="checkbox" data-kind="update" data-fk="${escapeHtml(incoming.__fk||'')}" checked>
+      <input type="checkbox" data-kind="update" data-row-id="u${idx}" checked>
       <span>
         <div class="iao-name">${incoming.type==='stage'?'🥋':'🏆'} ${escapeHtml(incoming.name)}</div>
         <div class="iao-group">${existing.date ? fmtDate(existing.date) : 'pas de date'} → ${incoming.date ? fmtDate(incoming.date) : 'pas de date'}${incoming.city?' · '+escapeHtml(incoming.city):''}</div>
       </span>
     </label>`).join('');
-  const createRows = sortedCreate.map(({incoming})=>`
+  const createRows = sortedCreate.map(({incoming}, idx)=>`
     <label class="iao-row" style="background:rgba(154,170,107,0.08);">
-      <input type="checkbox" data-kind="create" data-fk="${escapeHtml(incoming.__fk||'')}" checked>
+      <input type="checkbox" data-kind="create" data-row-id="c${idx}" checked>
       <span>
         <div class="iao-name">${incoming.type==='stage'?'🥋':'🏆'} ${escapeHtml(incoming.name)} <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Nouveau</span></div>
         <div class="iao-group">${incoming.date?fmtDate(incoming.date):'pas de date'}${incoming.city?' · '+escapeHtml(incoming.city):''}</div>
@@ -11680,10 +11760,10 @@ function openCalendarImportPreview(plan, discipline){
   const close = ()=>{ overlay.classList.remove('show'); overlay.innerHTML=''; };
   document.getElementById('cancelCalendarImportBtn').onclick = close;
   document.getElementById('confirmCalendarImportBtn').onclick = ()=>{
-    const checkedFk = new Set([...overlay.querySelectorAll('input[type="checkbox"]:checked')].map(cb=>cb.dataset.fk));
+    const checkedIds = new Set([...overlay.querySelectorAll('input[type="checkbox"]:checked')].map(cb=>cb.dataset.rowId));
     const finalPlan = {
-      toUpdate: plan.toUpdate.filter(u=> checkedFk.has(u.fk)),
-      toCreate: plan.toCreate.filter(c=> checkedFk.has(c.fk))
+      toUpdate: sortedUpdate.filter((_,idx)=> checkedIds.has('u'+idx)),
+      toCreate: sortedCreate.filter((_,idx)=> checkedIds.has('c'+idx))
     };
     applyCalendarImportPlan(finalPlan, discipline);
     close();
@@ -11700,8 +11780,6 @@ async function handleCalendarExcelImport(file, discipline){
     // Judo — cette bascule n'a rien à voir avec la discipline choisie pour CET import ci-dessus.
     migrateFederationCalendarOnce('Judo');
     const plan = planCalendarImport(parsed);
-    plan.toUpdate.forEach(u=> u.incoming.__fk = u.fk);
-    plan.toCreate.forEach(c=> c.incoming.__fk = c.fk);
     if(plan.toUpdate.length===0 && plan.toCreate.length===0){ showToast('Rien à mettre à jour'); return; }
     openCalendarImportPreview(plan, discipline);
   }catch(err){
