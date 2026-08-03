@@ -2895,6 +2895,7 @@ function renderGroupsTab(){
                 <div><span class="field-label">Date de naissance</span><div>${m.birthDate ? fmtDate(m.birthDate) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Sexe</span><div>${m.gender ? (m.gender==='F'?'Fille':'Garçon') : '—'}</div></div>
                 ${groupHasNoBelt(curGroup) ? '' : `<div style="margin-top:8px;"><span class="field-label">Ceinture</span><div style="display:flex; align-items:center; gap:8px;">${m.belt ? beltSwatchHtml(m.belt, true) : ''}<span>${m.belt ? escapeHtml(beltLabelFor(m.belt)) : 'Non renseignée'}</span></div></div>`}
+                ${memberWeightCategoryEligible(m) ? `<div style="margin-top:8px;"><span class="field-label">Catégorie de poids</span><div>${m.weightCategory ? escapeHtml(m.weightCategory)+' kg' : 'Non renseignée'}</div></div>` : ''}
                 <div style="margin-top:8px;"><span class="field-label">Email (pour convocations)</span><div>${m.email ? escapeHtml(m.email) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Téléphone</span><div>${m.phone ? escapeHtml(m.phone) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Adresse</span><div>${(m.address || m.postalCode || m.city) ? escapeHtml([m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '—'}</div></div>
@@ -2968,6 +2969,11 @@ function renderGroupsTab(){
               ${m.belt ? beltSwatchHtml(m.belt, true) : ''}
             </div>
           </div>`}
+          ${memberWeightCategoryEligible(m) ? `
+          <div>
+            <span class="field-label">Catégorie de poids</span>
+            ${buildMemberWeightCategorySelectHtml(m)}
+          </div>` : ''}
           <div>
             <span class="field-label">Email (pour convocations)</span>
             <input type="text" data-action="edit-email" data-id="${m.id}" value="${escapeHtml(m.email||'')}" placeholder="parent@exemple.fr">
@@ -3048,14 +3054,18 @@ const INCOMPLETE_FICHE_FIELDS = [
   { key:'phone', label:'Téléphone' },
   { key:'address', label:'Adresse' },
   { key:'postalCode', label:'Code postal' },
-  { key:'city', label:'Ville' }
+  { key:'city', label:'Ville' },
+  { key:'weightCategory', label:'Catégorie de poids' }
 ];
 // La ceinture n'existe pas en Taïso (pas de système de grade dans cette discipline) : elle ne
-// doit jamais être comptée comme manquante pour les élèves de ce cours.
+// doit jamais être comptée comme manquante pour les élèves de ce cours. De même, la catégorie de
+// poids n'existe pas avant Benjamins (voir memberWeightCategoryEligible/WEIGHT_CATEGORIES_BY_BAND) :
+// elle ne doit jamais être comptée comme manquante pour les plus jeunes.
 function memberMissingFieldKeys(m){
   const noBelt = memberInNoBeltCourse(m);
   return INCOMPLETE_FICHE_FIELDS
     .filter(f=> f.key!=='belt' || !noBelt)
+    .filter(f=> f.key!=='weightCategory' || memberWeightCategoryEligible(m))
     .filter(f=>!String(m[f.key]||'').trim())
     .map(f=>f.key);
 }
@@ -3522,6 +3532,7 @@ function syncLinkedMember(m){
     }
     other.belt = m.belt;
   }
+  other.weightCategory = m.weightCategory;
 }
 
 // Réactive un élève archivé en le rattachant au cours indiqué : on modifie l'élève existant
@@ -3571,6 +3582,12 @@ document.getElementById('groups-list').addEventListener('change', e=>{
       syncLinkedMember(m);
       saveData(); renderGroupsTab();
     }
+    return;
+  }
+  const weightCatSel = e.target.closest('[data-action="edit-weight-category"]');
+  if(weightCatSel){
+    const m = data.members.find(x=>x.id===weightCatSel.dataset.id);
+    if(m){ m.weightCategory = weightCatSel.value || undefined; syncLinkedMember(m); saveData(); renderGroupsTab(); }
     return;
   }
   const genderSel = e.target.closest('[data-action="edit-gender"]');
@@ -10834,7 +10851,7 @@ function renderConvocTab(){
       <div class="convoc-row"${alreadyInvited?' style="opacity:.6;"':''}>
         <input type="checkbox" data-member="${m.id}" ${checked?'checked':''} ${alreadyInvited?'disabled':''}>
         <div class="info">
-<div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender, m))}</span>` : ''}${alreadyInvited ? `<span class="tag">✓ Déjà convoqué(e)</span>` : ''}</div>          <div class="e">${m.email ? escapeHtml(m.email) : 'Pas d’email renseigné'}</div>
+<div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender, m))}</span>` : ''}${m.weightCategory ? `<span class="tag">${escapeHtml(m.weightCategory)} kg</span>` : ''}${alreadyInvited ? `<span class="tag">✓ Déjà convoqué(e)</span>` : ''}</div>          <div class="e">${m.email ? escapeHtml(m.email) : 'Pas d’email renseigné'}</div>
         </div>
       </div>`;
     }, m=>m)) : ''}
@@ -12115,6 +12132,29 @@ function weightDisplayValue(birthDate, weight, forceMorphological){
   if(weight) return `${weight} kg`;
   return weightOptionsForBandLabel(groupedCategoryLabel(birthDate)) ? '—' : 'Poule morphologique';
 }
+/* ---------------- CATÉGORIE DE POIDS DE RÉFÉRENCE (fiche élève) ---------------- */
+// Champ permanent sur la fiche élève (comme la ceinture), distinct du poids saisi ÉVÉNEMENT PAR
+// ÉVÉNEMENT (r.weight, voir buildWeightFieldHtml/getMemberLastWeight ci-dessus, qui reste la valeur
+// qui compte pour CHAQUE convocation précise) — sert de repère à jour sur la fiche, et de valeur de
+// pré-remplissage par défaut pour la toute première convocation d'un élève (avant qu'il ait le
+// moindre historique de poids). Seuls les élèves à partir de Benjamins ont une grille de poids
+// officielle (voir WEIGHT_CATEGORIES_BY_BAND, qui ne couvre justement pas les catégories plus
+// jeunes) — c'est cette même grille qui détermine la limite "à partir de Benjamins" demandée par
+// Thomas, plutôt qu'un seuil arbitraire indépendant.
+function memberWeightCategoryEligible(m){
+  if(!m || !m.birthDate) return false;
+  return !!weightOptionsForBandLabel(groupedCategoryLabel(m.birthDate, m));
+}
+function buildMemberWeightCategorySelectHtml(m){
+  const cats = weightOptionsForBandLabel(groupedCategoryLabel(m.birthDate, m));
+  if(!cats) return '';
+  const currentValue = m.weightCategory||'';
+  return `<select data-action="edit-weight-category" data-id="${m.id}" style="flex:1;">
+    <option value="">Non renseignée</option>
+    <optgroup label="Garçons">${cats.g.map(w=>`<option value="${w}" ${currentValue===w?'selected':''}>${w} kg</option>`).join('')}</optgroup>
+    <optgroup label="Filles">${cats.f.map(w=>`<option value="${w}" ${currentValue===w?'selected':''}>${w} kg</option>`).join('')}</optgroup>
+  </select>`;
+}
 // Retrouve le dernier poids renseigné pour ce pratiquant sur une compétition antérieure
 // (hors "Poule morphologique"), pour pré-remplir automatiquement le poids de la compétition suivante.
 function getMemberLastWeight(memberId, beforeDate, excludeEventId){
@@ -13047,7 +13087,10 @@ function refreshAddResultWeightField(){
   const bandLabel = member ? groupedCategoryLabel(member.birthDate, member) : null;
   const cats = bandLabel ? weightOptionsForBandLabel(bandLabel) : null;
   const dateInput = document.getElementById('addResultDate');
-  const suggested = member ? getMemberLastWeight(member.id, dateInput ? dateInput.value : '', ui.addResultDraftEventId) : '';
+  // À défaut d'un poids déjà saisi lors d'une compétition précédente (getMemberLastWeight), on
+  // retombe sur la catégorie de poids de référence de la fiche élève (voir
+  // memberWeightCategoryEligible) — utile pour la toute première compétition, avant tout historique.
+  const suggested = member ? (getMemberLastWeight(member.id, dateInput ? dateInput.value : '', ui.addResultDraftEventId) || member.weightCategory || '') : '';
   wrap.innerHTML = `<label class="small">Poids</label>` + (cats
     ? `<select id="addResultWeightValue">
          <option value="">Poids —</option>
@@ -13208,11 +13251,14 @@ function renderResultsList(){
     presents.forEach(r=>{ if(r.weight !== 'Poule morphologique'){ r.weight = 'Poule morphologique'; changed = true; } });
     if(changed) saveData();
   } else {
-    // Remplissage automatique du poids à partir de la dernière compétition renseignée pour ce pratiquant.
+    // Remplissage automatique du poids à partir de la dernière compétition renseignée pour ce
+    // pratiquant, ou à défaut (première compétition) de la catégorie de poids de référence de sa
+    // fiche élève (voir memberWeightCategoryEligible).
     let changed = false;
     presents.forEach(r=>{
       if(!r.weight){
-        const suggested = getMemberLastWeight(r.memberId, ev.date, ev.id);
+        const m = memberOf(r);
+        const suggested = getMemberLastWeight(r.memberId, ev.date, ev.id) || (m && m.weightCategory) || '';
         if(suggested){ r.weight = suggested; changed = true; }
       }
     });
@@ -13372,7 +13418,8 @@ function renderCompetitionDayMode(){
       } else {
         presents.forEach(r=>{
           if(!r.weight){
-            const suggested = getMemberLastWeight(r.memberId, ev.date, ev.id);
+            const m = memberOf(r);
+            const suggested = getMemberLastWeight(r.memberId, ev.date, ev.id) || (m && m.weightCategory) || '';
             if(suggested){ r.weight = suggested; changed = true; }
           }
         });
