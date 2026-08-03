@@ -6853,10 +6853,44 @@ function accountNameById(id){
   const a = accountsCache.find(x=>x.id===id);
   return a ? (a.name || a.username) : null;
 }
+// Auto-guérison des cours assignés à un compte prof après une réinitialisation puis un ré-import
+// ("je veux que ces infos reste en permanence ! meme avec un reset ou quoi" — Thomas). Les ids de
+// data.groups sont recréés à chaque réinitialisation + ré-import (nouveaux uid()), donc
+// account.groupIds (qui ne connaît que des ids) devient orphelin pour de bon dès qu'un cours est
+// supprimé puis recréé, même sous un nom strictement identique — preservedHiddenIds (voir
+// openAccountOverlay) ne fait que conserver l'ancien id mort, il ne le fait jamais correspondre au
+// nouveau. On recroise donc ici account.groupNames (miroir par nom, insensible aux ids — voir
+// sauvegarde dans openAccountOverlay) avec data.groups à chaque fois que la carte Comptes est
+// rafraîchie ou qu'un import de fichier élèves vient de recréer des cours : un cours qui réapparaît
+// sous son nom d'origine réattribue automatiquement le prof concerné, sans que Thomas ait besoin de
+// rouvrir et ré-enregistrer chaque compte à la main.
+async function reconcileProfGroupAssignments(){
+  const session = getSession();
+  if(!session || session.role !== 'admin' || !session.sessionToken) return;
+  if(!accountsCache.length) accountsCache = await fetchAccounts();
+  if(!accountsCache.length) return;
+  const groupsByName = new Map(data.groups.map(g=>[g.name, g.id]));
+  for(const a of accountsCache){
+    if(a.role !== 'prof' || !Array.isArray(a.groupNames) || !a.groupNames.length) continue;
+    const currentIds = new Set(a.groupIds||[]);
+    const recoveredIds = a.groupNames.map(n=>groupsByName.get(n)).filter(id=>id && !currentIds.has(id));
+    if(!recoveredIds.length) continue;
+    const newGroupIds = [...new Set([...(a.groupIds||[]), ...recoveredIds])];
+    try{
+      const res = await fetch(BACKEND_URL, {
+        method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action:'updateAccount', sessionToken: session.sessionToken, id:a.id, username:a.username, name:a.name, role:a.role, groupIds:newGroupIds, groupNames:a.groupNames, active:a.active })
+      });
+      const json = await res.json();
+      if(json && json.ok) a.groupIds = newGroupIds;
+    }catch(e){ /* on retentera au prochain rafraîchissement de la carte Comptes */ }
+  }
+}
 async function refreshAccountsList(){
   const listEl = document.getElementById('accounts-list');
   if(!listEl) return;
   accountsCache = await fetchAccounts();
+  await reconcileProfGroupAssignments();
   // Les noms des comptes prof viennent d'arriver : si la liste du calendrier (Réglages) est déjà
   // affichée, on la redessine pour remplacer un éventuel "Ajouté par un compte prof" générique par
   // le vrai nom, sans attendre une prochaine action de l'utilisateur.
@@ -6951,6 +6985,14 @@ function openAccountOverlay(account){
     const checkedIds = [...document.querySelectorAll('#accGroupsList input:checked')].map(c=>c.value);
     const preservedHiddenIds = (account && Array.isArray(account.groupIds)) ? account.groupIds.filter(id=>!visibleGroupIds.has(id)) : [];
     const groupIds = selRole==='prof' ? [...new Set([...checkedIds, ...preservedHiddenIds])] : [];
+    // Miroir par NOM de groupIds (voir reconcileProfGroupAssignments) : c'est ce qui permet à
+    // l'affectation de survivre à une réinitialisation + ré-import, où les cours renaissent avec
+    // de nouveaux ids mais le même nom. Même logique que preservedHiddenIds ci-dessus, appliquée
+    // aux noms : un nom déjà mémorisé pour un cours actuellement invisible reste conservé tel quel.
+    const checkedNames = checkedIds.map(id => (data.groups.find(g=>g.id===id)||{}).name).filter(Boolean);
+    const visibleGroupNames = new Set((data.groups||[]).map(g=>g.name));
+    const preservedHiddenNames = (account && Array.isArray(account.groupNames)) ? account.groupNames.filter(n=>!visibleGroupNames.has(n)) : [];
+    const groupNames = selRole==='prof' ? [...new Set([...checkedNames, ...preservedHiddenNames])] : [];
     if(!username){ statusEl.textContent = 'Identifiant requis.'; statusEl.style.color = '#B3492F'; return; }
     if(!isEdit && (!password || password.length < 4)){ statusEl.textContent = 'Mot de passe trop court (4 caractères minimum).'; statusEl.style.color = '#B3492F'; return; }
     if(selRole==='prof' && !groupIds.length){ statusEl.textContent = 'Sélectionne au moins un cours pour un compte prof.'; statusEl.style.color = '#B3492F'; return; }
@@ -6962,8 +7004,8 @@ function openAccountOverlay(account){
     statusEl.textContent = 'Enregistrement...';
     try{
       const body = isEdit
-        ? { action:'updateAccount', sessionToken: s.sessionToken, id: account.id, username, name, role: selRole, groupIds, active: document.getElementById('accActive').checked, ...(password ? { newPassword: password } : {}) }
-        : { action:'createAccount', sessionToken: s.sessionToken, username, password, name, role: selRole, groupIds };
+        ? { action:'updateAccount', sessionToken: s.sessionToken, id: account.id, username, name, role: selRole, groupIds, groupNames, active: document.getElementById('accActive').checked, ...(password ? { newPassword: password } : {}) }
+        : { action:'createAccount', sessionToken: s.sessionToken, username, password, name, role: selRole, groupIds, groupNames };
       const res = await fetch(BACKEND_URL, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
       const json = await res.json();
       if(json && json.error === 'unauthorized'){ clearSession(); showLoginScreen('Session expirée, reconnecte-toi.'); close(); return; }
@@ -7291,6 +7333,10 @@ function importWorkbookMultiSheet(wb){
   const fieldConflicts = [...fieldConflictByMemberId.values()];
 
   saveData(); renderAll();
+  // Un cours recréé ici (ex: après une réinitialisation) porte un nouvel id : on ré-attribue tout
+  // de suite les comptes prof qui l'attendaient par son nom (voir reconcileProfGroupAssignments),
+  // sans attendre que Thomas pense à rouvrir la carte Comptes.
+  if(groupsCreated>0) reconcileProfGroupAssignments();
   if(groupsCreated===0 && totalAdded===0 && totalUpdated===0 && totalReactivated===0 && fieldConflicts.length===0 && groupChangeConflicts.length===0 && missingCandidates.length===0 && missingCourseCandidates.length===0){
     showToast(sheetsIgnored ? "Aucune colonne NOM/PRENOM détectée dans ce fichier" : 'Aucune donnée trouvée');
     return;
