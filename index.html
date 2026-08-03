@@ -11757,13 +11757,24 @@ function planCalendarImport(parsedEvents){
     if(!e.federationKey) return;
     byMatchKey[calendarSeasonMatchKey(e.name, e.type, e.details)] = e;
   });
+  // Une entrée supprimée délibérément par l'admin (voir delete-manual-event/delete-imported-
+  // competition, qui posent un tombstone dans data.settings.deletedFederationEventKeys) ne doit
+  // JAMAIS revenir au ré-import du même fichier — sinon "supprimer" un événement du calendrier
+  // fédéral ne servirait à rien dès qu'on réimporte (ex: pour rafraîchir juste quelques dates) :
+  // l'événement supprimé, absent de data.calendarEvents, serait alors classé à tort comme "nouveau"
+  // et recréé. On vérifie avec la MÊME date que l'entrée importée (calendarFederationMigrationKey) :
+  // une compétition supprimée cette saison ne doit pas bloquer la même compétition l'an prochain, à
+  // une autre date.
+  const deletedKeys = new Set(data.settings.deletedFederationEventKeys || []);
   const toUpdate = [], toCreate = [];
   parsedEvents.forEach(pe=>{
     const fk = calendarFederationKey(pe.name, pe.type);
     const matchKey = calendarSeasonMatchKey(pe.name, pe.type, pe.details);
     const existing = byMatchKey[matchKey];
-    if(existing) toUpdate.push({ existing, incoming: pe, fk });
-    else toCreate.push({ incoming: pe, fk });
+    if(existing){ toUpdate.push({ existing, incoming: pe, fk }); return; }
+    const migrationKey = calendarFederationMigrationKey(fk, pe.date, pe.details);
+    if(deletedKeys.has(migrationKey)) return;
+    toCreate.push({ incoming: pe, fk });
   });
   return { toUpdate, toCreate };
 }
