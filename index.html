@@ -502,6 +502,11 @@
   #photo-lightbox-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:150; padding:16px; overflow:auto; }
   #photo-lightbox-overlay.show{ display:flex; align-items:center; justify-content:center; }
   #photo-lightbox-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:16px; max-width:min(92vw, 640px); width:100%; box-shadow:0 10px 40px rgba(0,0,0,.35); }
+  /* Partage du lien d'espace personnel famille (voir getFamilyPortalLinkForMember/openFamilyPortalLinkOverlay) */
+  #family-portal-link-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:120; padding:16px; overflow:auto; }
+  #family-portal-link-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
+  #family-portal-link-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:460px; width:100%; margin-top:5vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
+  #family-portal-link-overlay .fpl-link{ font-size:12.5px; word-break:break-all; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; color:var(--ink-dim); }
   .cwa-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
   .cwa-row:last-child{ border-bottom:none; }
   .cwa-row .cwa-name{ font-size:13.5px; }
@@ -688,6 +693,51 @@
     opacity:0; transition:opacity .3s ease; flex-shrink:0;
   }
   #sync-dot.show{ opacity:1; }
+
+  /* Espace personnel famille (voir bootFamilyPortal) : écran plein page COMPLÈTEMENT séparé de
+     l'appli admin/prof — z-index au-dessus de app-loading (200) et login-screen (300) pour couvrir
+     tout le reste quel que soit son état, plutôt que de devoir masquer chaque élément un par un. */
+  #family-portal-app{
+    display:none; position:fixed; inset:0; z-index:400; background:var(--bg); overflow:auto;
+  }
+  #family-portal-app.show{ display:block; }
+  .fp-gate{ min-height:100%; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .fp-gate-card{ width:100%; max-width:380px; }
+  .fp-gate-eyebrow{
+    text-align:center; font-family:'Big Shoulders Display',sans-serif; font-weight:700; font-size:44px;
+    letter-spacing:0.04em; text-transform:uppercase; color:var(--tatami); margin-bottom:2px; line-height:1;
+  }
+  .fp-gate-card h1{
+    text-align:center; margin:0 0 22px; font-family:'Rajdhani',sans-serif; font-weight:700;
+    font-size:14px; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-dim);
+  }
+  .fp-gate-card label{ display:block; margin-bottom:16px; font-size:14px; }
+  .fp-gate-card input[type=date]{ font-size:16px; padding:13px 14px; margin-top:6px; width:100%; }
+  .fp-gate-error{ color:#B3492F; font-size:13px; min-height:18px; margin:4px 0 12px; text-align:center; }
+  .fp-header{
+    position:sticky; top:0; z-index:5; background:var(--bg); border-bottom:1px solid var(--line);
+    padding:16px 18px; display:flex; flex-direction:column; gap:2px;
+  }
+  .fp-header .fp-club{ font-family:'Rajdhani',sans-serif; font-weight:700; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-dim); }
+  .fp-header .fp-title{ font-size:18px; font-weight:700; }
+  .fp-tabs{ display:flex; gap:6px; padding:10px 18px 0; overflow-x:auto; }
+  .fp-tab-btn{
+    flex-shrink:0; padding:8px 14px; border-radius:999px; border:1px solid var(--line); background:var(--surface);
+    color:var(--ink-dim); font-size:12.5px; font-weight:600; cursor:pointer; white-space:nowrap;
+  }
+  .fp-tab-btn.active{ background:var(--tatami); color:#1A1F14; border-color:var(--tatami); }
+  .fp-body{ padding:16px 18px 40px; max-width:640px; margin:0 auto; }
+  .fp-card{ background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; }
+  .fp-card h3{ margin:0 0 10px; font-size:14.5px; }
+  .fp-empty{ color:var(--ink-dim); font-size:13px; padding:6px 0; }
+  .fp-member-label{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-dim); margin:14px 0 6px; }
+  .fp-member-label:first-child{ margin-top:0; }
+  .fp-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); }
+  .fp-row:last-child{ border-bottom:none; }
+  .fp-feedback-textarea{
+    width:100%; min-height:60px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px;
+    padding:10px 11px; color:var(--ink); font-family:'Inter',sans-serif; font-size:13.5px; resize:vertical; margin-top:8px;
+  }
 </style>
 </head>
 <body>
@@ -1164,6 +1214,8 @@
 <div id="account-form-overlay"></div>
 <div id="change-password-overlay"></div>
 <div id="photo-lightbox-overlay"></div>
+<div id="family-portal-link-overlay"></div>
+<div id="family-portal-app"></div>
 <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" style="display:none">
 
 <!-- defer : ces librairies ne servent qu'à la génération de PDF/QR code (utilisées à la demande,
@@ -2009,6 +2061,416 @@ function downloadDataUri(dataUri, filename){
   document.body.removeChild(link);
 }
 
+// ===================================================================================
+// ESPACE PERSONNEL FAMILLE — bouton admin "Envoyer l'accès à l'espace famille"
+// ===================================================================================
+// Demande de Thomas : donner à chaque famille un lien permanent (pas de compte identifiant/mot de
+// passe à gérer) protégé par la date de naissance d'un enfant (format JJMMAAAA) — voir la section
+// ESPACE PERSONNEL FAMILLE de Code.gs pour le détail de l'authentification côté serveur. Cette
+// fonction interroge le serveur (action réservée admin) pour obtenir/générer ce jeton, puis compose
+// l'URL complète CÔTÉ CLIENT à partir de l'origine et du chemin de la page actuelle — jamais l'URL
+// du backend Apps Script — pour rester valide quel que soit l'hébergement (GitHub Pages aujourd'hui,
+// un domaine perso demain).
+async function requestFamilyPortalLink(memberId){
+  const s = getSession();
+  if(!s || !s.sessionToken){ showToast('Non connecté'); return null; }
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'getFamilyPortalLink', sessionToken: s.sessionToken, memberId })
+    });
+    const json = await res.json();
+    if(json && json.ok && json.token) return json;
+    showToast((json && json.error) || 'Échec de la génération du lien');
+    return null;
+  }catch(e){
+    showToast('Impossible de générer le lien (connexion ?)');
+    return null;
+  }
+}
+function familyPortalUrlFromToken(token){
+  return `${location.origin}${location.pathname}?famille=${token}`;
+}
+function closeFamilyPortalLinkOverlay(){
+  const overlay = document.getElementById('family-portal-link-overlay');
+  if(overlay){ overlay.classList.remove('show'); overlay.innerHTML = ''; }
+}
+async function openFamilyPortalLinkOverlay(memberId){
+  const info = await requestFamilyPortalLink(memberId);
+  if(!info) return;
+  const overlay = document.getElementById('family-portal-link-overlay');
+  if(!overlay) return;
+  const url = familyPortalUrlFromToken(info.token);
+  const m = data.members.find(x=>x.id===memberId);
+  const namesLabel = (info.memberNames||[]).join(' et ');
+  const waNumber = m ? phoneToWhatsappNumber(m.phone) : '';
+  const shareText = `Bonjour,\n\nVoici le lien de votre espace personnel ${data.clubName||'du club'} pour suivre ${namesLabel} : présences, convocations, calendrier, résultats et photos.\n\n${url}\n\nPour vous identifier, indiquez simplement la date de naissance de votre enfant au format JJMMAAAA (ex : 14032012).\n\nSportivement,\n${data.clubName||'Le club'}`;
+  overlay.innerHTML = `
+    <div class="rio-card">
+      <h3 style="margin:0 0 6px;">🔗 Espace personnel famille</h3>
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 12px;">Pour ${escapeHtml(namesLabel)}. Ce lien est permanent — la famille l'ouvre à chaque visite, sans recréer de compte. Elle s'identifie avec la date de naissance de l'enfant (format JJMMAAAA).</p>
+      <div class="fpl-link">${escapeHtml(url)}</div>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">
+        <button class="primary" id="fplCopyBtn">📋 Copier le lien</button>
+        ${m && m.email ? `<button class="ghost" id="fplEmailBtn">✉️ Envoyer par email</button>` : ''}
+        ${waNumber ? `<button class="ghost" id="fplWhatsappBtn">💬 Envoyer via WhatsApp</button>` : ''}
+        <button class="ghost" id="fplCloseBtn">Fermer</button>
+      </div>
+    </div>`;
+  overlay.classList.add('show');
+  document.getElementById('fplCloseBtn').addEventListener('click', closeFamilyPortalLinkOverlay);
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closeFamilyPortalLinkOverlay(); });
+  const copyBtn = document.getElementById('fplCopyBtn');
+  if(copyBtn) copyBtn.addEventListener('click', async ()=>{
+    try{ await navigator.clipboard.writeText(url); showToast('Lien copié'); }
+    catch(e){ showToast('Impossible de copier automatiquement — sélectionne le lien à la main'); }
+  });
+  const emailBtn = document.getElementById('fplEmailBtn');
+  if(emailBtn) emailBtn.addEventListener('click', ()=>{
+    const subject = encodeURIComponent(`Votre espace personnel ${data.clubName||''}`.trim());
+    const body = encodeURIComponent(shareText);
+    window.location.href = `mailto:${m.email}?subject=${subject}&body=${body}`;
+  });
+  const waBtn = document.getElementById('fplWhatsappBtn');
+  if(waBtn) waBtn.addEventListener('click', ()=>{
+    window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(shareText)}`, '_blank');
+  });
+}
+
+// ===================================================================================
+// ESPACE PERSONNEL FAMILLE — écran famille (index.html?famille=<jeton>)
+// ===================================================================================
+// Écran COMPLÈTEMENT séparé de l'appli admin/prof/comptable (voir bootApp) : jamais de session
+// (getSession()/'read' classique), authentification par jeton d'URL + date de naissance d'un
+// enfant, revalidée par le serveur à CHAQUE appel (voir Code.gs, authorizeFamilyPortalMember) —
+// jamais un simple drapeau "déjà vérifié" côté client. La date de naissance saisie une fois est
+// mémorisée en local UNIQUEMENT pour éviter de la redemander à chaque visite, jamais comme preuve
+// d'autorisation lue seule côté client.
+//
+// Réutilise le même `data` global que l'appli admin (jamais rechargé depuis loadData() ici) : une
+// fois authentifiée, la famille reçoit une version DÉJÀ CLOISONNÉE de `data` (voir
+// buildFamilyPortalData côté Code.gs — uniquement ses propres membres/convocations/sessions/etc.),
+// ce qui permet de réutiliser telles quelles les fonctions déjà existantes qui lisent `data`
+// (fmtDate, attendanceLabel, medalStyle, generateMemberPalmaresPdf...) sans les dupliquer.
+let familyPortalUi = { token: null, birthDate: '', tab: 'convocations', feedbackDrafts: {} };
+const familyPortalPhotoCache = {};
+
+function familyPortalTokenFromUrl(){
+  try{ return new URLSearchParams(location.search).get('famille') || ''; }catch(e){ return ''; }
+}
+function familyPortalStorageKey(token){ return 'tatami-famille-bd-'+token; }
+function ddmmyyyyFromIso(iso){
+  const parts = String(iso||'').split('-');
+  if(parts.length!==3) return '';
+  return parts[2]+parts[1]+parts[0];
+}
+function familyPortalErrorLabel(err){
+  if(err==='wrong_birthdate') return 'Date de naissance incorrecte.';
+  if(err==='invalid_link') return 'Ce lien n’est plus valide — contacte le club pour en obtenir un nouveau.';
+  return 'Une erreur est survenue, réessaie.';
+}
+
+async function bootFamilyPortal(token){
+  const container = document.getElementById('family-portal-app');
+  const loadingEl = document.getElementById('app-loading');
+  if(loadingEl) loadingEl.classList.add('hide');
+  if(!container) return;
+  container.classList.add('show');
+  familyPortalUi.token = token;
+  let prefill = '';
+  try{ prefill = localStorage.getItem(familyPortalStorageKey(token)) || ''; }catch(e){ prefill = ''; }
+  if(prefill){
+    renderFamilyPortalGate(token, prefill, true);
+    const ok = await attemptFamilyPortalLogin(token, prefill, { silent:true });
+    if(!ok) renderFamilyPortalGate(token, prefill, false);
+  } else {
+    renderFamilyPortalGate(token, '', false);
+  }
+}
+
+function renderFamilyPortalGate(token, prefillIso, loading){
+  const container = document.getElementById('family-portal-app');
+  if(!container) return;
+  container.innerHTML = `
+    <div class="fp-gate">
+      <div class="fp-gate-card">
+        <div class="fp-gate-eyebrow">Tatami</div>
+        <h1>Espace personnel famille</h1>
+        <label>Date de naissance de votre enfant
+          <input type="date" id="fpGateBirthDate" value="${escapeHtml(prefillIso||'')}">
+        </label>
+        <p class="fp-gate-error" id="fpGateError">${loading ? 'Connexion en cours…' : ''}</p>
+        <button class="primary" id="fpGateSubmitBtn" style="width:100%;" ${loading?'disabled':''}>Accéder à mon espace</button>
+      </div>
+    </div>`;
+  const submit = ()=>{
+    const input = document.getElementById('fpGateBirthDate');
+    const val = input ? input.value : '';
+    if(!val){ const err = document.getElementById('fpGateError'); if(err) err.textContent = 'Indique la date de naissance de ton enfant'; return; }
+    attemptFamilyPortalLogin(token, val, { silent:false });
+  };
+  const btn = document.getElementById('fpGateSubmitBtn');
+  if(btn) btn.addEventListener('click', submit);
+  const input = document.getElementById('fpGateBirthDate');
+  if(input) input.addEventListener('keydown', e=>{ if(e.key==='Enter') submit(); });
+}
+
+async function attemptFamilyPortalLogin(token, isoBirthDate, opts){
+  opts = opts || {};
+  const ddmmyyyy = ddmmyyyyFromIso(isoBirthDate);
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalRead', token, birthDate: ddmmyyyy })
+    });
+    const json = await res.json();
+    if(json && json.ok && json.data){
+      data = json.data;
+      familyPortalUi.birthDate = ddmmyyyy;
+      try{ localStorage.setItem(familyPortalStorageKey(token), isoBirthDate); }catch(e){}
+      renderFamilyPortalMain();
+      return true;
+    }
+    if(!opts.silent){
+      const errEl = document.getElementById('fpGateError');
+      if(errEl) errEl.textContent = familyPortalErrorLabel(json && json.error);
+      const btn = document.getElementById('fpGateSubmitBtn');
+      if(btn) btn.disabled = false;
+    } else {
+      try{ localStorage.removeItem(familyPortalStorageKey(token)); }catch(e){}
+    }
+    return false;
+  }catch(e){
+    if(!opts.silent){
+      const errEl = document.getElementById('fpGateError');
+      if(errEl) errEl.textContent = 'Connexion impossible, réessaie dans quelques instants.';
+    }
+    return false;
+  }
+}
+
+const FAMILY_PORTAL_TABS = [
+  { key:'presences', label:'Présences' },
+  { key:'convocations', label:'Convocations' },
+  { key:'calendrier', label:'Calendrier' },
+  { key:'resultats', label:'Résultats' },
+  { key:'palmares', label:'Palmarès' }
+];
+function renderFamilyPortalMain(){
+  const container = document.getElementById('family-portal-app');
+  if(!container) return;
+  const names = (data.members||[]).map(m=>m.name).join(' et ');
+  container.innerHTML = `
+    <div class="fp-header">
+      <div class="fp-club">${escapeHtml(data.clubName||'Tatami')}</div>
+      <div class="fp-title">Espace de ${escapeHtml(names)}</div>
+    </div>
+    <div class="fp-tabs">
+      ${FAMILY_PORTAL_TABS.map(t=>`<button class="fp-tab-btn ${familyPortalUi.tab===t.key?'active':''}" data-fp-tab="${t.key}">${t.label}</button>`).join('')}
+    </div>
+    <div class="fp-body" id="fpBody"></div>`;
+  container.querySelectorAll('[data-fp-tab]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ familyPortalUi.tab = btn.dataset.fpTab; renderFamilyPortalMain(); });
+  });
+  renderFamilyPortalTabContent();
+}
+
+function renderFamilyPortalTabContent(){
+  const body = document.getElementById('fpBody');
+  if(!body) return;
+  if(familyPortalUi.tab==='presences'){ body.innerHTML = familyPortalPresencesHtml(); }
+  else if(familyPortalUi.tab==='convocations'){ body.innerHTML = familyPortalConvocationsHtml(); wireFamilyPortalConvocations(body); }
+  else if(familyPortalUi.tab==='calendrier'){ body.innerHTML = familyPortalCalendarHtml(); }
+  else if(familyPortalUi.tab==='resultats'){ body.innerHTML = familyPortalResultsHtml(); wireFamilyPortalResults(body); }
+  else if(familyPortalUi.tab==='palmares'){ body.innerHTML = familyPortalPalmaresHtml(); wireFamilyPortalPalmares(body); }
+}
+
+// ---- Présences : dernières séances "pointées" (validated) de chaque enfant ----
+function familyPortalPresencesHtml(){
+  const members = data.members||[];
+  if(!members.length) return '<div class="fp-card"><div class="fp-empty">Aucune information disponible.</div></div>';
+  return members.map(m=>{
+    const sessions = (data.sessions||[]).filter(s=>s.groupId===m.groupId && s.validated).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,20);
+    const rows = sessions.map(s=>{
+      const status = (data.attendance[s.id]||{})[m.id];
+      const bg = isPresent(status) ? 'var(--tatami-dim)' : (isExcused(status) ? 'var(--surface-2)' : 'var(--clay-dim)');
+      const fg = isPresent(status) ? 'var(--tatami)' : (isExcused(status) ? 'var(--ink-dim)' : 'var(--clay)');
+      return `<div class="fp-row"><span>${fmtDate(s.date)}${s.time?' — '+escapeHtml(s.time):''}</span><span class="tag" style="background:${bg}; color:${fg}; font-weight:700;">${attendanceLabel(status)}</span></div>`;
+    }).join('');
+    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${rows || '<div class="fp-empty">Aucun cours pointé pour l’instant.</div>'}</div>`;
+  }).join('');
+}
+
+// ---- Convocations : réponse Présent(e)/Absent(e) directement depuis l’espace famille ----
+function familyPortalConvocationsHtml(){
+  const events = [...(data.convocEvents||[])].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const cards = events.map(ev=>{
+    const rows = (ev.recipients||[]).map(r=>{
+      const m = (data.members||[]).find(x=>x.id===r.memberId);
+      if(!m) return '';
+      const statusHtml = r.response
+        ? `<span class="tag" style="background:${r.response==='present'?'var(--tatami-dim)':'var(--clay-dim)'}; color:${r.response==='present'?'var(--tatami)':'var(--clay)'}; font-weight:700;">${r.response==='present'?'✅ Présent(e)':'❌ Absent(e)'}</span>`
+        : `<div style="display:flex; gap:8px; margin-top:6px;">
+             <button class="primary" data-fp-respond="present" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px;">✅ Présent(e)</button>
+             <button class="ghost" data-fp-respond="absent" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px;">❌ Absent(e)</button>
+           </div>`;
+      return `<div style="margin-bottom:10px;"><div class="fp-member-label" style="margin:0 0 4px;">${escapeHtml(m.name)}</div>${statusHtml}</div>`;
+    }).join('');
+    if(!rows) return '';
+    return `<div class="fp-card">
+      <h3>${escapeHtml(ev.name)}</h3>
+      <div class="fp-empty" style="margin-bottom:8px;">${fmtDate(ev.date)}${ev.lieu?' — '+escapeHtml(ev.lieu):''}${ev.ville?' ('+escapeHtml(ev.ville)+')':''}</div>
+      ${ev.consignes?`<div style="font-size:12.5px; margin-bottom:8px;">${escapeHtml(ev.consignes)}</div>`:''}
+      ${ev.deadline?`<div class="fp-empty" style="margin-bottom:8px;">Réponse attendue avant le ${fmtDate(ev.deadline)}</div>`:''}
+      ${rows}
+    </div>`;
+  }).filter(Boolean).join('');
+  return cards || '<div class="fp-card"><div class="fp-empty">Aucune convocation pour l’instant.</div></div>';
+}
+function wireFamilyPortalConvocations(body){
+  body.querySelectorAll('[data-fp-respond]').forEach(btn=>{
+    btn.addEventListener('click', ()=> familyPortalRespond(btn.dataset.event, btn.dataset.member, btn.dataset.fpRespond));
+  });
+}
+async function familyPortalRespond(eventId, memberId, status){
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalRespond', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, eventId, memberId, status })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      const ev = data.convocEvents.find(e=>e.id===eventId);
+      const r = ev && ev.recipients.find(x=>x.memberId===memberId);
+      if(r){ r.response = status; r.respondedAt = new Date().toISOString(); }
+      showToast(status==='present' ? 'Réponse enregistrée : présent(e)' : 'Réponse enregistrée : absent(e)');
+      renderFamilyPortalTabContent();
+    } else {
+      showToast(familyPortalErrorLabel(json && json.error));
+    }
+  }catch(e){
+    showToast('Connexion impossible, réessaie.');
+  }
+}
+
+// ---- Calendrier de la/des catégorie(s) d’âge de la famille : déjà cloisonné côté serveur par
+// cours (courseIds), comme pour un compte prof — voir buildFamilyPortalData dans Code.gs. ----
+function familyPortalCalendarHtml(){
+  const events = (data.calendarEvents||[]).filter(ev=>!ev.disabled).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  if(!events.length) return '<div class="fp-card"><div class="fp-empty">Aucun événement à venir pour l’instant.</div></div>';
+  return `<div class="fp-card">${events.map(ev=>`
+    <div class="fp-row">
+      <span>${fmtDateRange(ev.date, ev.dateEnd)} — ${escapeHtml(ev.name)}${cancelledBadgeHtml(ev.cancelled)}</span>
+      <span class="fp-empty">${escapeHtml(ev.city||'')}</span>
+    </div>`).join('')}</div>`;
+}
+
+// ---- Résultats : compétitions déjà disputées (réponse présent + résultat saisi), photos
+// téléchargeables et bilan libre laissé par la famille (visible aussi par l’admin, voir Code.gs). ----
+function familyPortalResultsHtml(){
+  const members = data.members||[];
+  let html = '';
+  members.forEach(m=>{
+    const rows = [];
+    (data.convocEvents||[]).forEach(ev=>{
+      const r = (ev.recipients||[]).find(x=>x.memberId===m.id);
+      if(r && r.response==='present' && r.result) rows.push({ ev, r });
+    });
+    rows.sort((a,b)=>(b.ev.date||'').localeCompare(a.ev.date||''));
+    html += `<div class="fp-member-label">${escapeHtml(m.name)}</div>`;
+    if(!rows.length){ html += `<div class="fp-card"><div class="fp-empty">Aucun résultat enregistré pour l’instant.</div></div>`; return; }
+    rows.forEach(({ev,r})=>{
+      const resultHtml = isShiaiEvent(ev.name)
+        ? `<span style="font-weight:700;">${escapeHtml(r.result)} points</span>`
+        : `<span class="tag" style="${medalStyle(r.result)||'background:var(--surface-2); color:var(--ink-dim);'} font-weight:700;">${escapeHtml(r.result)}</span>`;
+      const photoIds = [...(ev.photoFileIds||[]), r.photoFileId].filter(Boolean);
+      const safeName = String(ev.name||'competition').replace(/[^\w-]+/g,'-');
+      const photosHtml = photoIds.map(fid=>`<img data-fp-photo="${fid}" data-fp-photo-name="photo-${safeName}.jpg" src="" style="width:70px; height:70px; object-fit:cover; border-radius:8px; margin:4px 4px 0 0; cursor:pointer; background:var(--surface-2);" alt="Photo">`).join('');
+      const feedbackKey = ev.id+'|'+m.id;
+      const feedbackVal = familyPortalUi.feedbackDrafts[feedbackKey] !== undefined ? familyPortalUi.feedbackDrafts[feedbackKey] : (r.parentFeedback||'');
+      html += `<div class="fp-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <div><strong>${escapeHtml(ev.name)}</strong><div class="fp-empty">${fmtDate(ev.date)}${ev.ville?' — '+escapeHtml(ev.ville):''}</div></div>
+          ${resultHtml}
+        </div>
+        ${photoIds.length?`<div style="margin-top:10px;">${photosHtml}</div>`:''}
+        <div style="margin-top:10px;">
+          <span style="font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-dim); font-weight:700;">Bilan</span>
+          <textarea class="fp-feedback-textarea" data-fp-feedback-input data-event="${ev.id}" data-member="${m.id}" placeholder="Comment s’est passée la compétition ?">${escapeHtml(feedbackVal)}</textarea>
+          <button class="ghost" data-fp-feedback-save data-event="${ev.id}" data-member="${m.id}" style="margin-top:6px; font-size:12.5px; padding:6px 12px;">Enregistrer le bilan</button>
+        </div>
+      </div>`;
+    });
+  });
+  return html || '<div class="fp-card"><div class="fp-empty">Aucun résultat pour l’instant.</div></div>';
+}
+function wireFamilyPortalResults(body){
+  body.querySelectorAll('[data-fp-photo]').forEach(img=>{
+    const fileId = img.dataset.fpPhoto;
+    getFamilyPortalPhotoDataUri(fileId).then(uri=>{ if(uri){ img.src = uri; img.dataset.loadedUri = uri; } });
+    img.addEventListener('click', ()=>{ if(img.dataset.loadedUri) openPhotoLightbox(img.dataset.loadedUri, img.dataset.fpPhotoName||'photo.jpg'); });
+  });
+  body.querySelectorAll('[data-fp-feedback-input]').forEach(ta=>{
+    ta.addEventListener('input', ()=>{ familyPortalUi.feedbackDrafts[ta.dataset.event+'|'+ta.dataset.member] = ta.value; });
+  });
+  body.querySelectorAll('[data-fp-feedback-save]').forEach(btn=>{
+    btn.addEventListener('click', ()=> familyPortalSaveFeedback(btn.dataset.event, btn.dataset.member));
+  });
+}
+async function getFamilyPortalPhotoDataUri(fileId){
+  if(!fileId) return null;
+  if(familyPortalPhotoCache[fileId]) return familyPortalPhotoCache[fileId];
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalGetPhotos', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, fileIds:[fileId] })
+    });
+    const json = await res.json();
+    const uri = json && json.ok && json.photos ? json.photos[fileId] : null;
+    if(uri) familyPortalPhotoCache[fileId] = uri;
+    return uri || null;
+  }catch(e){ return null; }
+}
+async function familyPortalSaveFeedback(eventId, memberId){
+  const key = eventId+'|'+memberId;
+  const text = familyPortalUi.feedbackDrafts[key] !== undefined ? familyPortalUi.feedbackDrafts[key] : '';
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalFeedback', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, eventId, memberId, text })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      const ev = data.convocEvents.find(e=>e.id===eventId);
+      const r = ev && ev.recipients.find(x=>x.memberId===memberId);
+      if(r) r.parentFeedback = text;
+      delete familyPortalUi.feedbackDrafts[key];
+      showToast('Bilan enregistré');
+    } else {
+      showToast(familyPortalErrorLabel(json && json.error));
+    }
+  }catch(e){
+    showToast('Connexion impossible, réessaie.');
+  }
+}
+
+// ---- Palmarès : réutilise directement generateMemberPalmaresPdf (ne lit que `data`, déjà
+// cloisonné à la famille) — aucune duplication de la logique de mise en forme du PDF. ----
+function familyPortalPalmaresHtml(){
+  const members = data.members||[];
+  if(!members.length) return '<div class="fp-card"><div class="fp-empty">Aucun élève.</div></div>';
+  return `<div class="fp-card">${members.map(m=>`
+    <div class="fp-row">
+      <span>${escapeHtml(m.name)}</span>
+      <button class="ghost" data-fp-palmares="${m.id}" style="padding:7px 12px; font-size:12.5px;">📄 Télécharger le PDF</button>
+    </div>`).join('')}</div>`;
+}
+function wireFamilyPortalPalmares(body){
+  body.querySelectorAll('[data-fp-palmares]').forEach(btn=>{
+    btn.addEventListener('click', ()=> generateMemberPalmaresPdf(btn.dataset.fpPalmares));
+  });
+}
+
 function getSession(){
   try{ return JSON.parse(localStorage.getItem('dojo-session')||'null'); }catch(e){ return null; }
 }
@@ -2024,6 +2486,13 @@ function clearSession(){
 function isProfSession(){
   const session = getSession();
   return !!(session && session.role === 'prof');
+}
+// Espace personnel famille : réservé admin côté serveur (voir requireAdmin dans l'action
+// getFamilyPortalLink de Code.gs) — ce garde-fou côté client n'affiche donc le bouton de partage
+// qu'à l'admin, pour ne pas laisser un compte prof/comptable croire qu'il peut générer ce lien.
+function isAdminSession(){
+  const session = getSession();
+  return !!(session && session.role === 'admin');
 }
 // Journal d'activité des comptes non-admin (voir data.settings.activityLog, renderActivityLogCard) :
 // un compte prof ou comptable ne voit jamais ce journal (réservé à l'admin), mais chacune de ses
@@ -3062,6 +3531,7 @@ function renderGroupsTab(){
               })() : ''}
               <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px; flex-wrap:wrap;">
                 <button class="ghost icon-btn" data-action="member-history-pdf" data-id="${m.id}" title="Générer l'historique complet (résultats, passages de grade, stages) en PDF" style="padding:7px 10px;">📄 Historique PDF</button>
+                ${isAdminSession() ? `<button class="ghost icon-btn" data-action="family-portal-link" data-id="${m.id}" title="Envoyer l'accès à l'espace personnel famille" style="padding:7px 10px;">🔗 Espace famille</button>` : ''}
                 <button class="ghost icon-btn" data-action="edit-member-fiche" data-id="${m.id}" title="Modifier les informations" style="padding:7px 10px;">✏️</button>
                 ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="del-member" data-id="${m.id}" style="font-size:12px; padding:7px 10px;">Retirer</button>`}
               </div>`;
@@ -3471,6 +3941,8 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
   const action = btn.dataset.action;
   if(action==='member-history-pdf'){
     generateMemberPalmaresPdf(btn.dataset.id);
+  } else if(action==='family-portal-link'){
+    openFamilyPortalLinkOverlay(btn.dataset.id);
   } else if(action==='del-member'){
     // Garde-fou même si le bouton était présent par un autre biais (ex: rendu déjà en mémoire
     // avant une reconnexion sous un autre rôle) : un prof ne doit jamais pouvoir retirer un élève,
@@ -16671,6 +17143,11 @@ setInterval(()=>{
 }, AUTO_SYNC_INTERVAL_MS);
 
 function bootApp(){
+  // Espace personnel famille (?famille=<jeton>) : complètement séparé de la connexion admin/prof/
+  // comptable habituelle — voir bootFamilyPortal. Vérifié EN PREMIER, avant toute logique de session,
+  // pour ne jamais laisser apparaître l'écran de connexion classique sur ce lien.
+  const familyToken = familyPortalTokenFromUrl();
+  if(familyToken){ bootFamilyPortal(familyToken); return; }
   const session = getSession();
   if(!session || !session.sessionToken){
     showLoginScreen();
