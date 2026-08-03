@@ -2346,11 +2346,37 @@ function renderFamilyPortalTabContent(){
   else if(familyPortalUi.tab==='palmares'){ body.innerHTML = familyPortalPalmaresHtml(); wireFamilyPortalPalmares(body); }
 }
 
+// ---- Fiche de l'élève : lecture seule, affichée en haut de la page d'accueil de l'espace famille
+// (onglet Présences). Aucun champ n'est modifiable ici — voir demande de Thomas : la famille doit
+// pouvoir VÉRIFIER les informations et signaler une erreur à Nathalie, pas les modifier elle-même.
+function familyPortalFicheHtml(){
+  const members = data.members||[];
+  if(!members.length) return '';
+  const cards = members.map(m=>{
+    const curGroup = (data.groups||[]).find(g=>g.id===m.groupId);
+    const rows = [['Date de naissance', m.birthDate ? fmtDate(m.birthDate) : '—']];
+    rows.push(['Sexe', m.gender ? (m.gender==='F'?'Fille':'Garçon') : '—']);
+    if(!groupHasNoBelt(curGroup) && m.belt) rows.push(['Ceinture', beltLabelFor(m.belt)]);
+    if(memberWeightCategoryEligible(m) && m.weightCategory) rows.push(['Catégorie de poids', `${m.weightCategory} kg`]);
+    rows.push(['Email (pour convocations)', m.email || '—']);
+    rows.push(['Téléphone', m.phone || '—']);
+    const addr = (m.address || m.postalCode || m.city) ? [m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') : '—';
+    rows.push(['Adresse', addr]);
+    rows.push(['Certificat médical', m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—']);
+    rows.push(['N° de licence', m.licenseNumber || '—']);
+    rows.push(['Cours', curGroup ? curGroup.name : '—']);
+    const rowsHtml = rows.map(([label, value])=>`<div style="margin-top:8px;"><span class="field-label">${escapeHtml(label)}</span><div>${escapeHtml(String(value))}</div></div>`).join('');
+    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div><div style="font-size:14px; line-height:1.7;">${rowsHtml}</div></div>`;
+  }).join('');
+  return `<div class="fp-card" style="background:var(--surface-2); border-style:dashed;"><div class="fp-empty" style="font-size:13px;">📋 Merci de vérifier ces informations et de signaler à Nathalie toute modification à effectuer.</div></div>${cards}`;
+}
+
 // ---- Présences : dernières séances "pointées" (validated) de chaque enfant ----
 function familyPortalPresencesHtml(){
   const members = data.members||[];
   if(!members.length) return '<div class="fp-card"><div class="fp-empty">Aucune information disponible.</div></div>';
-  return members.map(m=>{
+  const ficheHtml = familyPortalFicheHtml();
+  const presenceCards = members.map(m=>{
     const sessions = (data.sessions||[]).filter(s=>s.groupId===m.groupId && s.validated).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,20);
     const rows = sessions.map(s=>{
       const status = (data.attendance[s.id]||{})[m.id];
@@ -2360,6 +2386,7 @@ function familyPortalPresencesHtml(){
     }).join('');
     return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${rows || '<div class="fp-empty">Aucun cours pointé pour l’instant.</div>'}</div>`;
   }).join('');
+  return ficheHtml + presenceCards;
 }
 
 // ---- Convocations : réponse Présent(e)/Absent(e) directement depuis l’espace famille ----
