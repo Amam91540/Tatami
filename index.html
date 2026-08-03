@@ -3045,6 +3045,29 @@ function renderGroupsTab(){
   }).join('');
 }
 
+/* ---------------- DOCUMENTS À RENDRE (case à cocher, voir fiche cotisation) ---------------- */
+// Liste demandée par Thomas : suivi papier (certificat médical, charte, droit à l'image, feuille
+// d'inscription, cotisation) coché au fur et à mesure que chaque document est physiquement rendu.
+// Un document non coché doit remonter dans "Fiches incomplètes" comme n'importe quel champ manquant
+// — voir memberMissingFieldKeys ci-dessous, qui traite ces clés booléennes exactement de la même
+// façon (String(false||'').trim() est vide -> considéré manquant, String(true||'') ne l'est pas).
+const MEMBER_DOCUMENT_ITEMS = [
+  { key:'docMedicalCert', label:'Certificat médical / Questionnaire' },
+  { key:'docCharte', label:'Charte (majeurs uniquement)', majorOnly:true },
+  { key:'docDroitImage', label:'Droit à l\'image' },
+  { key:'docFeuilleInscription', label:'Feuille d\'inscription' },
+  { key:'docCotisation', label:'Cotisation' }
+];
+// Majorité légale au jour J (pas l'âge "sportif" de memberAge, qui suit l'année civile de la
+// saison) — la Charte ne concerne que les licenciés réellement majeurs aujourd'hui.
+function memberIsMajor(m){
+  if(!m || !m.birthDate) return false;
+  const age = ageAtDate(m.birthDate, todayStr());
+  return age !== null && age >= 18;
+}
+function memberDocumentItemApplies(m, item){
+  return item.majorOnly ? memberIsMajor(m) : true;
+}
 /* ---------------- FICHES INCOMPLÈTES (PDF récap) ---------------- */
 const INCOMPLETE_FICHE_FIELDS = [
   { key:'birthDate', label:'Date de naissance' },
@@ -3055,17 +3078,20 @@ const INCOMPLETE_FICHE_FIELDS = [
   { key:'address', label:'Adresse' },
   { key:'postalCode', label:'Code postal' },
   { key:'city', label:'Ville' },
-  { key:'weightCategory', label:'Catégorie de poids' }
+  { key:'weightCategory', label:'Catégorie de poids' },
+  ...MEMBER_DOCUMENT_ITEMS
 ];
 // La ceinture n'existe pas en Taïso (pas de système de grade dans cette discipline) : elle ne
 // doit jamais être comptée comme manquante pour les élèves de ce cours. De même, la catégorie de
 // poids n'existe pas avant Benjamins (voir memberWeightCategoryEligible/WEIGHT_CATEGORIES_BY_BAND) :
-// elle ne doit jamais être comptée comme manquante pour les plus jeunes.
+// elle ne doit jamais être comptée comme manquante pour les plus jeunes. Et la Charte ne concerne
+// que les licenciés majeurs (voir memberDocumentItemApplies).
 function memberMissingFieldKeys(m){
   const noBelt = memberInNoBeltCourse(m);
   return INCOMPLETE_FICHE_FIELDS
     .filter(f=> f.key!=='belt' || !noBelt)
     .filter(f=> f.key!=='weightCategory' || memberWeightCategoryEligible(m))
+    .filter(f=> !f.majorOnly || memberIsMajor(m))
     .filter(f=>!String(m[f.key]||'').trim())
     .map(f=>f.key);
 }
@@ -3111,6 +3137,7 @@ function incompleteFieldInputHtml(m, key){
     </select>`;
   if(key==='email') return `<input type="email" data-field="email" value="${escapeHtml(val)}" placeholder="email@exemple.fr">`;
   if(key==='phone') return `<input type="tel" data-field="phone" value="${escapeHtml(val)}" placeholder="06 12 34 56 78">`;
+  if(MEMBER_DOCUMENT_ITEMS.some(it=>it.key===key)) return `<label style="display:flex; align-items:center; gap:6px; font-weight:400;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${m[key]?'checked':''}> Rendu(e)</label>`;
   return `<input type="text" data-field="${key}" value="${escapeHtml(val)}">`;
 }
 // Fenêtre ouverte avant la génération du PDF des fiches incomplètes : on y liste toutes les fiches
@@ -3168,6 +3195,13 @@ function openIncompleteFichesOverlay(){
       let changed = false;
       row.querySelectorAll('[data-field]').forEach(input=>{
         const field = input.dataset.field;
+        // Cases à cocher (documents à rendre) : on enregistre l'état (coché/décoché) tel quel,
+        // contrairement aux autres champs texte où une valeur vide n'écrase jamais une info déjà
+        // présente — ici, décocher est une action volontaire (le document redevient manquant).
+        if(input.dataset.boolfield){
+          if(m[field] !== input.checked){ m[field] = input.checked; changed = true; }
+          return;
+        }
         const val = input.value.trim();
         if(val && m[field] !== val){ m[field] = val; changed = true; }
       });
@@ -5413,6 +5447,14 @@ function renderMemberCotisationOverlay(memberId){
   overlay.innerHTML = `
     <div class="rio-card">
       <h2 style="margin-top:0;">Cotisation — ${escapeHtml(m.name)}</h2>
+      <div class="group-block" style="margin:0 0 12px;">
+        <div style="font-size:11px; font-weight:600; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:6px;">📋 Documents à rendre</div>
+        ${MEMBER_DOCUMENT_ITEMS.filter(it=>memberDocumentItemApplies(m, it)).map(it=>`
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; cursor:pointer;">
+            <input type="checkbox" data-action="toggle-member-document" data-key="${it.key}" ${m[it.key]?'checked':''}>
+            ${escapeHtml(it.label)}
+          </label>`).join('')}
+      </div>
       ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
       ${due.expected.familyPending && due.expected.familyPending.length ? `<p style="font-size:12.5px; background:#FFF6E0; border:1px solid #E8C468; color:#8a6a1a; border-radius:8px; padding:8px 10px; margin:0 0 10px; line-height:1.5;">⚠️ Attention, ${due.expected.familyPending.map(p=>`<strong>${escapeHtml(p.name)}</strong>`).join(' et ')} ${due.expected.familyPending.length>1?'ne sont pas encore inscrit(e)s':"n'est pas encore inscrit(e)"} (fiche encore dans « Licence à prendre »). En attendant, ${escapeHtml(m.name)} est facturé(e) comme si elle/il était seul(e) — le tarif famille reviendra automatiquement dès que tout le monde aura validé sa licence.</p>` : ''}
       ${(()=>{
@@ -5466,6 +5508,12 @@ function renderMemberCotisationOverlay(memberId){
       <div style="margin-top:6px;">${paymentsHtml}</div>
       <button class="ghost" id="mc-close" style="width:100%; margin-top:14px;">Fermer</button>
     </div>`;
+  overlay.querySelectorAll('[data-action="toggle-member-document"]').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      m[cb.dataset.key] = cb.checked;
+      saveData(); renderActiveTab();
+    });
+  });
   document.getElementById('mc-feerank').addEventListener('change', e=>{
     m.feeRank = e.target.value; saveData(); renderMemberCotisationOverlay(memberId); renderActiveTab();
   });
@@ -10238,12 +10286,12 @@ function renderExportCard(){
     // Certaines colonnes du fichier AssoConnect d'origine (ID du Contact, Pays, Complément
     // d'adresse) ne sont pas stockées dans l'appli et n'ont donc pas d'équivalent ici.
     const exportGroups = data.groups.filter(g=>!isLicensePendingGroup(g));
-    const HEADER_COMMON = ['Nom','Prénom','Email','Téléphone','Sexe','Date de naissance','Adresse','Code postal','Ville','Ceinture','Certificat médical','N° de licence','Fonction','Notes'];
+    const HEADER_COMMON = ['Nom','Prénom','Email','Téléphone','Sexe','Date de naissance','Adresse','Code postal','Ville','Ceinture','Catégorie de poids','Certificat médical','N° de licence','Fonction','Notes'];
     const memberRow = (m)=>{
       const parts = String(m.name||'').trim().split(/\s+/);
       const prenom = parts[0]||'';
       const nom = parts.slice(1).join(' ');
-      return [nom, prenom, m.email||'', m.phone||'', m.gender==='F'?'F':(m.gender==='M'?'M':''), m.birthDate||'', m.address||'', m.postalCode||'', m.city||'', m.belt?beltRankLabel(m.belt):'', m.medicalCertDate||'', m.licenseNumber||'', m.committeeRole||'', m.note||''];
+      return [nom, prenom, m.email||'', m.phone||'', m.gender==='F'?'F':(m.gender==='M'?'M':''), m.birthDate||'', m.address||'', m.postalCode||'', m.city||'', m.belt?beltRankLabel(m.belt):'', m.weightCategory ? `${m.weightCategory} kg` : '', m.medicalCertDate||'', m.licenseNumber||'', m.committeeRole||'', m.note||''];
     };
     const usedSheetNames = new Set(['Général']);
     const safeSheetName = (name)=>{
