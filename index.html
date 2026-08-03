@@ -14847,13 +14847,13 @@ function buildAGReportBlocks(r, logoSrc){
   blocks.push(`
     <table class="recap-table">
       <tr><th>Cours</th><th>Licenciés</th><th>Filles</th><th>Garçons</th></tr>
-      ${r.byGroup.map(g=>`<tr><td>${escapeHtml(g.name)}</td><td>${g.count}</td><td>${g.countF}</td><td>${g.countM}</td></tr>`).join('')}
+      ${r.byGroup.map(g=>`<tr><td>${escapeHtml(g.name)}</td><td>${g.count}</td><td style="color:#9B3866; font-weight:700;">${g.countF}</td><td style="color:#2A5F8C; font-weight:700;">${g.countM}</td></tr>`).join('')}
     </table>`);
 
   blocks.push(`
     <table class="recap-table" style="margin-top:14px;">
       <tr><th>Catégorie</th><th>Licenciés</th><th>Filles</th><th>Garçons</th></tr>
-      ${r.byCategory.map(c=>`<tr><td>${escapeHtml(bandYearRangeLabel(c.label))}</td><td>${c.count}</td><td>${c.countF}</td><td>${c.countM}</td></tr>`).join('')}
+      ${r.byCategory.map(c=>`<tr><td>${escapeHtml(bandYearRangeLabel(c.label))}</td><td>${c.count}</td><td style="color:#9B3866; font-weight:700;">${c.countF}</td><td style="color:#2A5F8C; font-weight:700;">${c.countM}</td></tr>`).join('')}
     </table>`);
 
   blocks.push(`
