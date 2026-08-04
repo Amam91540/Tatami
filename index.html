@@ -2095,17 +2095,26 @@ function prepareDocumentFileForUpload(file){
 // Authentification par jeton famille + date de naissance mémorisés dans familyPortalUi, jamais un
 // sessionToken (une famille n'a pas de compte admin/prof/comptable). La case "Rendu(e)" existante
 // n'est PAS cochée automatiquement par cet envoi : validation manuelle côté club (choix de Thomas).
-async function uploadFamilyDocumentToServer(memberId, docKey, file){
+// certDate (optionnel) : uniquement pour docKey==='docMedicalCert' — voir demande de Thomas, la
+// famille indique la date écrite sur le certificat en même temps que le fichier, pour que le club
+// n'ait plus à l'ouvrir pour la reporter à la main sur la fiche officielle (voir toggle-member-document
+// côté admin, qui recopie cette date dans medicalCertDate uniquement au moment de la validation).
+async function uploadFamilyDocumentToServer(memberId, docKey, file, certDate){
   try{
     const { base64, mimeType } = await prepareDocumentFileForUpload(file);
+    const payload = { action:'familyPortalUploadDocument', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, memberId, docKey, base64, mimeType };
+    if(docKey==='docMedicalCert' && certDate) payload.certDate = certDate;
     const res = await fetch(BACKEND_URL, {
       method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action:'familyPortalUploadDocument', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, memberId, docKey, base64, mimeType })
+      body: JSON.stringify(payload)
     });
     const json = await res.json();
     if(json && json.ok){
       const m = (data.members||[]).find(x=>x.id===memberId);
-      if(m){ m[docKey+'FileId'] = json.fileId; m[docKey+'UploadedAt'] = json.uploadedAt; }
+      if(m){
+        m[docKey+'FileId'] = json.fileId; m[docKey+'UploadedAt'] = json.uploadedAt;
+        if(docKey==='docMedicalCert' && certDate) m.docMedicalCertDate = certDate;
+      }
       showToast('Document envoyé — en attente de vérification par le club.');
       renderFamilyPortalTabContent();
     } else {
@@ -2142,6 +2151,27 @@ function openPhotoLightbox(dataUri, filename){
   overlay.classList.add('show');
   document.getElementById('closePhotoLightboxBtn').addEventListener('click', closePhotoLightbox);
   document.getElementById('downloadPhotoLightboxBtn').addEventListener('click', ()=> downloadDataUri(dataUri, filename||'photo.jpg'));
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closePhotoLightbox(); });
+}
+// Visionneuse pour un document PDF déposé (certificat médical, charte...) — demande de Thomas : "ne
+// faire que consulter" au lieu de télécharger directement le fichier au premier clic. Même overlay
+// que la photo (#photo-lightbox-overlay) mais avec un <iframe> plutôt qu'un <img> : un navigateur
+// affiche nativement un PDF donné en data URI dans un iframe (seule la NAVIGATION top-level vers une
+// data URI est bloquée, voir openPhotoLightbox ci-dessus — l'utiliser comme src d'iframe reste ok).
+function openDocumentPdfLightbox(dataUri, filename){
+  const overlay = document.getElementById('photo-lightbox-overlay');
+  if(!overlay || !dataUri) return;
+  overlay.innerHTML = `
+    <div class="rio-card" style="display:flex; flex-direction:column; gap:12px; max-width:min(94vw, 900px); width:100%;">
+      <iframe src="${dataUri}" title="Document" style="width:100%; height:70vh; border:1px solid var(--surface-2); border-radius:10px; background:#fff;"></iframe>
+      <div style="display:flex; gap:10px;">
+        <button class="primary" id="downloadPhotoLightboxBtn" style="flex:1;">⬇️ Télécharger</button>
+        <button class="ghost" id="closePhotoLightboxBtn" style="flex:1;">Fermer</button>
+      </div>
+    </div>`;
+  overlay.classList.add('show');
+  document.getElementById('closePhotoLightboxBtn').addEventListener('click', closePhotoLightbox);
+  document.getElementById('downloadPhotoLightboxBtn').addEventListener('click', ()=> downloadDataUri(dataUri, filename||'document.pdf'));
   overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closePhotoLightbox(); });
 }
 // Téléchargement d'une data URI : un lien <a download> temporaire, jamais ajouté visiblement à la
@@ -2420,15 +2450,27 @@ function familyPortalDocumentUploadHtml(m){
     const validated = !!m[item.key];
     const fileId = m[item.key+'FileId'];
     const uploadedAt = m[item.key+'UploadedAt'];
+    const isMedicalCert = item.key==='docMedicalCert';
     let statusHtml;
     if(validated){
       statusHtml = `<span style="color:var(--tatami); font-weight:700;">✅ Reçu et vérifié</span>`;
+      if(isMedicalCert && m.docMedicalCertDate) statusHtml += `<div style="font-size:12px; margin-top:2px;">Date du certificat : ${fmtDate(m.docMedicalCertDate)}</div>`;
     } else if(fileId){
       statusHtml = `<span style="color:#B08A2E; font-weight:700;">📤 Envoyé${uploadedAt?' le '+fmtDate(uploadedAt):''} — en attente de vérification par le club</span>`;
+      if(isMedicalCert && m.docMedicalCertDate) statusHtml += `<div style="font-size:12px; margin-top:2px;">Date du certificat indiquée : ${fmtDate(m.docMedicalCertDate)}</div>`;
     } else {
       statusHtml = `<span class="fp-empty">Document à déposer</span>`;
     }
+    // Date du certificat médical (voir demande de Thomas) : uniquement pour ce document, saisie par
+    // la famille en même temps que le fichier — le club la recopiera sur la fiche officielle au
+    // moment où il coche "Rendu(e)" (jamais avant, voir toggle-member-document côté admin).
+    const dateControl = (isMedicalCert && !validated) ? `
+      <div style="margin-top:6px;">
+        <label style="font-size:12px; color:var(--ink-dim); display:block; margin-bottom:2px;">Date du certificat médical</label>
+        <input type="date" data-fp-doc-date="${item.key}" data-member="${m.id}" value="${m.docMedicalCertDate||''}" style="font-size:12px;">
+      </div>` : '';
     const uploadControl = validated ? '' : `
+      ${dateControl}
       <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
         <input type="file" accept="image/*,.pdf" data-fp-doc-input="${item.key}" data-member="${m.id}" style="font-size:12px; max-width:100%;">
         <button class="ghost" data-fp-doc-upload="${item.key}" data-member="${m.id}" style="padding:4px 10px; font-size:12px;">📎 ${fileId?'Redéposer':'Déposer'}</button>
@@ -2475,7 +2517,13 @@ function wireFamilyPortalInscription(body){
       const input = body.querySelector(`[data-fp-doc-input="${key}"][data-member="${memberId}"]`);
       const file = input && input.files && input.files[0];
       if(!file){ showToast('Choisis d’abord un fichier.'); return; }
-      uploadFamilyDocumentToServer(memberId, key, file);
+      let certDate;
+      if(key==='docMedicalCert'){
+        const dateInput = body.querySelector(`[data-fp-doc-date="${key}"][data-member="${memberId}"]`);
+        certDate = dateInput ? dateInput.value : '';
+        if(!certDate){ showToast('Indique la date du certificat médical avant de le déposer.'); return; }
+      }
+      uploadFamilyDocumentToServer(memberId, key, file, certDate);
     });
   });
 }
@@ -3931,6 +3979,22 @@ function memberIsMajor(m){
 function memberDocumentItemApplies(m, item){
   return item.majorOnly ? memberIsMajor(m) : true;
 }
+// Demande de Thomas : la famille indique une date en même temps que le dépôt du certificat médical
+// (docMedicalCertDate) mais celle-ci ne devient la date OFFICIELLE (medicalCertDate, utilisée partout
+// ailleurs dans l'appli — export, fiche, etc.) qu'au moment où le club valide en cochant la case
+// "Rendu(e)". Tant que ce n'est pas coché, medicalCertDate ne bouge jamais. À appeler UNIQUEMENT au
+// moment où docMedicalCert passe de non coché à coché (jamais au décochage, qui ne doit pas effacer
+// une date officielle déjà enregistrée).
+function applyMedicalCertDateOnValidation(m){
+  if(m && m.docMedicalCertDate) m.medicalCertDate = m.docMedicalCertDate;
+}
+// Petit rappel affiché près de la case "Rendu(e)" du certificat médical : la date que la famille a
+// indiquée en déposant son fichier, pour que le club sache quelle date sera reportée sur la fiche
+// officielle dès qu'il cochera la case (voir applyMedicalCertDateOnValidation ci-dessus).
+function memberDocMedicalCertDateHintHtml(m, key){
+  if(key!=='docMedicalCert' || !m.docMedicalCertDate || m.docMedicalCert) return '';
+  return `<div style="font-size:11px; color:var(--ink-dim); margin:-2px 0 4px 26px;">Date indiquée par la famille : ${fmtDate(m.docMedicalCertDate)}</div>`;
+}
 // Un document a été déposé depuis l'espace famille (fileId présent) mais pas encore validé (case
 // "Rendu(e)" toujours décochée, voir choix de Thomas : validation manuelle, jamais automatique au
 // dépôt) — sert au badge "🆕" sur la fiche, pour repérer d'un coup d'œil qui a déposé quelque chose
@@ -3941,9 +4005,12 @@ function memberPendingDocumentItems(m){
 function memberHasPendingDocuments(m){
   return memberPendingDocumentItems(m).length > 0;
 }
-// Relit un document déposé par une famille (photo ou PDF) et l'affiche (image -> visionneuse déjà
-// utilisée pour les photos de compétition) ou le télécharge (PDF -> pas d'aperçu <img> possible,
-// voir downloadDataUri) — même canal que getPhotos : jamais d'URL Drive directe côté client.
+// Relit un document déposé par une famille (photo ou PDF) et l'affiche EN CONSULTATION (visionneuse
+// image déjà utilisée pour les photos de compétition, ou visionneuse PDF en iframe — voir
+// openDocumentPdfLightbox) plutôt que de le télécharger directement au clic, comme c'était le cas
+// avant (demande de Thomas : "la possibilité de ne faire que consulter la pièce jointe"). Le
+// téléchargement reste possible depuis un bouton dédié dans ces deux visionneuses. Même canal que
+// getPhotos : jamais d'URL Drive directe côté client.
 async function viewMemberDocument(fileId, filename){
   const s = getSession();
   if(!s || !s.sessionToken){ showToast('Non connecté'); return; }
@@ -3956,7 +4023,7 @@ async function viewMemberDocument(fileId, filename){
     const dataUri = json && json.ok && json.documents && json.documents[fileId];
     if(!dataUri){ showToast('Document introuvable (supprimé ?).'); return; }
     if(dataUri.indexOf('data:image/')===0) openPhotoLightbox(dataUri, filename||'document.jpg');
-    else downloadDataUri(dataUri, filename||'document.pdf');
+    else openDocumentPdfLightbox(dataUri, filename||'document.pdf');
   }catch(e){
     showToast('Impossible de récupérer le document (connexion ?)');
   }
@@ -4050,7 +4117,7 @@ function incompleteFieldInputHtml(m, key){
   if(key==='phone') return `<input type="tel" data-field="phone" value="${escapeHtml(val)}" placeholder="06 12 34 56 78">`;
   if(MEMBER_DOCUMENT_ITEMS.some(it=>it.key===key)){
     const label = (MEMBER_DOCUMENT_ITEMS.find(it=>it.key===key)||{}).label || key;
-    return `<label style="display:flex; align-items:center; gap:6px; font-weight:400;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${m[key]?'checked':''}> Rendu(e)</label>${memberDocumentViewButtonHtml(m, key, label)}`;
+    return `<label style="display:flex; align-items:center; gap:6px; font-weight:400;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${m[key]?'checked':''}> Rendu(e)</label>${memberDocMedicalCertDateHintHtml(m, key)}${memberDocumentViewButtonHtml(m, key, label)}`;
   }
   return `<input type="text" data-field="${key}" value="${escapeHtml(val)}">`;
 }
@@ -4113,7 +4180,12 @@ function openIncompleteFichesOverlay(){
         // contrairement aux autres champs texte où une valeur vide n'écrase jamais une info déjà
         // présente — ici, décocher est une action volontaire (le document redevient manquant).
         if(input.dataset.boolfield){
-          if(m[field] !== input.checked){ m[field] = input.checked; changed = true; }
+          if(m[field] !== input.checked){
+            const wasChecked = !!m[field];
+            m[field] = input.checked;
+            if(field==='docMedicalCert' && input.checked && !wasChecked) applyMedicalCertDateOnValidation(m);
+            changed = true;
+          }
           return;
         }
         const val = input.value.trim();
@@ -4470,7 +4542,11 @@ function createLinkedMemberRecord(sourceMember, targetGroupId){
 // doivent rester propres à chaque fiche (l'une reste active dans son cours réel, l'autre patiente
 // dans "Licence à prendre"). Contrairement aux fiches liées du Comité directeur (indépendantes une
 // fois créées), celles-ci restent synchronisées tant que la fiche en attente n'a pas été validée.
-const LINKED_MEMBER_SYNC_FIELDS = ['name','birthDate','gender','email','phone','address','postalCode','city','medicalCertDate','questionnaireStatus','licenseNumber','note'];
+// docMedicalCert(+FileId/UploadedAt) inclus depuis la demande de Thomas : contrairement aux 4 autres
+// documents (charte, droit à l'image, feuille d'inscription — jamais synchronisés, ils doivent être
+// refournis chaque saison), le certificat médical reste valable d'une saison à l'autre et doit donc
+// rester synchronisé en direct entre une fiche et sa fiche jumelle tant que les deux coexistent.
+const LINKED_MEMBER_SYNC_FIELDS = ['name','birthDate','gender','email','phone','address','postalCode','city','medicalCertDate','questionnaireStatus','licenseNumber','note','docMedicalCert','docMedicalCertFileId','docMedicalCertUploadedAt','docMedicalCertDate'];
 function syncLinkedMember(m){
   if(!m || !m.linkedMemberId) return;
   const other = data.members.find(x=>x.id===m.linkedMemberId);
@@ -6376,7 +6452,7 @@ function renderMemberCotisationOverlay(memberId){
           <label style="display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; cursor:pointer;">
             <input type="checkbox" data-action="toggle-member-document" data-key="${it.key}" ${m[it.key]?'checked':''}>
             ${escapeHtml(it.label)}
-          </label>${memberDocumentViewButtonHtml(m, it.key, it.label)}`).join('')}
+          </label>${memberDocMedicalCertDateHintHtml(m, it.key)}${memberDocumentViewButtonHtml(m, it.key, it.label)}`).join('')}
       </div>
       ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
       ${due.expected.familyPending && due.expected.familyPending.length ? `<p style="font-size:12.5px; background:#FFF6E0; border:1px solid #E8C468; color:#8a6a1a; border-radius:8px; padding:8px 10px; margin:0 0 10px; line-height:1.5;">⚠️ Attention, ${due.expected.familyPending.map(p=>`<strong>${escapeHtml(p.name)}</strong>`).join(' et ')} ${due.expected.familyPending.length>1?'ne sont pas encore inscrit(e)s':"n'est pas encore inscrit(e)"} (fiche encore dans « Licence à prendre »). En attendant, ${escapeHtml(m.name)} est facturé(e) comme si elle/il était seul(e) — le tarif famille reviendra automatiquement dès que tout le monde aura validé sa licence.</p>` : ''}
@@ -6433,7 +6509,9 @@ function renderMemberCotisationOverlay(memberId){
     </div>`;
   overlay.querySelectorAll('[data-action="toggle-member-document"]').forEach(cb=>{
     cb.addEventListener('change', ()=>{
+      const wasChecked = !!m[cb.dataset.key];
       m[cb.dataset.key] = cb.checked;
+      if(cb.dataset.key==='docMedicalCert' && cb.checked && !wasChecked) applyMedicalCertDateOnValidation(m);
       saveData(); renderActiveTab();
     });
   });
@@ -17056,6 +17134,13 @@ function refreshArchiveTabBody(archive){
 // reste synchronisée en direct (voir syncLinkedMember) tant qu'elle n'est pas validée — la fiche
 // d'origine N'EST PAS déplacée : elle reste active dans son cours pour la saison en cours (appel,
 // présences...), pendant que la fiche liée sert de brouillon pour la saison suivante.
+// Documents (voir demande de Thomas) : SEUL le certificat médical (+ le fichier déposé et la date
+// indiquée par la famille, s'il y en a) est recopié sur la fiche jumelle — il reste valable,
+// contrairement à la charte, au droit à l'image et à la feuille d'inscription, qui doivent être
+// refournis chaque saison et démarrent donc volontairement vides ici (comme avant). Le
+// dépôt/consultation depuis l'espace famille se redirige
+// ensuite automatiquement vers cette fiche jumelle une fois créée (voir Code.gs,
+// resolveDocumentTargetMemberId) : c'est elle qui doit recevoir tout nouveau document.
 function createPendingLicenseRecord(sourceMember, licenseGroupId){
   if(sourceMember.linkedMemberId) return null; // déjà dupliqué
   const noBelt = groupHasNoBelt(data.groups.find(x=>x.id===licenseGroupId));
@@ -17067,6 +17152,8 @@ function createPendingLicenseRecord(sourceMember, licenseGroupId){
     postalCode: sourceMember.postalCode||'', city: sourceMember.city||'',
     medicalCertDate: sourceMember.medicalCertDate||null, questionnaireStatus: sourceMember.questionnaireStatus||'',
     licenseNumber: sourceMember.licenseNumber||'',
+    docMedicalCert: !!sourceMember.docMedicalCert, docMedicalCertFileId: sourceMember.docMedicalCertFileId||'',
+    docMedicalCertUploadedAt: sourceMember.docMedicalCertUploadedAt||'', docMedicalCertDate: sourceMember.docMedicalCertDate||'',
     note: sourceMember.note||'', pendingGroupId: sourceMember.groupId, linkedMemberId: sourceMember.id,
     forNextSeason: true
   };
