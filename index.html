@@ -2628,7 +2628,8 @@ function familyPortalInscriptionHtml(){
 }
 function wireFamilyPortalInscription(body){
   body.querySelectorAll('[data-fp-doc-upload]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
+    btn.addEventListener('click', async ()=>{
+      if(btn.disabled) return; // déjà en cours d'envoi — voir désactivation ci-dessous
       const key = btn.dataset.fpDocUpload;
       const memberId = btn.dataset.member;
       const input = body.querySelector(`[data-fp-doc-input="${key}"][data-member="${memberId}"]`);
@@ -2640,7 +2641,24 @@ function wireFamilyPortalInscription(body){
         certDate = dateInput ? dateInput.value : '';
         if(!certDate){ showToast('Indique la date du certificat médical avant de le déposer.'); return; }
       }
-      uploadFamilyDocumentToServer(memberId, key, file, certDate);
+      // Demande de Thomas : plusieurs mails de notif partaient pour un seul dépôt (double-clic, ou
+      // clic pendant que la photo est encore en train de se compresser côté navigateur — voir
+      // prepareDocumentFileForUpload, ça peut prendre plusieurs secondes sur un téléphone). On
+      // désactive le bouton + le champ fichier immédiatement, et on affiche un message d'attente le
+      // temps de l'envoi.
+      const originalLabel = btn.textContent;
+      btn.disabled = true; input.disabled = true;
+      btn.textContent = '⏳ Téléchargement du document en cours…';
+      try{
+        await uploadFamilyDocumentToServer(memberId, key, file, certDate);
+      } finally {
+        // En cas de succès, uploadFamilyDocumentToServer a déjà appelé renderFamilyPortalTabContent()
+        // qui remplace ce bouton par un tout nouveau — cette réactivation ne s'applique donc en
+        // pratique qu'en cas d'échec (connexion coupée, document refusé...), pour pouvoir réessayer
+        // sans recharger toute la page. Repasser ces propriétés sur l'ancien bouton (déjà retiré du
+        // DOM après un succès) ne pose pas de souci : il n'est simplement plus affiché.
+        btn.disabled = false; input.disabled = false; btn.textContent = originalLabel;
+      }
     });
   });
   body.querySelectorAll('[data-fp-doc-download]').forEach(btn=>{
@@ -3965,7 +3983,7 @@ function renderGroupsTab(){
                 ${isProfSession() ? '' : `<div style="margin-top:8px;"><span class="field-label">Cotisation</span><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">${memberDueBadgeHtml(m)}<button class="ghost" data-action="open-member-cotisation" data-id="${m.id}" style="padding:4px 10px; font-size:12px;">Détail &amp; paiements</button></div></div>`}
                 ${committee ? `<div style="margin-top:8px;"><span class="field-label">Fonction</span><div>${m.committeeRole ? escapeHtml(m.committeeRole) : '—'}</div></div>` : ''}
                 ${m.note ? `<div style="margin-top:8px;"><span class="field-label">Note</span><div style="white-space:pre-wrap;">${escapeHtml(m.note)}</div></div>` : ''}
-                ${(m.linkedMemberId && !isLicensePendingGroup(curGroup)) ? `<div style="margin-top:8px; color:var(--ink-dim); font-size:12.5px;">🔗 Fiche liée déjà créée dans « Licence à prendre » pour la saison prochaine — synchronisée automatiquement.</div>` : ''}
+                ${(m.linkedMemberId && !isLicensePendingGroup(curGroup)) ? `<div style="margin-top:8px; color:var(--ink-dim); font-size:12.5px;">🔗 Fiche liée déjà créée dans « Licence à prendre » pour la saison prochaine — synchronisée automatiquement. La charte, le droit à l'image et la feuille d'inscription déposés depuis l'espace famille arrivent directement sur cette fiche-là (à refournir chaque saison) ; les cases ci-dessus reflètent déjà cette fiche jumelle.</div>` : ''}
               </div>
               ${committee ? (()=>{
                 const addOpen = !!ui.addOtherGroupOpen[m.id];
@@ -4128,6 +4146,35 @@ const MEMBER_DOCUMENT_ITEMS = [
   { key:'docFeuilleInscription', label:'Feuille d\'inscription' },
   { key:'docCotisation', label:'Cotisation' }
 ];
+// Même liste que Code.gs (FAMILY_UPLOADABLE_DOC_KEYS) : docCotisation n'en fait jamais partie,
+// c'est un paiement suivi indépendamment sur CHAQUE fiche (y compris la jumelle « saison
+// prochaine », qui démarre volontairement à zéro), jamais un document à rediriger.
+const FAMILY_UPLOADABLE_DOC_KEYS = ['docMedicalCert', 'docCharte', 'docDroitImage', 'docFeuilleInscription'];
+// Bug critique remonté par Thomas (2026-08) : "un document déposé sur le compte famille apparaît
+// puis disparaît côté admin, ça passe d'une saison à l'autre, aucune fiabilité". Cause : quand un
+// élève est passé par « Préparer la saison », il a DEUX fiches (l'origine + une jumelle
+// linkedMemberId croisé, voir createPendingLicenseRecord) tant que la nouvelle licence n'est pas
+// validée. Tout nouveau dépôt (charte, droit à l'image, feuille d'inscription — à refournir chaque
+// saison) est redirigé CÔTÉ SERVEUR vers la fiche jumelle (voir Code.gs, resolveDocumentTargetMemberId)
+// puisque c'est elle qui deviendra active. Mais RIEN, côté admin, ne reproduisait cette même
+// redirection : les cases "Rendu(e)", les boutons "Voir/Refuser" et le badge "🆕" lisaient
+// directement la fiche affichée (l'origine OU la jumelle, selon le groupe/la bascule de saison
+// consultée) — un document pourtant bien déposé et bien présent restait donc invisible et
+// inactionnable dès qu'on regardait la fiche d'origine, ce qui donnait l'impression trompeuse d'un
+// document qui "apparaît puis disparaît selon la saison". resolveDocumentTargetMember (ci-dessous)
+// est le miroir client EXACT de la fonction serveur, et memberDocOwner en découle : tout code qui
+// lit ou modifie un des 4 documents ci-dessus doit systématiquement passer par memberDocOwner(m, key)
+// plutôt que d'utiliser `m` directement, pour que la fiche d'origine ET la fiche jumelle affichent
+// et modifient TOUJOURS le même document réel, quelle que soit celle qu'on a sous les yeux.
+function resolveDocumentTargetMember(m){
+  if(!m || !m.linkedMemberId) return m;
+  const linked = data.members.find(x=>x.id===m.linkedMemberId);
+  if(linked && linked.forNextSeason) return linked;
+  return m;
+}
+function memberDocOwner(m, key){
+  return FAMILY_UPLOADABLE_DOC_KEYS.includes(key) ? (resolveDocumentTargetMember(m) || m) : m;
+}
 // Majorité légale au jour J (pas l'âge "sportif" de memberAge, qui suit l'année civile de la
 // saison) — la Charte ne concerne que les licenciés réellement majeurs aujourd'hui.
 function memberIsMajor(m){
@@ -4151,15 +4198,20 @@ function applyMedicalCertDateOnValidation(m){
 // indiquée en déposant son fichier, pour que le club sache quelle date sera reportée sur la fiche
 // officielle dès qu'il cochera la case (voir applyMedicalCertDateOnValidation ci-dessus).
 function memberDocMedicalCertDateHintHtml(m, key){
-  if(key!=='docMedicalCert' || !m.docMedicalCertDate || m.docMedicalCert) return '';
-  return `<div style="font-size:11px; color:var(--ink-dim); margin:-2px 0 4px 26px;">Date indiquée par la famille : ${fmtDate(m.docMedicalCertDate)}</div>`;
+  const t = memberDocOwner(m, key);
+  if(key!=='docMedicalCert' || !t.docMedicalCertDate || t.docMedicalCert) return '';
+  return `<div style="font-size:11px; color:var(--ink-dim); margin:-2px 0 4px 26px;">Date indiquée par la famille : ${fmtDate(t.docMedicalCertDate)}</div>`;
 }
 // Un document a été déposé depuis l'espace famille (fileId présent) mais pas encore validé (case
 // "Rendu(e)" toujours décochée, voir choix de Thomas : validation manuelle, jamais automatique au
 // dépôt) — sert au badge "🆕" sur la fiche, pour repérer d'un coup d'œil qui a déposé quelque chose
 // sans avoir à ouvrir chaque fiche une par une.
 function memberPendingDocumentItems(m){
-  return MEMBER_DOCUMENT_ITEMS.filter(item=>item.key!=='docCotisation' && memberDocumentItemApplies(m, item) && !m[item.key] && m[item.key+'FileId']);
+  return MEMBER_DOCUMENT_ITEMS.filter(item=>{
+    if(item.key==='docCotisation' || !memberDocumentItemApplies(m, item)) return false;
+    const t = memberDocOwner(m, item.key);
+    return !t[item.key] && t[item.key+'FileId'];
+  });
 }
 function memberHasPendingDocuments(m){
   return memberPendingDocumentItems(m).length > 0;
@@ -4201,15 +4253,20 @@ async function viewMemberDocument(fileId, filename){
 // Bouton "Voir" à placer à côté d'une case à cocher de document (fiche cotisation, fiches
 // incomplètes) quand un fichier a été déposé — absent sinon (rien à voir).
 function memberDocumentViewButtonHtml(m, key, label){
-  const fileId = m[key+'FileId'];
+  // memberDocOwner : le fichier peut être porté par la fiche jumelle « saison prochaine » plutôt
+  // que par `m` lui-même (voir le commentaire au-dessus de resolveDocumentTargetMember) — data-member
+  // pointe donc vers la fiche qui porte RÉELLEMENT le fichier, pour que "Refuser" agisse toujours
+  // sur la bonne fiche, quelle que soit celle depuis laquelle ce bouton a été affiché.
+  const t = memberDocOwner(m, key);
+  const fileId = t[key+'FileId'];
   if(!fileId) return '';
-  const uploadedAt = m[key+'UploadedAt'];
-  const safeName = String(m.name||'document').trim().replace(/\s+/g,'-');
+  const uploadedAt = t[key+'UploadedAt'];
+  const safeName = String(t.name||'document').trim().replace(/\s+/g,'-');
   // Bouton "Refuser" (demande de Thomas) : présent dès qu'un fichier est déposé, qu'il soit déjà
   // validé ou encore en attente — permet aussi de rattraper une validation faite par erreur sur un
   // document qui s'avère finalement illisible/incorrect.
   return ` <button type="button" class="ghost" data-action="view-member-document" data-file="${fileId}" data-filename="doc-${escapeHtml(key)}-${escapeHtml(safeName)}" style="padding:2px 8px; font-size:11px;" title="${escapeHtml(label||'')}">📎 Voir${uploadedAt?' — '+fmtDate(uploadedAt):''}</button>
-    <button type="button" class="ghost" data-action="reject-member-document" data-member="${m.id}" data-key="${key}" style="padding:2px 8px; font-size:11px; color:var(--clay);" title="Refuser ce document — la famille devra en déposer un nouveau">❌ Refuser</button>`;
+    <button type="button" class="ghost" data-action="reject-member-document" data-member="${t.id}" data-key="${key}" style="padding:2px 8px; font-size:11px; color:var(--clay);" title="Refuser ce document — la famille devra en déposer un nouveau">❌ Refuser</button>`;
 }
 // Envoie le refus au serveur (rejectMemberDocument, Code.gs) puis met à jour l'état local et
 // rafraîchit l'overlay concerné (cotisation OU fiches incomplètes — le bouton "Refuser" apparaît
@@ -4279,7 +4336,9 @@ function memberMissingFieldKeys(m){
     .filter(f=> f.key!=='belt' || !noBelt)
     .filter(f=> f.key!=='weightCategory' || memberWeightCategoryEligible(m))
     .filter(f=> !f.majorOnly || memberIsMajor(m))
-    .filter(f=>!String(m[f.key]||'').trim())
+    // memberDocOwner : pour les 4 documents déposables (jamais docCotisation, ni les autres champs),
+    // on regarde toujours la fiche qui porte RÉELLEMENT le document — voir resolveDocumentTargetMember.
+    .filter(f=>!String(memberDocOwner(m, f.key)[f.key]||'').trim())
     .map(f=>f.key);
 }
 function memberIncompleteFieldLabels(m){
@@ -4326,7 +4385,10 @@ function incompleteFieldInputHtml(m, key){
   if(key==='phone') return `<input type="tel" data-field="phone" value="${escapeHtml(val)}" placeholder="06 12 34 56 78">`;
   if(MEMBER_DOCUMENT_ITEMS.some(it=>it.key===key)){
     const label = (MEMBER_DOCUMENT_ITEMS.find(it=>it.key===key)||{}).label || key;
-    return `<label style="display:flex; align-items:center; gap:6px; font-weight:400;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${m[key]?'checked':''}> Rendu(e)</label>${memberDocMedicalCertDateHintHtml(m, key)}${memberDocumentViewButtonHtml(m, key, label)}`;
+    // memberDocOwner : la case doit refléter l'état de la fiche qui porte RÉELLEMENT le document
+    // (voir resolveDocumentTargetMember) — jamais celui de `m` si c'est en fait sa jumelle qui l'a reçu.
+    const checked = !!memberDocOwner(m, key)[key];
+    return `<label style="display:flex; align-items:center; gap:6px; font-weight:400;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${checked?'checked':''}> Rendu(e)</label>${memberDocMedicalCertDateHintHtml(m, key)}${memberDocumentViewButtonHtml(m, key, label)}`;
   }
   return `<input type="text" data-field="${key}" value="${escapeHtml(val)}">`;
 }
@@ -4389,10 +4451,15 @@ function openIncompleteFichesOverlay(){
         // contrairement aux autres champs texte où une valeur vide n'écrase jamais une info déjà
         // présente — ici, décocher est une action volontaire (le document redevient manquant).
         if(input.dataset.boolfield){
-          if(m[field] !== input.checked){
-            const wasChecked = !!m[field];
-            m[field] = input.checked;
-            if(field==='docMedicalCert' && input.checked && !wasChecked) applyMedicalCertDateOnValidation(m);
+          // memberDocOwner : on écrit sur la fiche qui porte RÉELLEMENT le document (voir
+          // resolveDocumentTargetMember), jamais sur `m` si c'est en fait sa jumelle — sans ça, la
+          // case cochée ici ne validerait pas le bon document (celui affiché à côté, via
+          // memberDocumentViewButtonHtml, qui lui pointe déjà correctement sur la bonne fiche).
+          const t = memberDocOwner(m, field);
+          if(t[field] !== input.checked){
+            const wasChecked = !!t[field];
+            t[field] = input.checked;
+            if(field==='docMedicalCert' && input.checked && !wasChecked) applyMedicalCertDateOnValidation(t);
             changed = true;
           }
           return;
@@ -6657,11 +6724,18 @@ function renderMemberCotisationOverlay(memberId){
       <h2 style="margin-top:0;">Cotisation — ${escapeHtml(m.name)}</h2>
       <div class="group-block" style="margin:0 0 12px;">
         <div style="font-size:11px; font-weight:600; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:6px;">📋 Documents à rendre</div>
-        ${MEMBER_DOCUMENT_ITEMS.filter(it=>memberDocumentItemApplies(m, it)).map(it=>`
+        ${MEMBER_DOCUMENT_ITEMS.filter(it=>memberDocumentItemApplies(m, it)).map(it=>{
+          // memberDocOwner : la case doit refléter l'état de la fiche qui porte RÉELLEMENT le
+          // document (voir resolveDocumentTargetMember) — jamais celui de `m` si c'est en fait sa
+          // fiche jumelle « saison prochaine » qui l'a reçu (bug remonté par Thomas : un document
+          // bien déposé restait invisible/inactionnable depuis la fiche d'origine).
+          const checked = !!memberDocOwner(m, it.key)[it.key];
+          return `
           <label style="display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; cursor:pointer;">
-            <input type="checkbox" data-action="toggle-member-document" data-key="${it.key}" ${m[it.key]?'checked':''}>
+            <input type="checkbox" data-action="toggle-member-document" data-key="${it.key}" ${checked?'checked':''}>
             ${escapeHtml(it.label)}
-          </label>${memberDocMedicalCertDateHintHtml(m, it.key)}${memberDocumentViewButtonHtml(m, it.key, it.label)}`).join('')}
+          </label>${memberDocMedicalCertDateHintHtml(m, it.key)}${memberDocumentViewButtonHtml(m, it.key, it.label)}`;
+        }).join('')}
       </div>
       ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
       ${due.expected.familyPending && due.expected.familyPending.length ? `<p style="font-size:12.5px; background:#FFF6E0; border:1px solid #E8C468; color:#8a6a1a; border-radius:8px; padding:8px 10px; margin:0 0 10px; line-height:1.5;">⚠️ Attention, ${due.expected.familyPending.map(p=>`<strong>${escapeHtml(p.name)}</strong>`).join(' et ')} ${due.expected.familyPending.length>1?'ne sont pas encore inscrit(e)s':"n'est pas encore inscrit(e)"} (fiche encore dans « Licence à prendre »). En attendant, ${escapeHtml(m.name)} est facturé(e) comme si elle/il était seul(e) — le tarif famille reviendra automatiquement dès que tout le monde aura validé sa licence.</p>` : ''}
@@ -6718,9 +6792,12 @@ function renderMemberCotisationOverlay(memberId){
     </div>`;
   overlay.querySelectorAll('[data-action="toggle-member-document"]').forEach(cb=>{
     cb.addEventListener('change', ()=>{
-      const wasChecked = !!m[cb.dataset.key];
-      m[cb.dataset.key] = cb.checked;
-      if(cb.dataset.key==='docMedicalCert' && cb.checked && !wasChecked) applyMedicalCertDateOnValidation(m);
+      // memberDocOwner : on valide/dévalide TOUJOURS la fiche qui porte réellement le document
+      // (voir resolveDocumentTargetMember), jamais `m` si c'est en fait sa jumelle qui l'a reçu.
+      const t = memberDocOwner(m, cb.dataset.key);
+      const wasChecked = !!t[cb.dataset.key];
+      t[cb.dataset.key] = cb.checked;
+      if(cb.dataset.key==='docMedicalCert' && cb.checked && !wasChecked) applyMedicalCertDateOnValidation(t);
       saveData(); renderActiveTab();
     });
   });
