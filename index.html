@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -2073,6 +2074,49 @@ async function uploadPhotoToServer(file){
   }
 }
 
+// Lecture brute d'un fichier en base64, sans compression — utilisé pour les PDF (un certificat
+// médical/une charte scannée en PDF ne se redimensionne pas comme une photo JPEG via un <canvas>).
+function fileToBase64Raw(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=> reject(new Error('Lecture du fichier impossible'));
+    reader.onload = ()=> resolve({ base64: reader.result.split(',')[1], mimeType: file.type || 'application/octet-stream' });
+    reader.readAsDataURL(file);
+  });
+}
+// Prépare un document (certificat médical, charte, droit à l'image, feuille d'inscription) avant
+// envoi : une photo prise au téléphone est compressée comme pour les photos de compétition (juste un
+// peu plus grande — 2000px — pour garder le texte lisible sur un certificat), un PDF est envoyé tel
+// quel (déjà compact, et un <canvas> ne sait de toute façon pas le redimensionner).
+function prepareDocumentFileForUpload(file){
+  if(file.type && file.type.indexOf('image/')===0) return resizeImageFileToBase64(file, 2000, 0.85);
+  return fileToBase64Raw(file);
+}
+// Envoie un document déposé par une famille (espace personnel) — voir Code.gs, familyPortalUploadDocument.
+// Authentification par jeton famille + date de naissance mémorisés dans familyPortalUi, jamais un
+// sessionToken (une famille n'a pas de compte admin/prof/comptable). La case "Rendu(e)" existante
+// n'est PAS cochée automatiquement par cet envoi : validation manuelle côté club (choix de Thomas).
+async function uploadFamilyDocumentToServer(memberId, docKey, file){
+  try{
+    const { base64, mimeType } = await prepareDocumentFileForUpload(file);
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalUploadDocument', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, memberId, docKey, base64, mimeType })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      const m = (data.members||[]).find(x=>x.id===memberId);
+      if(m){ m[docKey+'FileId'] = json.fileId; m[docKey+'UploadedAt'] = json.uploadedAt; }
+      showToast('Document envoyé — en attente de vérification par le club.');
+      renderFamilyPortalTabContent();
+    } else {
+      showToast(familyPortalErrorLabel(json && json.error));
+    }
+  }catch(e){
+    showToast('Impossible d’envoyer le document (connexion ?)');
+  }
+}
+
 // Visionneuse plein écran pour une photo (podium ou compétition) : affichée DANS l'appli plutôt
 // qu'ouverte dans un nouvel onglet. window.open(dataUri, '_blank') semblait fonctionner mais ouvrait
 // en réalité une page vide ("about:blank") : les navigateurs récents (Chrome, Edge...) bloquent la
@@ -2231,6 +2275,11 @@ function ddmmyyyyFromIso(iso){
 function familyPortalErrorLabel(err){
   if(err==='wrong_birthdate') return 'Date de naissance incorrecte.';
   if(err==='invalid_link') return 'Ce lien n’est plus valide — contacte le club pour en obtenir un nouveau.';
+  if(err==='result_already_recorded') return 'Un résultat a déjà été enregistré par le club pour cette convocation — la réponse ne peut plus être modifiée.';
+  // Certaines erreurs (ex: familyPortalUploadDocument) sont déjà des phrases en français prêtes à
+  // afficher telles quelles côté serveur (comme uploadPhoto) plutôt que des codes courts sans espace
+  // ('wrong_birthdate', 'invalid_status'...) : on les distingue simplement par la présence d'un espace.
+  if(typeof err==='string' && err.indexOf(' ')>-1) return err;
   return 'Une erreur est survenue, réessaie.';
 }
 
@@ -2343,7 +2392,7 @@ function renderFamilyPortalMain(){
 function renderFamilyPortalTabContent(){
   const body = document.getElementById('fpBody');
   if(!body) return;
-  if(familyPortalUi.tab==='inscription'){ body.innerHTML = familyPortalInscriptionHtml(); }
+  if(familyPortalUi.tab==='inscription'){ body.innerHTML = familyPortalInscriptionHtml(); wireFamilyPortalInscription(body); }
   else if(familyPortalUi.tab==='presences'){ body.innerHTML = familyPortalPresencesHtml(); }
   else if(familyPortalUi.tab==='convocations'){ body.innerHTML = familyPortalConvocationsHtml(); wireFamilyPortalConvocations(body); }
   else if(familyPortalUi.tab==='calendrier'){ body.innerHTML = familyPortalCalendarHtml(); }
@@ -2359,6 +2408,39 @@ function renderFamilyPortalTabContent(){
 function familyPortalDocumentStatus(m){
   const missing = MEMBER_DOCUMENT_ITEMS.filter(item=>memberDocumentItemApplies(m, item) && !m[item.key]).map(item=>item.label);
   return { complete: missing.length===0, missing };
+}
+// Dépôt de documents (certificat médical, charte, droit à l'image, feuille d'inscription) — voir
+// demande de Thomas. La cotisation est un paiement, pas un document : jamais de dépôt de fichier
+// pour elle ici. Trois états par document : déjà validé (case cochée par le club), envoyé mais pas
+// encore vérifié (fileId présent, case non cochée — VALIDATION MANUELLE, on ne coche jamais tout
+// seul), ou pas encore déposé (contrôle d'envoi affiché).
+function familyPortalDocumentUploadHtml(m){
+  const items = MEMBER_DOCUMENT_ITEMS.filter(item=>item.key!=='docCotisation' && memberDocumentItemApplies(m, item));
+  if(!items.length) return '';
+  const blocks = items.map(item=>{
+    const validated = !!m[item.key];
+    const fileId = m[item.key+'FileId'];
+    const uploadedAt = m[item.key+'UploadedAt'];
+    let statusHtml;
+    if(validated){
+      statusHtml = `<span style="color:var(--tatami); font-weight:700;">✅ Reçu et vérifié</span>`;
+    } else if(fileId){
+      statusHtml = `<span style="color:#B08A2E; font-weight:700;">📤 Envoyé${uploadedAt?' le '+fmtDate(uploadedAt):''} — en attente de vérification par le club</span>`;
+    } else {
+      statusHtml = `<span class="fp-empty">Document à déposer</span>`;
+    }
+    const uploadControl = validated ? '' : `
+      <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+        <input type="file" accept="image/*,.pdf" data-fp-doc-input="${item.key}" data-member="${m.id}" style="font-size:12px; max-width:100%;">
+        <button class="ghost" data-fp-doc-upload="${item.key}" data-member="${m.id}" style="padding:4px 10px; font-size:12px;">📎 ${fileId?'Redéposer':'Déposer'}</button>
+      </div>`;
+    return `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--surface-2);">
+      <div style="font-size:13.5px; font-weight:600;">${escapeHtml(item.label)}</div>
+      <div style="font-size:12.5px; margin-top:2px;">${statusHtml}</div>
+      ${uploadControl}
+    </div>`;
+  }).join('');
+  return `<div style="margin-top:12px;">${blocks}</div>`;
 }
 function familyPortalInscriptionHtml(){
   const members = data.members||[];
@@ -2382,9 +2464,21 @@ function familyPortalInscriptionHtml(){
     rows.push(['N° de licence', m.licenseNumber || '—']);
     rows.push(['Cours', curGroup ? curGroup.name : '—']);
     const rowsHtml = rows.map(([label, value])=>`<div style="margin-top:8px;"><span class="field-label">${escapeHtml(label)}</span><div>${escapeHtml(String(value))}</div></div>`).join('');
-    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${statusHtml}<div style="font-size:14px; line-height:1.7;">${rowsHtml}</div></div>`;
+    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${statusHtml}${familyPortalDocumentUploadHtml(m)}<div style="font-size:14px; line-height:1.7;">${rowsHtml}</div></div>`;
   }).join('');
   return `<div class="fp-card" style="background:var(--surface-2); border-style:dashed;"><div class="fp-empty" style="font-size:13px;">📋 Merci de vérifier ces informations et de signaler à Nathalie toute modification à effectuer.</div></div>${cards}`;
+}
+function wireFamilyPortalInscription(body){
+  body.querySelectorAll('[data-fp-doc-upload]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const key = btn.dataset.fpDocUpload;
+      const memberId = btn.dataset.member;
+      const input = body.querySelector(`[data-fp-doc-input="${key}"][data-member="${memberId}"]`);
+      const file = input && input.files && input.files[0];
+      if(!file){ showToast('Choisis d’abord un fichier.'); return; }
+      uploadFamilyDocumentToServer(memberId, key, file);
+    });
+  });
 }
 
 // ---- Présences : dernières séances "pointées" (validated) de chaque enfant ----
@@ -2413,6 +2507,15 @@ function familyPortalConvocationsHtml(){
       // Les deux boutons restent toujours affichés (jamais remplacés par un simple statut figé) :
       // la famille peut changer d'avis après coup, voir demande de Thomas — chaque clic (premier ou
       // modification) revalide côté serveur et déclenche à nouveau la notification par email au club.
+      // EXCEPTION : dès qu'un résultat a été saisi par le club (r.result), on verrouille la réponse
+      // — repasser en "absent" ferait disparaître ce résultat des écrans qui filtrent sur
+      // response==='present' (bug constaté par Thomas en conditions réelles). Le serveur refuse de
+      // toute façon ce changement (voir familyPortalRespond côté Code.gs) : ceci n'est qu'un confort
+      // d'affichage cohérent, pas la seule protection.
+      if(r.result){
+        const lockedLabel = r.response==='present' ? '✅ Présent(e)' : (r.response==='absent' ? '❌ Absent(e)' : '—');
+        return `<div style="margin-bottom:10px;"><div class="fp-member-label" style="margin:0 0 4px;">${escapeHtml(m.name)}</div><div class="fp-empty" style="margin:2px 0 6px;">🔒 Résultat déjà enregistré par le club (${lockedLabel}) — réponse verrouillée.</div></div>`;
+      }
       const presentActive = r.response==='present';
       const absentActive = r.response==='absent';
       const presentStyle = presentActive ? 'background:var(--tatami-dim); border-color:var(--tatami); color:var(--tatami); font-weight:700;' : '';
@@ -3629,6 +3732,7 @@ function renderGroupsTab(){
               ${genderBadgeHtml(m.gender)}
               <span class="fs-prenom">${escapeHtml(prenom)}</span> <strong>${escapeHtml(nom)}</strong>
               ${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender, m))}</span>` : ''}
+              ${memberHasPendingDocuments(m) ? `<span class="tag" title="${escapeHtml(memberPendingDocumentItems(m).map(it=>it.label).join(', '))}" style="background:#FFF6E0; border-color:#E8C468; color:#8a6a1a;">🆕 Document déposé</span>` : ''}
             </div>
             <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
               ${m.belt ? beltSwatchHtml(m.belt, true) : ''}
@@ -3828,6 +3932,54 @@ function memberIsMajor(m){
 function memberDocumentItemApplies(m, item){
   return item.majorOnly ? memberIsMajor(m) : true;
 }
+// Un document a été déposé depuis l'espace famille (fileId présent) mais pas encore validé (case
+// "Rendu(e)" toujours décochée, voir choix de Thomas : validation manuelle, jamais automatique au
+// dépôt) — sert au badge "🆕" sur la fiche, pour repérer d'un coup d'œil qui a déposé quelque chose
+// sans avoir à ouvrir chaque fiche une par une.
+function memberPendingDocumentItems(m){
+  return MEMBER_DOCUMENT_ITEMS.filter(item=>item.key!=='docCotisation' && memberDocumentItemApplies(m, item) && !m[item.key] && m[item.key+'FileId']);
+}
+function memberHasPendingDocuments(m){
+  return memberPendingDocumentItems(m).length > 0;
+}
+// Relit un document déposé par une famille (photo ou PDF) et l'affiche (image -> visionneuse déjà
+// utilisée pour les photos de compétition) ou le télécharge (PDF -> pas d'aperçu <img> possible,
+// voir downloadDataUri) — même canal que getPhotos : jamais d'URL Drive directe côté client.
+async function viewMemberDocument(fileId, filename){
+  const s = getSession();
+  if(!s || !s.sessionToken){ showToast('Non connecté'); return; }
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'getMemberDocuments', sessionToken: s.sessionToken, fileIds:[fileId] })
+    });
+    const json = await res.json();
+    const dataUri = json && json.ok && json.documents && json.documents[fileId];
+    if(!dataUri){ showToast('Document introuvable (supprimé ?).'); return; }
+    if(dataUri.indexOf('data:image/')===0) openPhotoLightbox(dataUri, filename||'document.jpg');
+    else downloadDataUri(dataUri, filename||'document.pdf');
+  }catch(e){
+    showToast('Impossible de récupérer le document (connexion ?)');
+  }
+}
+// Bouton "Voir" à placer à côté d'une case à cocher de document (fiche cotisation, fiches
+// incomplètes) quand un fichier a été déposé — absent sinon (rien à voir).
+function memberDocumentViewButtonHtml(m, key, label){
+  const fileId = m[key+'FileId'];
+  if(!fileId) return '';
+  const uploadedAt = m[key+'UploadedAt'];
+  const safeName = String(m.name||'document').trim().replace(/\s+/g,'-');
+  return ` <button type="button" class="ghost" data-action="view-member-document" data-file="${fileId}" data-filename="doc-${escapeHtml(key)}-${escapeHtml(safeName)}" style="padding:2px 8px; font-size:11px;" title="${escapeHtml(label||'')}">📎 Voir${uploadedAt?' — '+fmtDate(uploadedAt):''}</button>`;
+}
+// Délégation générique pour [data-action="view-member-document"] : posée une fois sur `document`
+// (comme les autres délégations globales de l'appli), couvre tous les overlays présents/futurs sans
+// avoir à re-câbler à chaque rendu (contrairement aux checkboxes "Rendu(e)" elles-mêmes, re-câblées
+// à chaque overlay car elles modifient `data`).
+document.addEventListener('click', e=>{
+  const btn = e.target.closest('[data-action="view-member-document"]');
+  if(!btn) return;
+  viewMemberDocument(btn.dataset.file, btn.dataset.filename);
+});
 /* ---------------- FICHES INCOMPLÈTES (PDF récap) ---------------- */
 const INCOMPLETE_FICHE_FIELDS = [
   { key:'birthDate', label:'Date de naissance' },
@@ -3897,7 +4049,10 @@ function incompleteFieldInputHtml(m, key){
     </select>`;
   if(key==='email') return `<input type="email" data-field="email" value="${escapeHtml(val)}" placeholder="email@exemple.fr">`;
   if(key==='phone') return `<input type="tel" data-field="phone" value="${escapeHtml(val)}" placeholder="06 12 34 56 78">`;
-  if(MEMBER_DOCUMENT_ITEMS.some(it=>it.key===key)) return `<label style="display:flex; align-items:center; gap:6px; font-weight:400;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${m[key]?'checked':''}> Rendu(e)</label>`;
+  if(MEMBER_DOCUMENT_ITEMS.some(it=>it.key===key)){
+    const label = (MEMBER_DOCUMENT_ITEMS.find(it=>it.key===key)||{}).label || key;
+    return `<label style="display:flex; align-items:center; gap:6px; font-weight:400;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${m[key]?'checked':''}> Rendu(e)</label>${memberDocumentViewButtonHtml(m, key, label)}`;
+  }
   return `<input type="text" data-field="${key}" value="${escapeHtml(val)}">`;
 }
 // Fenêtre ouverte avant la génération du PDF des fiches incomplètes : on y liste toutes les fiches
@@ -6222,7 +6377,7 @@ function renderMemberCotisationOverlay(memberId){
           <label style="display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; cursor:pointer;">
             <input type="checkbox" data-action="toggle-member-document" data-key="${it.key}" ${m[it.key]?'checked':''}>
             ${escapeHtml(it.label)}
-          </label>`).join('')}
+          </label>${memberDocumentViewButtonHtml(m, it.key, it.label)}`).join('')}
       </div>
       ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
       ${due.expected.familyPending && due.expected.familyPending.length ? `<p style="font-size:12.5px; background:#FFF6E0; border:1px solid #E8C468; color:#8a6a1a; border-radius:8px; padding:8px 10px; margin:0 0 10px; line-height:1.5;">⚠️ Attention, ${due.expected.familyPending.map(p=>`<strong>${escapeHtml(p.name)}</strong>`).join(' et ')} ${due.expected.familyPending.length>1?'ne sont pas encore inscrit(e)s':"n'est pas encore inscrit(e)"} (fiche encore dans « Licence à prendre »). En attendant, ${escapeHtml(m.name)} est facturé(e) comme si elle/il était seul(e) — le tarif famille reviendra automatiquement dès que tout le monde aura validé sa licence.</p>` : ''}
