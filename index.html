@@ -7861,6 +7861,17 @@ function renderImportedCompetitionsSettings(){
         const key = calendarFederationMigrationKey(entry.federationKey, entry.date, entry.details);
         if(!data.settings.deletedFederationEventKeys.includes(key)) data.settings.deletedFederationEventKeys.push(key);
       }
+      // Même mémorisation pour le calendrier Vétérans (voir seedVeteranCalendar2026Once) — bug réel
+      // remonté par Thomas : sans ça, markDeleted seul (par id) ne protège qu'une seule fois. Si un
+      // appareil démarre avec une copie locale périmée n'ayant pas encore le drapeau de seed (ex :
+      // nouvel appareil, cache vidé), seedVeteranCalendar2026Once ne trouvait aucune trace de cette
+      // compétition dans data.calendarEvents (puisqu'elle venait d'être supprimée) et la recréait
+      // avec un id TOUT NEUF — invisible pour le tombstone par id, qui ne connaît que l'ANCIEN id.
+      if(entry && entry.source==='veteran-france-judo'){
+        if(!data.settings.deletedVeteranEventKeys) data.settings.deletedVeteranEventKeys = [];
+        const veteranKey = entry.name+'|'+entry.date;
+        if(!data.settings.deletedVeteranEventKeys.includes(veteranKey)) data.settings.deletedVeteranEventKeys.push(veteranKey);
+      }
       markDeleted('calendarEvents', btn.dataset.id);
       data.calendarEvents = (data.calendarEvents||[]).filter(e=>e.id!==btn.dataset.id);
       saveData();
@@ -12827,16 +12838,23 @@ const VETERAN_CALENDAR_2026_2027 = [
   { name:"Championnats de France Vétérans", city:"Villebon-sur-Yvette", date:"2027-06-12", dateEnd:"2027-06-13", dayLabel:"12 et 13 juin 2027", level:"France" }
 ];
 function seedVeteranCalendar2026Once(){
-  // Voir migrateFederationCalendarOnce : même double protection (drapeau désormais fiable via
-  // hasOnceFlag/setOnceFlag + vérification du contenu existant par nom+date avant d'ajouter).
-  const flag = 'veteranCalendar2026Seeded';
-  if(hasOnceFlag(flag)) return false;
+  // IMPORTANT : pas de "if(hasOnceFlag(...)) return" en tout début de fonction — même piège que
+  // migrateFederationCalendarOnce (voir son commentaire) : un appareil démarrant avec une copie
+  // locale périmée (nouvel appareil, cache vidé, Phase 1 de loadData() avant que la lecture serveur
+  // n'ait corrigé le drapeau) ne verrait pas encore ce drapeau à true, relancerait la fonction, et
+  // — SANS la protection par clé ci-dessous — recréerait avec un id tout neuf une compétition
+  // pourtant déjà supprimée délibérément par l'admin (bug réel remonté par Thomas : des compétitions
+  // vétérans supprimées "reviennent"). La vraie protection anti-doublon/anti-résurrection est donc
+  // uniquement basée sur le CONTENU : présente déjà (existingKeys) ou supprimée délibérément
+  // (deletedVeteranEventKeys, voir data-action="delete-manual-event") — jamais sur un simple drapeau.
   if(!data.calendarEvents) data.calendarEvents = [];
   const existingKeys = new Set(data.calendarEvents.filter(e=>e.source==='veteran-france-judo').map(e=>e.name+'|'+e.date));
+  const deletedVeteranKeys = new Set(data.settings.deletedVeteranEventKeys || []);
   let added = false;
   VETERAN_CALENDAR_2026_2027.forEach(v=>{
     const k = v.name+'|'+v.date;
     if(existingKeys.has(k)) return;
+    if(deletedVeteranKeys.has(k)) return; // supprimée délibérément par l'admin : ne jamais la recréer
     data.calendarEvents.push({
       id: uid(), type:'competition', name: v.name, date: v.date, dateEnd: v.dateEnd||'', city: v.city||'', address:'',
       ageCategories:['Vétérans'], validated:false, cancelled:false,
@@ -12846,7 +12864,7 @@ function seedVeteranCalendar2026Once(){
     existingKeys.add(k);
     added = true;
   });
-  setOnceFlag(flag);
+  setOnceFlag('veteranCalendar2026Seeded'); // conservé par cohérence/historique, plus utilisé comme garde-fou
   return added;
 }
 
@@ -17370,16 +17388,21 @@ function createPendingLicenseRecord(sourceMember, licenseGroupId){
   sourceMember.linkedMemberId = pending.id;
   return pending;
 }
-// Migration ponctuelle (demande de Thomas) : createPendingLicenseRecord n'a longtemps pas recopié
+// Rattrapage (demande de Thomas) : createPendingLicenseRecord n'a longtemps pas recopié
 // weightCategory sur la fiche jumelle — corrigé ci-dessus, mais uniquement pour les fiches créées
 // APRÈS le correctif. Les fiches jumelles déjà créées via "Préparer la saison" avant ce correctif
-// sont donc restées avec une catégorie de poids vide. On les rattrape une bonne fois : pour chaque
-// fiche encore reliée (linkedMemberId) dont la jumelle n'a pas de catégorie de poids, on la recopie
-// depuis la fiche d'origine — jamais l'inverse, et jamais si la jumelle en a déjà une (pour ne pas
-// écraser une valeur éventuellement déjà corrigée à la main entre-temps).
+// sont donc restées avec une catégorie de poids vide. On les rattrape : pour chaque fiche encore
+// reliée (linkedMemberId) dont la jumelle n'a pas de catégorie de poids, on la recopie depuis la
+// fiche d'origine — jamais l'inverse, et jamais si la jumelle en a déjà une (pour ne pas écraser une
+// valeur éventuellement différente saisie directement sur la jumelle).
+// PAS de garde-fou par drapeau ici (contrairement à une première version) : un admin qui saisit la
+// catégorie de poids sur la fiche d'origine APRÈS le tout premier passage de ce rattrapage (ex: au
+// moment même où il prépare la saison) se serait retrouvé bloqué pour toujours, le drapeau ayant
+// déjà été posé sans rien à recopier à ce moment-là — remonté par Thomas ("je n'ai pas l'impression
+// que le transfert se soit fait"). Cette fonction est donc volontairement idempotente et se relance
+// à chaque chargement (même philosophie que dedupeFederationMaterializedEvents) : coût négligeable,
+// et ne fait jamais rien une fois les deux fiches alignées.
 function backfillLinkedMemberWeightCategoryOnce(){
-  const flag = 'linkedMemberWeightCategoryBackfilled_v1';
-  if(hasOnceFlag(flag)) return false;
   let changed = false;
   data.members.forEach(m=>{
     if(!m.linkedMemberId || !m.weightCategory) return;
@@ -17389,7 +17412,6 @@ function backfillLinkedMemberWeightCategoryOnce(){
       changed = true;
     }
   });
-  setOnceFlag(flag);
   return changed;
 }
 async function prepareNextSeasonLicenses(){
