@@ -3366,6 +3366,18 @@ function pickChangedAttendance(currentAtt, snapshotAtt){
 // simplement ce changement local en mémoire, qui semblerait alors "annulé" après actualisation.
 // On réinjecte donc, par-dessus les données fraîchement reçues du serveur, tout élément dont la
 // version locale diffère du dernier état qu'on sait avoir réellement été confirmé synchronisé.
+//
+// BUG CRITIQUE remonté par Thomas (2026-08) : "un document déposé apparaît puis disparaît, ça
+// revient à chaque actualisation, aucune fiabilité". Cause trouvée par reproduction : la version
+// d'avant réinjectait l'objet LOCAL EN ENTIER dès qu'UN SEUL de ses champs différait du dernier
+// snapshot confirmé — y compris pour un élève dont le SEUL changement local en attente concernait
+// un champ sans rapport (ex: une note tapée juste avant de recharger, ou une catégorie de poids
+// retouchée par un correctif automatique — voir backfillLinkedMemberWeightCategoryOnce, qui tourne
+// à chaque chargement). Résultat : TOUS les autres champs de cet élève — y compris un document
+// tout juste déposé depuis l'espace famille entre deux chargements — étaient écrasés par leur
+// ancienne valeur locale, périmée. On fusionne donc désormais CHAMP PAR CHAMP : seuls les champs
+// RÉELLEMENT modifiés localement depuis le dernier snapshot confirmé l'emportent, tout le reste
+// vient de la version SERVEUR (la plus fraîche) — jamais un écrasement en bloc.
 function mergeLocalPendingArray(serverArr, localArr, snapshotArr, deletedIds){
   // Une suppression locale pas encore confirmée doit être respectée même si elle est la SEULE
   // chose en attente (localArr ne contient alors plus l'élément du tout, donc rien à "réinjecter"
@@ -3374,13 +3386,28 @@ function mergeLocalPendingArray(serverArr, localArr, snapshotArr, deletedIds){
   const base = (serverArr||[]).filter(x=> !deletedSet.has(x.id));
   if(!localArr || !localArr.length) return base;
   const snapshotMap = new Map((snapshotArr||[]).map(x=>[x.id, x]));
+  const baseMap = new Map(base.map(x=>[x.id, x]));
   const pending = localArr.filter(item=>{
     const snap = snapshotMap.get(item.id);
     return !snap || JSON.stringify(snap) !== JSON.stringify(item);
   });
   if(pending.length===0) return base;
-  const merged = new Map(base.map(x=>[x.id, x]));
-  pending.forEach(item=> merged.set(item.id, item));
+  const merged = new Map(baseMap);
+  pending.forEach(item=>{
+    const snap = snapshotMap.get(item.id);
+    const serverVersion = baseMap.get(item.id);
+    if(!serverVersion || !snap){
+      // Pas de version serveur à fusionner (élément créé localement, jamais encore synchronisé,
+      // ou déjà absent du dernier snapshot) : on garde l'objet local intégralement, comme avant.
+      merged.set(item.id, item);
+      return;
+    }
+    const mergedItem = { ...serverVersion };
+    Object.keys(item).forEach(key=>{
+      if(JSON.stringify(item[key]) !== JSON.stringify(snap[key])) mergedItem[key] = item[key];
+    });
+    merged.set(item.id, mergedItem);
+  });
   return Array.from(merged.values()).filter(x=> !deletedSet.has(x.id));
 }
 function mergeLocalPendingAttendance(serverAtt, localAtt, snapshotAtt){
@@ -3912,15 +3939,18 @@ function renderGroupsTab(){
     wrap.innerHTML = `<div class="empty">Aucun cours pour l'instant. Ajoutez votre premier cours ci-dessus — par exemple « Judo débutants » ou « Karaté ados ».</div>`;
     return;
   }
-  wrap.innerHTML = (nextSeasonView ? nextSeasonBannerHtml() : '') + data.groups.map(g=>{
-    // « Licence à prendre » est un cas particulier : TOUS ses membres ont forNextSeason=true par
-    // construction (voir createPendingLicenseRecord), donc le filtre habituel !!m.forNextSeason===
-    // nextSeasonView les masquait entièrement dès qu'on consultait la saison en cours — y compris
-    // le badge "documents déposés" sur le nom du groupe, invisible tant qu'on ne pensait pas à
-    // basculer sur la vue "saison prochaine" (remontée de Thomas : une famille dépose un document
-    // pour une fiche déjà transférée dans « Licence à prendre », mais rien ne le signale nulle part
-    // en vue courante). Ce groupe reste donc toujours visible, quelle que soit la vue.
-    const members = (isLicensePendingGroup(g) ? data.members.filter(m=>m.groupId===g.id && !m.archived) : data.members.filter(m=>m.groupId===g.id && !m.archived && !!m.forNextSeason===nextSeasonView)).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+  // « Licence à prendre » ne doit JAMAIS apparaître du tout (même en en-tête, à 0 pratiquant) en
+  // vue "saison en cours" — demande explicite de Thomas. Les groupes ordinaires, eux, existent des
+  // deux côtés (même cours reconduit d'une saison à l'autre) et continuent donc à toujours
+  // s'afficher ; seul ce groupe très particulier (dont TOUS les membres ont forNextSeason=true par
+  // construction, voir createPendingLicenseRecord) est retiré de la liste elle-même hors saison
+  // prochaine. Un essai précédent l'avait rendu visible dans les deux vues pour que le badge
+  // "documents déposés" reste repérable sans avoir à basculer de vue — mais ce n'est plus
+  // nécessaire : memberDocOwner (voir plus bas) fait maintenant remonter ce même badge directement
+  // sur la fiche D'ORIGINE de l'élève, dans son cours réel, en vue "saison en cours".
+  const visibleGroups = data.groups.filter(g=> nextSeasonView || !isLicensePendingGroup(g));
+  wrap.innerHTML = (nextSeasonView ? nextSeasonBannerHtml() : '') + visibleGroups.map(g=>{
+    const members = data.members.filter(m=>m.groupId===g.id && !m.archived && !!m.forNextSeason===nextSeasonView).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
     const draftId = 'draft-'+g.id;
     const expanded = !!ui.groupsExpanded[g.id];
     const committee = isCommitteeGroup(g);
