@@ -2574,7 +2574,22 @@ function familyPortalInscriptionHtml(){
     rows.push(['N° de licence', m.licenseNumber || '—']);
     rows.push(['Cours', curGroup ? curGroup.name : '—']);
     const rowsHtml = rows.map(([label, value])=>`<div style="margin-top:8px;"><span class="field-label">${escapeHtml(label)}</span><div>${escapeHtml(String(value))}</div></div>`).join('');
-    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${statusHtml}${familyPortalDocumentUploadHtml(m)}<div style="font-size:14px; line-height:1.7;">${rowsHtml}</div></div>`;
+    // Deux cartes séparées par élève (demande de Thomas) : les documents à rendre d'un côté (action
+    // à faire), la fiche d'information de l'autre (simple lecture/vérification) — plus lisible que
+    // tout mélanger dans une seule carte, et cohérent avec la même séparation déjà utilisée côté
+    // admin (fiche cotisation : bloc "📋 Documents à rendre" distinct du reste).
+    const docsCard = `<div class="fp-card">
+      <div class="fp-member-label">${escapeHtml(m.name)}</div>
+      <div style="font-size:11px; font-weight:600; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:6px;">📋 Documents à rendre</div>
+      ${statusHtml}
+      ${familyPortalDocumentUploadHtml(m)}
+    </div>`;
+    const ficheCard = `<div class="fp-card">
+      <div class="fp-member-label">${escapeHtml(m.name)}</div>
+      <div style="font-size:11px; font-weight:600; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:6px;">🪪 Fiche de l'élève</div>
+      <div style="font-size:14px; line-height:1.7;">${rowsHtml}</div>
+    </div>`;
+    return docsCard + ficheCard;
   }).join('');
   return `<div class="fp-card" style="background:var(--surface-2); border-style:dashed;"><div class="fp-empty" style="font-size:13px;">📋 Merci de vérifier ces informations et de signaler à Nathalie toute modification à effectuer.</div></div>${cards}`;
 }
