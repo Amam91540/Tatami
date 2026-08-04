@@ -3048,6 +3048,7 @@ function applyDataInvariants(){
     if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
     if(ensureLicensePendingGroupOnce()){ saveData(); }
     if(dedupeFederationMaterializedEvents()){ saveData(); }
+    if(backfillLinkedMemberWeightCategoryOnce()){ saveData(); }
   }
   if(removeComiteDirecteurGroupPermanently()){ saveData(); }
   if(dedupeSpecialGroup(isLicensePendingGroup)){ saveData(); }
@@ -17368,6 +17369,28 @@ function createPendingLicenseRecord(sourceMember, licenseGroupId){
   data.members.push(pending);
   sourceMember.linkedMemberId = pending.id;
   return pending;
+}
+// Migration ponctuelle (demande de Thomas) : createPendingLicenseRecord n'a longtemps pas recopié
+// weightCategory sur la fiche jumelle — corrigé ci-dessus, mais uniquement pour les fiches créées
+// APRÈS le correctif. Les fiches jumelles déjà créées via "Préparer la saison" avant ce correctif
+// sont donc restées avec une catégorie de poids vide. On les rattrape une bonne fois : pour chaque
+// fiche encore reliée (linkedMemberId) dont la jumelle n'a pas de catégorie de poids, on la recopie
+// depuis la fiche d'origine — jamais l'inverse, et jamais si la jumelle en a déjà une (pour ne pas
+// écraser une valeur éventuellement déjà corrigée à la main entre-temps).
+function backfillLinkedMemberWeightCategoryOnce(){
+  const flag = 'linkedMemberWeightCategoryBackfilled_v1';
+  if(hasOnceFlag(flag)) return false;
+  let changed = false;
+  data.members.forEach(m=>{
+    if(!m.linkedMemberId || !m.weightCategory) return;
+    const other = data.members.find(x=>x.id===m.linkedMemberId);
+    if(other && other.linkedMemberId===m.id && !other.weightCategory){
+      other.weightCategory = m.weightCategory;
+      changed = true;
+    }
+  });
+  setOnceFlag(flag);
+  return changed;
 }
 async function prepareNextSeasonLicenses(){
   const licenseGroup = data.groups.find(g=>isLicensePendingGroup(g));
