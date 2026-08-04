@@ -2113,6 +2113,10 @@ async function uploadFamilyDocumentToServer(memberId, docKey, file, certDate){
       const m = (data.members||[]).find(x=>x.id===memberId);
       if(m){
         m[docKey+'FileId'] = json.fileId; m[docKey+'UploadedAt'] = json.uploadedAt;
+        // Un nouveau dépôt repasse toujours en attente côté serveur (voir familyPortalUploadDocument),
+        // y compris pour remplacer un document déjà validé ou précédemment refusé — on reflète ça
+        // immédiatement ici plutôt que d'attendre une relecture complète.
+        m[docKey] = false; m[docKey+'Rejected'] = false;
         if(docKey==='docMedicalCert' && certDate) m.docMedicalCertDate = certDate;
       }
       showToast('Document envoyé — en attente de vérification par le club.');
@@ -2137,6 +2141,26 @@ function closePhotoLightbox(){
   const overlay = document.getElementById('photo-lightbox-overlay');
   if(overlay){ overlay.classList.remove('show'); overlay.innerHTML = ''; }
 }
+// Impression (demande de Thomas : "en plus de télécharger") : ouvre une fenêtre séparée plutôt que
+// window.print() sur la page courante, pour ne jamais imprimer le reste de l'appli en même temps que
+// la photo/le document — même prudence que le commentaire ci-dessus sur les data URI (pas de
+// NAVIGATION top-level vers une data: URI), mais ici on écrit la page nous-mêmes via document.write
+// dans une fenêtre déjà ouverte sur about:blank, ce qui reste autorisé.
+function printDataUri(dataUri){
+  if(!dataUri) return;
+  const w = window.open('', '_blank');
+  if(!w){ showToast('Le navigateur a bloqué la fenêtre d’impression — autorise les pop-ups pour ce site.'); return; }
+  const isImage = dataUri.indexOf('data:image/')===0;
+  const bodyHtml = isImage
+    ? `<img src="${dataUri}" style="max-width:100%;" onload="window.print();">`
+    : `<embed src="${dataUri}" type="application/pdf" style="width:100vw; height:100vh; border:0;">`;
+  w.document.write(`<!DOCTYPE html><html><head><title>Impression</title><meta charset="utf-8"></head><body style="margin:0;">${bodyHtml}</body></html>`);
+  w.document.close();
+  // Une image déclenche l'impression via onload (fiable). Un PDF via <embed> n'a pas d'équivalent
+  // fiable multi-navigateurs : on laisse un court délai au plugin de visualisation PDF pour se
+  // charger avant d'appeler print() sur la fenêtre elle-même.
+  if(!isImage) setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 700);
+}
 function openPhotoLightbox(dataUri, filename){
   const overlay = document.getElementById('photo-lightbox-overlay');
   if(!overlay || !dataUri) return;
@@ -2145,12 +2169,14 @@ function openPhotoLightbox(dataUri, filename){
       <img src="${dataUri}" style="max-width:100%; max-height:70vh; border-radius:10px; object-fit:contain; display:block; margin:0 auto; background:#EEE;" alt="Photo">
       <div style="display:flex; gap:10px;">
         <button class="primary" id="downloadPhotoLightboxBtn" style="flex:1;">⬇️ Télécharger</button>
+        <button class="ghost" id="printPhotoLightboxBtn" style="flex:1;">🖨️ Imprimer</button>
         <button class="ghost" id="closePhotoLightboxBtn" style="flex:1;">Fermer</button>
       </div>
     </div>`;
   overlay.classList.add('show');
   document.getElementById('closePhotoLightboxBtn').addEventListener('click', closePhotoLightbox);
   document.getElementById('downloadPhotoLightboxBtn').addEventListener('click', ()=> downloadDataUri(dataUri, filename||'photo.jpg'));
+  document.getElementById('printPhotoLightboxBtn').addEventListener('click', ()=> printDataUri(dataUri));
   overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closePhotoLightbox(); });
 }
 // Visionneuse pour un document PDF déposé (certificat médical, charte...) — demande de Thomas : "ne
@@ -2166,12 +2192,14 @@ function openDocumentPdfLightbox(dataUri, filename){
       <iframe src="${dataUri}" title="Document" style="width:100%; height:70vh; border:1px solid var(--surface-2); border-radius:10px; background:#fff;"></iframe>
       <div style="display:flex; gap:10px;">
         <button class="primary" id="downloadPhotoLightboxBtn" style="flex:1;">⬇️ Télécharger</button>
+        <button class="ghost" id="printPhotoLightboxBtn" style="flex:1;">🖨️ Imprimer</button>
         <button class="ghost" id="closePhotoLightboxBtn" style="flex:1;">Fermer</button>
       </div>
     </div>`;
   overlay.classList.add('show');
   document.getElementById('closePhotoLightboxBtn').addEventListener('click', closePhotoLightbox);
   document.getElementById('downloadPhotoLightboxBtn').addEventListener('click', ()=> downloadDataUri(dataUri, filename||'document.pdf'));
+  document.getElementById('printPhotoLightboxBtn').addEventListener('click', ()=> printDataUri(dataUri));
   overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closePhotoLightbox(); });
 }
 // Téléchargement d'une data URI : un lien <a download> temporaire, jamais ajouté visiblement à la
@@ -2440,14 +2468,16 @@ function familyPortalDocumentStatus(m){
 }
 // Dépôt de documents (certificat médical, charte, droit à l'image, feuille d'inscription) — voir
 // demande de Thomas. La cotisation est un paiement, pas un document : jamais de dépôt de fichier
-// pour elle ici. Trois états par document : déjà validé (case cochée par le club), envoyé mais pas
-// encore vérifié (fileId présent, case non cochée — VALIDATION MANUELLE, on ne coche jamais tout
-// seul), ou pas encore déposé (contrôle d'envoi affiché).
+// pour elle ici. États possibles par document : déjà validé (case cochée par le club — mais toujours
+// téléchargeable et redéposable, voir plus bas), refusé par le club (fileId effacé, drapeau
+// docXxxRejected), envoyé mais pas encore vérifié (fileId présent, case non cochée — VALIDATION
+// MANUELLE, on ne coche jamais tout seul), ou pas encore déposé.
 function familyPortalDocumentUploadHtml(m){
   const items = MEMBER_DOCUMENT_ITEMS.filter(item=>item.key!=='docCotisation' && memberDocumentItemApplies(m, item));
   if(!items.length) return '';
   const blocks = items.map(item=>{
     const validated = !!m[item.key];
+    const rejected = !!m[item.key+'Rejected'];
     const fileId = m[item.key+'FileId'];
     const uploadedAt = m[item.key+'UploadedAt'];
     const isMedicalCert = item.key==='docMedicalCert';
@@ -2455,21 +2485,36 @@ function familyPortalDocumentUploadHtml(m){
     if(validated){
       statusHtml = `<span style="color:var(--tatami); font-weight:700;">✅ Reçu et vérifié</span>`;
       if(isMedicalCert && m.docMedicalCertDate) statusHtml += `<div style="font-size:12px; margin-top:2px;">Date du certificat : ${fmtDate(m.docMedicalCertDate)}</div>`;
+    } else if(rejected){
+      // Demande de Thomas : possibilité de refuser un document déposé — la famille doit comprendre
+      // qu'elle doit en redéposer un nouveau, pas juste voir le document disparaître silencieusement.
+      statusHtml = `<span style="color:var(--clay); font-weight:700;">❌ Document refusé par le club — merci d'en déposer un nouveau</span>`;
     } else if(fileId){
       statusHtml = `<span style="color:#B08A2E; font-weight:700;">📤 Envoyé${uploadedAt?' le '+fmtDate(uploadedAt):''} — en attente de vérification par le club</span>`;
       if(isMedicalCert && m.docMedicalCertDate) statusHtml += `<div style="font-size:12px; margin-top:2px;">Date du certificat indiquée : ${fmtDate(m.docMedicalCertDate)}</div>`;
     } else {
       statusHtml = `<span class="fp-empty">Document à déposer</span>`;
     }
+    // Téléchargement du fichier déjà envoyé (demande de Thomas : "laisse le document télécharger
+    // voyant sur le compte de la famille, car là il disparaît de leur compte") : reste visible même
+    // une fois validé, au lieu de disparaître complètement dès que la case est cochée.
+    const downloadControl = fileId ? `
+      <div style="margin-top:6px;">
+        <button type="button" class="ghost" data-fp-doc-download="${item.key}" data-member="${m.id}" style="padding:4px 10px; font-size:12px;">⬇️ Télécharger mon document</button>
+      </div>` : '';
     // Date du certificat médical (voir demande de Thomas) : uniquement pour ce document, saisie par
     // la famille en même temps que le fichier — le club la recopiera sur la fiche officielle au
     // moment où il coche "Rendu(e)" (jamais avant, voir toggle-member-document côté admin).
-    const dateControl = (isMedicalCert && !validated) ? `
+    const dateControl = isMedicalCert ? `
       <div style="margin-top:6px;">
         <label style="font-size:12px; color:var(--ink-dim); display:block; margin-bottom:2px;">Date du certificat médical</label>
         <input type="date" data-fp-doc-date="${item.key}" data-member="${m.id}" value="${m.docMedicalCertDate||''}" style="font-size:12px;">
       </div>` : '';
-    const uploadControl = validated ? '' : `
+    // Le dépôt reste TOUJOURS proposé, même une fois validé (demande de Thomas : "possibilité pour
+    // les familles de modifier/importer un nouveau document, même si celui-ci a été validé") — un
+    // nouveau fichier repasse automatiquement en attente de vérification côté serveur (voir
+    // familyPortalUploadDocument, qui décoche la case et lève un éventuel refus précédent).
+    const uploadControl = `
       ${dateControl}
       <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
         <input type="file" accept="image/*,.pdf" data-fp-doc-input="${item.key}" data-member="${m.id}" style="font-size:12px; max-width:100%;">
@@ -2478,10 +2523,34 @@ function familyPortalDocumentUploadHtml(m){
     return `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--surface-2);">
       <div style="font-size:13.5px; font-weight:600;">${escapeHtml(item.label)}</div>
       <div style="font-size:12.5px; margin-top:2px;">${statusHtml}</div>
+      ${downloadControl}
       ${uploadControl}
     </div>`;
   }).join('');
   return `<div style="margin-top:12px;">${blocks}</div>`;
+}
+// Relit un document déjà déposé par la famille elle-même (demande de Thomas : rester téléchargeable
+// même une fois validé) — même canal que familyPortalGetDocuments côté serveur, jamais d'URL Drive
+// directe côté client. Toujours un téléchargement direct ici (pas de visionneuse) : contrairement à
+// l'admin, la famille connaît déjà le contenu de son propre document.
+async function downloadFamilyDocument(memberId, docKey){
+  const m = (data.members||[]).find(x=>x.id===memberId);
+  const fileId = m && m[docKey+'FileId'];
+  if(!fileId){ showToast('Document introuvable.'); return; }
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalGetDocuments', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, fileIds:[fileId] })
+    });
+    const json = await res.json();
+    const dataUri = json && json.ok && json.documents && json.documents[fileId];
+    if(!dataUri){ showToast('Document introuvable (supprimé ?).'); return; }
+    const label = (MEMBER_DOCUMENT_ITEMS.find(it=>it.key===docKey)||{}).label || docKey;
+    const ext = dataUri.indexOf('data:image/')===0 ? 'jpg' : 'pdf';
+    downloadDataUri(dataUri, `${label.trim().replace(/\s+/g,'-')}-${(m.name||'document').trim().replace(/\s+/g,'-')}.${ext}`);
+  }catch(e){
+    showToast('Impossible de récupérer le document (connexion ?)');
+  }
 }
 function familyPortalInscriptionHtml(){
   const members = data.members||[];
@@ -2525,6 +2594,9 @@ function wireFamilyPortalInscription(body){
       }
       uploadFamilyDocumentToServer(memberId, key, file, certDate);
     });
+  });
+  body.querySelectorAll('[data-fp-doc-download]').forEach(btn=>{
+    btn.addEventListener('click', ()=> downloadFamilyDocument(btn.dataset.member, btn.dataset.fpDocDownload));
   });
 }
 
@@ -4035,16 +4107,55 @@ function memberDocumentViewButtonHtml(m, key, label){
   if(!fileId) return '';
   const uploadedAt = m[key+'UploadedAt'];
   const safeName = String(m.name||'document').trim().replace(/\s+/g,'-');
-  return ` <button type="button" class="ghost" data-action="view-member-document" data-file="${fileId}" data-filename="doc-${escapeHtml(key)}-${escapeHtml(safeName)}" style="padding:2px 8px; font-size:11px;" title="${escapeHtml(label||'')}">📎 Voir${uploadedAt?' — '+fmtDate(uploadedAt):''}</button>`;
+  // Bouton "Refuser" (demande de Thomas) : présent dès qu'un fichier est déposé, qu'il soit déjà
+  // validé ou encore en attente — permet aussi de rattraper une validation faite par erreur sur un
+  // document qui s'avère finalement illisible/incorrect.
+  return ` <button type="button" class="ghost" data-action="view-member-document" data-file="${fileId}" data-filename="doc-${escapeHtml(key)}-${escapeHtml(safeName)}" style="padding:2px 8px; font-size:11px;" title="${escapeHtml(label||'')}">📎 Voir${uploadedAt?' — '+fmtDate(uploadedAt):''}</button>
+    <button type="button" class="ghost" data-action="reject-member-document" data-member="${m.id}" data-key="${key}" style="padding:2px 8px; font-size:11px; color:var(--clay);" title="Refuser ce document — la famille devra en déposer un nouveau">❌ Refuser</button>`;
 }
-// Délégation générique pour [data-action="view-member-document"] : posée une fois sur `document`
-// (comme les autres délégations globales de l'appli), couvre tous les overlays présents/futurs sans
-// avoir à re-câbler à chaque rendu (contrairement aux checkboxes "Rendu(e)" elles-mêmes, re-câblées
-// à chaque overlay car elles modifient `data`).
+// Envoie le refus au serveur (rejectMemberDocument, Code.gs) puis met à jour l'état local et
+// rafraîchit l'overlay concerné (cotisation OU fiches incomplètes — le bouton "Refuser" apparaît
+// dans les deux, voir memberDocumentViewButtonHtml) pour que les boutons Voir/Refuser disparaissent
+// et que le document redevienne "à déposer" immédiatement, sans attendre une réouverture manuelle.
+async function rejectMemberDocumentOnServer(memberId, docKey){
+  const s = getSession();
+  if(!s || !s.sessionToken){ showToast('Non connecté'); return; }
+  const label = (MEMBER_DOCUMENT_ITEMS.find(it=>it.key===docKey)||{}).label || docKey;
+  if(!(await confirmDialog(`Refuser ce document (${label}) ? Il sera effacé et la famille devra en déposer un nouveau.`, { danger:true, confirmLabel:'Refuser le document' }))) return;
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'rejectMemberDocument', sessionToken: s.sessionToken, memberId, docKey })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      const m = (data.members||[]).find(x=>x.id===memberId);
+      if(m){
+        m[docKey+'FileId'] = ''; m[docKey+'UploadedAt'] = ''; m[docKey] = false; m[docKey+'Rejected'] = true;
+        if(docKey==='docMedicalCert') m.docMedicalCertDate = '';
+      }
+      showToast('Document refusé.');
+      renderActiveTab();
+      const cotOverlay = document.getElementById('member-cotisation-overlay');
+      if(cotOverlay && cotOverlay.classList.contains('show') && m) renderMemberCotisationOverlay(m.id);
+      const ifOverlay = document.getElementById('incomplete-fiches-overlay');
+      if(ifOverlay && ifOverlay.classList.contains('show')) openIncompleteFichesOverlay();
+    } else {
+      showToast((json && json.error) || 'Échec du refus');
+    }
+  }catch(e){
+    showToast('Impossible de contacter le serveur (connexion ?)');
+  }
+}
+// Délégation générique pour [data-action="view-member-document"]/[data-action="reject-member-document"]
+// : posée une fois sur `document` (comme les autres délégations globales de l'appli), couvre tous
+// les overlays présents/futurs sans avoir à re-câbler à chaque rendu (contrairement aux checkboxes
+// "Rendu(e)" elles-mêmes, re-câblées à chaque overlay car elles modifient `data`).
 document.addEventListener('click', e=>{
   const btn = e.target.closest('[data-action="view-member-document"]');
-  if(!btn) return;
-  viewMemberDocument(btn.dataset.file, btn.dataset.filename);
+  if(btn){ viewMemberDocument(btn.dataset.file, btn.dataset.filename); return; }
+  const rejectBtn = e.target.closest('[data-action="reject-member-document"]');
+  if(rejectBtn){ rejectMemberDocumentOnServer(rejectBtn.dataset.member, rejectBtn.dataset.key); return; }
 });
 /* ---------------- FICHES INCOMPLÈTES (PDF récap) ---------------- */
 const INCOMPLETE_FICHE_FIELDS = [
