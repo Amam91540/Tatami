@@ -2146,20 +2146,53 @@ function closePhotoLightbox(){
 // la photo/le document — même prudence que le commentaire ci-dessus sur les data URI (pas de
 // NAVIGATION top-level vers une data: URI), mais ici on écrit la page nous-mêmes via document.write
 // dans une fenêtre déjà ouverte sur about:blank, ce qui reste autorisé.
+// Convertit une data URI (base64) en Blob — nécessaire pour ouvrir un PDF dans son propre onglet
+// via une URL blob: (voir printDataUri ci-dessous) : contrairement à une data URI, une URL blob:
+// n'est jamais bloquée en navigation top-level par les navigateurs.
+function dataUriToBlob(dataUri){
+  const commaIdx = dataUri.indexOf(',');
+  const header = dataUri.slice(0, commaIdx);
+  const base64 = dataUri.slice(commaIdx + 1);
+  const mimeMatch = /data:(.*?)(;base64)?$/.exec(header);
+  const mime = (mimeMatch && mimeMatch[1]) || 'application/octet-stream';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0; i<binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
 function printDataUri(dataUri){
   if(!dataUri) return;
-  const w = window.open('', '_blank');
-  if(!w){ showToast('Le navigateur a bloqué la fenêtre d’impression — autorise les pop-ups pour ce site.'); return; }
   const isImage = dataUri.indexOf('data:image/')===0;
-  const bodyHtml = isImage
-    ? `<img src="${dataUri}" style="max-width:100%;" onload="window.print();">`
-    : `<embed src="${dataUri}" type="application/pdf" style="width:100vw; height:100vh; border:0;">`;
-  w.document.write(`<!DOCTYPE html><html><head><title>Impression</title><meta charset="utf-8"></head><body style="margin:0;">${bodyHtml}</body></html>`);
-  w.document.close();
-  // Une image déclenche l'impression via onload (fiable). Un PDF via <embed> n'a pas d'équivalent
-  // fiable multi-navigateurs : on laisse un court délai au plugin de visualisation PDF pour se
-  // charger avant d'appeler print() sur la fenêtre elle-même.
-  if(!isImage) setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 700);
+  if(isImage){
+    const w = window.open('', '_blank');
+    if(!w){ showToast('Le navigateur a bloqué la fenêtre d’impression — autorise les pop-ups pour ce site.'); return; }
+    w.document.write(`<!DOCTYPE html><html><head><title>Impression</title><meta charset="utf-8"></head><body style="margin:0;"><img src="${dataUri}" style="max-width:100%;" onload="window.print();"></body></html>`);
+    w.document.close();
+    return;
+  }
+  // PDF : on ouvre le fichier LUI-MÊME (via une URL blob:, jamais bloquée comme une data URI en
+  // navigation top-level) dans un nouvel onglet, pour laisser la visionneuse PDF NATIVE du
+  // navigateur gérer l'impression. L'ancienne approche (<embed> dans une page HTML à nous, puis
+  // window.print() sur CETTE page) imprimait en réalité la page HTML conteneur — avec ses propres
+  // marges et son propre format de page — pas le PDF lui-même : un certificat tenant sur une seule
+  // page pouvait ainsi se retrouver imprimé sur 2 pages (bug réel constaté par Thomas). En ouvrant
+  // le PDF directement, c'est la visionneuse native (celle du bouton "Imprimer" qu'on voit en haut
+  // d'un PDF ouvert dans Chrome/Edge/Firefox) qui s'en charge, avec la mise en page exacte du PDF.
+  try{
+    const blobUrl = URL.createObjectURL(dataUriToBlob(dataUri));
+    const w = window.open(blobUrl, '_blank');
+    if(!w){ showToast('Le navigateur a bloqué la fenêtre d’impression — autorise les pop-ups pour ce site.'); URL.revokeObjectURL(blobUrl); return; }
+    // Court délai pour laisser la visionneuse PDF native charger le document avant d'appeler
+    // print() — même logique que l'ancien délai, mais cette fois print() s'applique à la
+    // visionneuse PDF elle-même (plein onglet), pas à une page HTML qui l'entoure.
+    setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 700);
+    // L'URL blob doit rester valide le temps que l'onglet la charge ; elle est de toute façon
+    // nettoyée par le navigateur à la fermeture de l'onglet — on la libère explicitement un peu
+    // après coup par précaution, sans risquer de la couper pendant le chargement/l'impression.
+    setTimeout(()=> URL.revokeObjectURL(blobUrl), 10000);
+  }catch(e){
+    showToast('Impossible de préparer l’impression de ce document.');
+  }
 }
 function openPhotoLightbox(dataUri, filename){
   const overlay = document.getElementById('photo-lightbox-overlay');
@@ -3861,7 +3894,14 @@ function renderGroupsTab(){
     return;
   }
   wrap.innerHTML = (nextSeasonView ? nextSeasonBannerHtml() : '') + data.groups.map(g=>{
-    const members = data.members.filter(m=>m.groupId===g.id && !m.archived && !!m.forNextSeason===nextSeasonView).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+    // « Licence à prendre » est un cas particulier : TOUS ses membres ont forNextSeason=true par
+    // construction (voir createPendingLicenseRecord), donc le filtre habituel !!m.forNextSeason===
+    // nextSeasonView les masquait entièrement dès qu'on consultait la saison en cours — y compris
+    // le badge "documents déposés" sur le nom du groupe, invisible tant qu'on ne pensait pas à
+    // basculer sur la vue "saison prochaine" (remontée de Thomas : une famille dépose un document
+    // pour une fiche déjà transférée dans « Licence à prendre », mais rien ne le signale nulle part
+    // en vue courante). Ce groupe reste donc toujours visible, quelle que soit la vue.
+    const members = (isLicensePendingGroup(g) ? data.members.filter(m=>m.groupId===g.id && !m.archived) : data.members.filter(m=>m.groupId===g.id && !m.archived && !!m.forNextSeason===nextSeasonView)).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
     const draftId = 'draft-'+g.id;
     const expanded = !!ui.groupsExpanded[g.id];
     const committee = isCommitteeGroup(g);
@@ -3869,7 +3909,7 @@ function renderGroupsTab(){
     <div class="group-block" data-group="${g.id}">
       <div class="group-title-row" data-action="toggle-group" data-id="${g.id}" style="cursor:pointer;">
         <div>
-          <div class="name">${escapeHtml(g.name)}</div>
+          <div class="name">${escapeHtml(g.name)}${groupPendingDocumentsBadgeHtml(members)}</div>
           <div class="meta">${members.length} pratiquant${members.length===1?'':'s'}</div>
         </div>
         <div style="display:flex; align-items:center; gap:10px;">
@@ -4122,6 +4162,17 @@ function memberPendingDocumentItems(m){
 }
 function memberHasPendingDocuments(m){
   return memberPendingDocumentItems(m).length > 0;
+}
+// Demande de Thomas : une alerte visible directement sur le nom du groupe (replié ou pas) dès qu'un
+// ou plusieurs élèves DEDANS ont un document déposé en attente de vérification — sinon il fallait
+// déplier chaque groupe un par un pour le découvrir (le badge "🆕 Document déposé" par élève,
+// memberHasPendingDocuments ci-dessus, n'était visible qu'une fois le groupe déjà ouvert). Le titre
+// (tooltip) liste les élèves concernés, pour répondre au même besoin qu'un coup d'œil sur la fiche
+// sans avoir à tout déplier.
+function groupPendingDocumentsBadgeHtml(members){
+  const pending = (members||[]).filter(m=>memberHasPendingDocuments(m));
+  if(!pending.length) return '';
+  return ` <span class="tag" title="${escapeHtml(pending.map(m=>m.name).join(', '))}" style="background:#FFF6E0; border-color:#E8C468; color:#8a6a1a;">🆕 ${pending.length} document${pending.length>1?'s':''}</span>`;
 }
 // Relit un document déposé par une famille (photo ou PDF) et l'affiche EN CONSULTATION (visionneuse
 // image déjà utilisée pour les photos de compétition, ou visionneuse PDF en iframe — voir
@@ -17308,7 +17359,7 @@ function createPendingLicenseRecord(sourceMember, licenseGroupId){
     archived:false, phone: sourceMember.phone||'', address: sourceMember.address||'',
     postalCode: sourceMember.postalCode||'', city: sourceMember.city||'',
     medicalCertDate: sourceMember.medicalCertDate||null, questionnaireStatus: sourceMember.questionnaireStatus||'',
-    licenseNumber: sourceMember.licenseNumber||'',
+    licenseNumber: sourceMember.licenseNumber||'', weightCategory: sourceMember.weightCategory||undefined,
     docMedicalCert: !!sourceMember.docMedicalCert, docMedicalCertFileId: sourceMember.docMedicalCertFileId||'',
     docMedicalCertUploadedAt: sourceMember.docMedicalCertUploadedAt||'', docMedicalCertDate: sourceMember.docMedicalCertDate||'',
     note: sourceMember.note||'', pendingGroupId: sourceMember.groupId, linkedMemberId: sourceMember.id,
