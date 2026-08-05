@@ -3220,6 +3220,20 @@ async function pullFromBackend({ silent = false } = {}){
         // Point de référence pour ne renvoyer, à la prochaine sauvegarde, que ce qui aura réellement
         // changé sur cet appareil depuis ce chargement (voir captureSyncedSnapshot).
         captureSyncedSnapshot();
+        // IMPORTANT : on remet aussi 'dojo-data' à jour ici, pas seulement 'dojo-synced-snapshot'.
+        // Sans ça, 'dojo-data' restait figé sur son dernier contenu écrit par saveData() (donc
+        // potentiellement très en retard — parfois plusieurs rechargements en arrière), alors que
+        // 'dojo-synced-snapshot' avançait à CHAQUE pull. Au pull SUIVANT, ce 'dojo-data' périmé était
+        // comparé à ce nouveau 'dojo-synced-snapshot' frais : le moindre champ qui avait changé côté
+        // serveur entre-temps (ex: un document déposé depuis l'espace famille) apparaissait à tort
+        // comme "modifié localement en attente" et écrasait la version serveur pourtant plus récente
+        // (voir mergeLocalPendingArray). C'est la cause exacte du "ça part et ça revient de façon
+        // imprévisible à chaque actualisation" remonté par Thomas : le résultat dépendait uniquement
+        // de si 'dojo-data' avait ou non été réécrit par un saveData() récent au moment précis du
+        // rechargement — pas du tout d'un vrai conflit. En gardant 'dojo-data' aligné sur le dernier
+        // pull réussi, il ne peut plus jamais être en retard de plus d'un cycle "édition locale pas
+        // encore envoyée" — exactement le seul cas que cette protection est censée couvrir.
+        try{ localStorage.setItem('dojo-data', JSON.stringify(data)); }catch(e){}
       }
       return { status:'ok', changed: JSON.stringify(data) !== beforeSnapshot };
     } else if(json && json.error === 'unauthorized'){
