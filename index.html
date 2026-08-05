@@ -15218,7 +15218,11 @@ function renderResultsSearchList(query){
   const listWrap = document.getElementById('results-search-list');
   if(!query){ listWrap.innerHTML = ''; return; }
   const q = query.toLowerCase();
-  const matches = data.members.filter(m=>!!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,8);
+  // !m.archived manquait ici (présent sur toutes les autres listes de recherche du même type,
+  // ex: calendrier, convocations) : une fiche d'origine archivée (relayée par sa fiche jumelle après
+  // archivage de saison) restait ainsi visible en plus de la fiche active — même élève en double
+  // dans la recherche du palmarès.
+  const matches = data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,8);
   listWrap.innerHTML = matches.map(m=>`
     <div class="convoc-row" data-action="pick-member" data-id="${m.id}" style="cursor:pointer;">
       <div class="info"><div class="n">${nameWithBoldSurname(m.name)}</div></div>
