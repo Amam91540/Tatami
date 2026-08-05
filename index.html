@@ -1986,8 +1986,29 @@ function renamePoussinetsToMiniPoussins(){
 // la saison n'ait été réellement archivée/basculée, seasonStartYear avancerait tout seul (suivi
 // automatique de la date, voir syncSeasonStartYearFromDate) et "l'année à venir" glisserait d'un an
 // de plus alors que les fiches déjà préparées sont toujours pour l'année visée au départ.
+// Si preparedSeasonYear est absent MAIS qu'un lot de fiches déjà préparées existe (member.forNextSeason
+// — bug remonté par Thomas le 05/08/2026 : ce réglage a pu être effacé par une ancienne sauvegarde
+// périmée, voir Code.gs/writeAllData), on ne retombe PAS sur nextSeasonStartYear() : ce lot a été
+// préparé pour une année précise, qui — si le vrai calendrier l'a déjà rattrapée avant tout archivage —
+// est exactement l'année EN COURS, pas l'année en cours + 1 (qui donnerait à tort l'impression que
+// "l'année à venir" est vide alors qu'un lot y est en attente de validation).
+function hasPendingNextSeasonBatch(){
+  return (data.members||[]).some(m=>m.forNextSeason);
+}
 function activeNextSeasonYear(){
-  return data.settings.preparedSeasonYear || nextSeasonStartYear();
+  if(data.settings.preparedSeasonYear) return data.settings.preparedSeasonYear;
+  if(hasPendingNextSeasonBatch()) return data.settings.seasonStartYear || autoSeasonStartYear();
+  return nextSeasonStartYear();
+}
+// Migration auto-guérissante (sans drapeau "une bonne fois pour toutes" — se relance à chaque
+// chargement tant que preparedSeasonYear reste vide, sans effet une fois réparé) : fige durablement
+// la valeur que activeNextSeasonYear() ne fait sinon que déduire à la volée, pour ne plus jamais
+// dépendre de ce recalcul une fois la vraie valeur restaurée.
+function healOrphanedPreparedSeasonYear(){
+  if(data.settings.preparedSeasonYear) return false;
+  if(!hasPendingNextSeasonBatch()) return false;
+  data.settings.preparedSeasonYear = data.settings.seasonStartYear || autoSeasonStartYear();
+  return true;
 }
 
 // URL du déploiement Apps Script — la même pour tout le monde, ce n'est plus un secret depuis
@@ -3084,6 +3105,7 @@ function applyDataInvariants(trusted){
   // rôle, voir sanitizePayloadForRole côté Code.gs).
   const session = getSession();
   if(session && session.role==='admin' && trusted){
+    if(healOrphanedPreparedSeasonYear()){ saveData(); }
     if(seedVeteranCalendar2026Once()){ saveData(); }
     if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
     if(ensureLicensePendingGroupOnce()){ saveData(); }
