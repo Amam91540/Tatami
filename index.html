@@ -1534,11 +1534,15 @@ function defaultAgeBands(){
 function defaultMembershipFees(){
   return {"disciplines": ["JUDO", "KARATE", "AIKIBUDO", "AIKIBUDO SOFT", "KOBUDO", "TAISO", "AIKI ENFANTS"], "applicableTiers": {"JUDO": ["BABY", "- 15 ANS", "+ 15 ANS"], "KARATE": ["BABY", "- 15 ANS", "+ 15 ANS"], "AIKIBUDO": ["+ 15 ANS"], "AIKIBUDO SOFT": ["+ 15 ANS"], "KOBUDO": ["+ 15 ANS"], "TAISO": ["+ 15 ANS"], "AIKI ENFANTS": ["- 15 ANS"]}, "familyRanks": [["p1", "1ère personne"], ["p2", "2ème personne de la même famille"], ["p3", "3ème personne de la même famille"], ["p4", "À partir de la 4ème personne de la même famille"]], "ageTiers": ["BABY", "- 15 ANS", "+ 15 ANS"], "locations": {"mennecois": {"grid": {"p1": {"BABY": {"JUDO": 145, "KARATE": 142}, "- 15 ANS": {"JUDO": 200, "KARATE": 197, "AIKI ENFANTS": 189}, "+ 15 ANS": {"JUDO": 225, "KARATE": 222, "AIKIBUDO": 227, "AIKIBUDO SOFT": 165, "KOBUDO": 203, "TAISO": 200}}, "p2": {"BABY": {"JUDO": 127, "KARATE": 124}, "- 15 ANS": {"JUDO": 174, "KARATE": 171, "AIKI ENFANTS": 164}, "+ 15 ANS": {"JUDO": 196, "KARATE": 193, "AIKIBUDO": 198, "AIKIBUDO SOFT": 143, "KOBUDO": 176, "TAISO": 174}}, "p3": {"BABY": {"JUDO": 96, "KARATE": 93}, "- 15 ANS": {"JUDO": 132, "KARATE": 129, "AIKI ENFANTS": 125}, "+ 15 ANS": {"JUDO": 149, "KARATE": 146, "AIKIBUDO": 151, "AIKIBUDO SOFT": 108, "KOBUDO": 133, "TAISO": 132}}, "p4": {"BABY": {"JUDO": 56, "KARATE": 49}, "- 15 ANS": {"JUDO": 56, "KARATE": 49, "AIKI ENFANTS": 40}, "+ 15 ANS": {"JUDO": 56, "KARATE": 49, "AIKIBUDO": 55, "AIKIBUDO SOFT": 48, "KOBUDO": 33, "TAISO": 56}}}, "licenseOnly": {"JUDO": 46, "KARATE": 39, "AIKIBUDO": 45, "AIKIBUDO SOFT": 38, "KOBUDO": 23, "TAISO": 46, "AIKI ENFANTS": 30}, "adhesionOnly": {"JUDO": 10, "KARATE": 10, "AIKIBUDO": 10, "AIKIBUDO SOFT": 10, "KOBUDO": 10, "TAISO": 10, "AIKI ENFANTS": 10}}, "exterieurs": {"grid": {"p1": {"BABY": {"JUDO": 160, "KARATE": 157}, "- 15 ANS": {"JUDO": 225, "KARATE": 222, "AIKI ENFANTS": 214}, "+ 15 ANS": {"JUDO": 255, "KARATE": 252, "AIKIBUDO": 257, "AIKIBUDO SOFT": 185, "KOBUDO": 238, "TAISO": 225}}, "p2": {"BABY": {"JUDO": 139, "KARATE": 136}, "- 15 ANS": {"JUDO": 196, "KARATE": 193, "AIKI ENFANTS": 186}, "+ 15 ANS": {"JUDO": 222, "KARATE": 219, "AIKIBUDO": 224, "AIKIBUDO SOFT": 160, "KOBUDO": 207, "TAISO": 196}}, "p3": {"BABY": {"JUDO": 106, "KARATE": 103}, "- 15 ANS": {"JUDO": 149, "KARATE": 146, "AIKI ENFANTS": 141}, "+ 15 ANS": {"JUDO": 168, "KARATE": 165, "AIKIBUDO": 175, "AIKIBUDO SOFT": 121, "KOBUDO": 156, "TAISO": 150}}, "p4": {"BABY": {"JUDO": 56, "KARATE": 49}, "- 15 ANS": {"JUDO": 56, "KARATE": 49, "AIKI ENFANTS": 40}, "+ 15 ANS": {"JUDO": 56, "KARATE": 49, "AIKIBUDO": 55, "AIKIBUDO SOFT": 48, "KOBUDO": 33, "TAISO": 56}}}, "licenseOnly": {"JUDO": 46, "KARATE": 39, "AIKIBUDO": 45, "AIKIBUDO SOFT": 38, "KOBUDO": 23, "TAISO": 46, "AIKI ENFANTS": 30}, "adhesionOnly": {"JUDO": 10, "KARATE": 10, "AIKIBUDO": 10, "AIKIBUDO SOFT": 10, "KOBUDO": 10, "TAISO": 10, "AIKI ENFANTS": 10}}}, "footnote": "* Licence Aikibudo et Aikibudo Soft : 45€ pour les adultes et 30€ pour les enfants de moins de 18 ans nés après le 01-09-2008 et pour les étudiants sur justificatif de la carte étudiante."};
 }
+// Bascule de saison le 1er août (demande Thomas, 05/08/2026 — auparavant le 1er septembre) : la
+// saison en cours se termine le 31 juillet, la nouvelle saison démarre dès le 1er août. Ex. le 5
+// août 2026 -> saison 2026-2027 (auparavant, avec le cap au 1er septembre, on serait resté sur
+// 2025-2026 jusqu'au 31 août).
 function autoSeasonStartYear(){
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth()+1; // 1-12
-  if(m>=9) return y;      // septembre à décembre -> la saison a commencé cette année
-  return y-1;             // janvier à août -> la saison en cours a commencé l'année précédente
+  if(m>=8) return y;      // août à décembre -> la saison a commencé cette année
+  return y-1;             // janvier à juillet -> la saison en cours a commencé l'année précédente
 }
 function ensureSettings(){
   data.settings ||= {};
@@ -1978,7 +1982,7 @@ function renamePoussinetsToMiniPoussins(){
 // Année "à venir" affichée partout dans l'UI (sélecteur de saison, bandeau, carte Réglages, badge
 // de recherche). Une fois qu'une préparation de saison a commencé (voir prepareNextSeasonLicenses),
 // on se fige sur l'année ALORS calculée (data.settings.preparedSeasonYear) plutôt que de la
-// recalculer à chaque affichage — sinon, si le vrai calendrier franchit le 1er septembre avant que
+// recalculer à chaque affichage — sinon, si le vrai calendrier franchit le 1er août avant que
 // la saison n'ait été réellement archivée/basculée, seasonStartYear avancerait tout seul (suivi
 // automatique de la date, voir syncSeasonStartYearFromDate) et "l'année à venir" glisserait d'un an
 // de plus alors que les fiches déjà préparées sont toujours pour l'année visée au départ.
@@ -1992,7 +1996,7 @@ function activeNextSeasonYear(){
 // déployer : Apps Script > Déployer > Gérer les déploiements > copier l'URL de l'application web.
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbw5azI4IySpLdWlay3kw3QgAYjhA4QjUy-grFLnEEtqZXRbS7OZyaAwg8lOzKnxUOnuiw/exec';
 
-const ROLE_LABELS = { admin: 'Administrateur', prof: 'Professeur', comptable: 'Trésorière' };
+const ROLE_LABELS = { admin: 'Administrateur', prof: 'Professeur', comptable: 'Trésorière', secretaire: 'Secrétaire' };
 
 // ---------------- PHOTOS (podium, pesées de compétition) ----------------
 // Jamais stockées dans `data` (donc jamais dans la synchro classeur classique) : seul l'id du
@@ -3545,7 +3549,13 @@ const TAB_ROLE_ACCESS = {
   // renderCompetitionsCalendarCard) : la première est financière, la seconde n'est pas cloisonnée
   // par discipline (remplacée pour lui par la carte "Calendrier de ma discipline" dans Suivi annuel).
   prof: ['presences', 'groupes', 'suivi', 'convoc', 'resultats'],
-  comptable: ['suivi']
+  comptable: ['suivi'],
+  // Secrétaire (demande Thomas) : accès à tout comme l'admin — appel, fiches/groupes,
+  // cotisations, convocations, résultats, calendrier ET l'onglet Param (coordonnées du club,
+  // tarifs, import/export...). Les seuls réglages qui restent réservés à l'admin à l'intérieur
+  // de cet onglet (archiver la saison, réinitialiser, préparer la saison suivante, comptes) sont
+  // masqués carte par carte dans applyRoleUI ci-dessous, pas en retirant l'onglet entier.
+  secretaire: ['presences', 'groupes', 'suivi', 'convoc', 'resultats', 'param']
 };
 // Petit rappel discret, en haut de page, du compte actuellement connecté — utile sur les appareils
 // partagés (tablette de bord de tapis) pour vérifier en un coup d'œil qui est connecté sans avoir à
@@ -3575,6 +3585,17 @@ function applyRoleUI(){
   if(accountsCard) accountsCard.style.display = (session && session.role === 'admin') ? '' : 'none';
   const activityLogCard = document.getElementById('activity-log-card');
   if(activityLogCard) activityLogCard.style.display = (session && session.role === 'admin') ? '' : 'none';
+  // "Gros réglages" réservés à l'admin (demande Thomas pour le rôle Secrétaire) : archiver la
+  // saison, réinitialiser toutes les données, préparer la saison suivante. Seul admin voit ces 3
+  // cartes/boutons dans l'onglet Param — masquage affichage uniquement, la vraie protection
+  // (partielle, voir commentaire dans sanitizePayloadForRole côté Code.gs) est côté serveur.
+  const isFullAdmin = !!(session && session.role === 'admin');
+  const licensePendingCard = document.getElementById('license-pending-card');
+  if(licensePendingCard) licensePendingCard.style.display = isFullAdmin ? '' : 'none';
+  const archiveCard = document.getElementById('archive-card');
+  if(archiveCard) archiveCard.style.display = isFullAdmin ? '' : 'none';
+  const resetFooter = document.querySelector('.settings-foot');
+  if(resetFooter) resetFooter.style.display = isFullAdmin ? '' : 'none';
 }
 
 document.getElementById('clubName').addEventListener('input', e=>{
@@ -3736,7 +3757,7 @@ function seasonYearForDate(dateStr){
   const parts = String(dateStr).split('-');
   const y = parseInt(parts[0],10), m = parseInt(parts[1],10);
   if(!y || !m) return null;
-  return m>=9 ? y : y-1;
+  return m>=8 ? y : y-1; // même cap au 1er août que autoSeasonStartYear()
 }
 // Avertit si la date saisie concerne une saison différente de la saison en cours, et laisse
 // l'utilisateur valider ou annuler — pour ne jamais mélanger deux saisons sans s'en rendre compte.
@@ -3747,7 +3768,7 @@ async function confirmIfSeasonMismatch(dateStr){
   if(targetYear===null || targetYear===activeYear) return true;
   return confirmDialog(`Attention : la date saisie (${fmtDate(dateStr)}) concerne la saison ${schoolYearLabel(targetYear)}, alors que la saison en cours est ${schoolYearLabel(activeYear)}.`, { confirmLabel:'Valider quand même' });
 }
-// La saison en cours suit automatiquement la date du jour (bascule le 1er septembre), sauf si
+// La saison en cours suit automatiquement la date du jour (bascule le 1er août), sauf si
 // l'utilisateur a modifié manuellement le champ "Saison — année de rentrée" dans Réglages, auquel
 // cas on respecte son choix jusqu'à ce qu'il redemande le mode automatique.
 function syncSeasonStartYearFromDate(){
@@ -5479,7 +5500,7 @@ function renderAgeSettings(){
     </div>
     <div style="margin-top:6px; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:var(--ink-dim);">
       ${data.settings.seasonAutoFollow!==false
-        ? `<span>🟢 Suit automatiquement la date du jour (bascule le 1er septembre).</span><button class="ghost icon-btn" id="forceManualSeasonBtn" style="flex-shrink:0; font-size:11.5px; padding:5px 8px;">Forcer manuellement</button>`
+        ? `<span>🟢 Suit automatiquement la date du jour (bascule le 1er août).</span><button class="ghost icon-btn" id="forceManualSeasonBtn" style="flex-shrink:0; font-size:11.5px; padding:5px 8px;">Forcer manuellement</button>`
         : `<span>🟡 Saison réglée manuellement — ne suit plus la date du jour.</span><button class="ghost icon-btn" id="resumeAutoSeasonBtn" style="flex-shrink:0; font-size:11.5px; padding:5px 8px;">↻ Revenir à l'automatique</button>`}
     </div>
     <div style="margin-top:12px;">
@@ -7075,9 +7096,9 @@ function buildAttestationHtml(m, fee, logoSrc, refDate){
   const prenom = nameParts[0]||'';
   const nom = nameParts.slice(1).join(' ').toUpperCase();
   const namePrefix = minor ? "L'enfant" : 'Mr';
-  // Toujours la saison réelle du jour (1er septembre -> 31 août), indépendamment d'un éventuel
+  // Toujours la saison réelle du jour (1er août -> 31 juillet), indépendamment d'un éventuel
   // réglage de saison manuel ailleurs dans l'app (voir seasonAutoFollow) : l'attestation de
-  // paiement ne doit jamais rester bloquée sur l'ancienne année scolaire après le 1er septembre.
+  // paiement ne doit jamais rester bloquée sur l'ancienne année scolaire après le 1er août.
   const seasonLabel = schoolYearLabel(autoSeasonStartYear());
   const F = v => (v!==undefined && v!==null) ? String(v).replace('.',',') : '—';
   const feeLine = (label, num)=> `<tr><td style="width:190px; padding:2px 0;">${label}</td><td style="padding:2px 0;">${num}</td></tr>`;
@@ -7280,9 +7301,9 @@ async function generateChequeSportAttestationPdf(){
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
   try{
-    // Toujours la saison réelle du jour (1er septembre -> 31 août), indépendamment d'un éventuel
+    // Toujours la saison réelle du jour (1er août -> 31 juillet), indépendamment d'un éventuel
     // réglage de saison manuel ailleurs dans l'app (voir seasonAutoFollow) : l'attestation Chèque
-    // Sport ne doit jamais rester bloquée sur l'ancienne année scolaire après le 1er septembre.
+    // Sport ne doit jamais rester bloquée sur l'ancienne année scolaire après le 1er août.
     const seasonLabel = schoolYearLabel(autoSeasonStartYear());
     const inscriptionDate = ui.attestationInscriptionDate || todayStr();
     const html = buildChequeSportHtml(m, ui.attestationCotisationAmount, ui.attestationCafAmount, ui.attestationPassSportAmount, inscriptionDate, seasonLabel);
@@ -8288,6 +8309,7 @@ function openAccountOverlay(account){
         <select id="accRole">
           <option value="prof" ${role==='prof'?'selected':''}>Professeur (son/ses cours uniquement, lecture seule)</option>
           <option value="comptable" ${role==='comptable'?'selected':''}>Trésorière (inscrits + cotisations uniquement)</option>
+          <option value="secretaire" ${role==='secretaire'?'selected':''}>Secrétaire (accès complet sauf réglages généraux)</option>
           <option value="admin" ${role==='admin'?'selected':''}>Administrateur (accès complet)</option>
         </select>
       </label>
@@ -9693,7 +9715,8 @@ function renderPresenceHistory(){
 
 /* ---------------- SUIVI ANNUEL ---------------- */
 function inSchoolYear(dateStr, startYear){
-  return dateStr >= `${startYear}-09-01` && dateStr <= `${startYear+1}-08-31`;
+  // Même cap au 1er août que autoSeasonStartYear()/seasonYearForDate() (demande Thomas, 05/08/2026).
+  return dateStr >= `${startYear}-08-01` && dateStr <= `${startYear+1}-07-31`;
 }
 function schoolYearLabel(startYear){
   return `${startYear}-${startYear+1}`;
@@ -10859,15 +10882,16 @@ async function generateEncaissedPaymentsPdf(){
 }
 
 /* ---------------- BORDEREAU D'ENCAISSEMENT A.M.A.M ---------------- */
-// 4 sections comptables, une par grande discipline — les cours Baby (Judo/Karaté) sont rattachés à
-// leur discipline "adulte", et le Kobudo au Aïkibudo (regroupement demandé explicitement, distinct de
-// courseToDiscipline qui sert par ailleurs aux statistiques).
-const BORDEREAU_SECTIONS = ['Judo', 'Karate', 'Aikibudo', 'Taiso'];
-// Section bordereau (Judo/Karate/Aikibudo/Taiso) d'un adhérent donné, selon son propre cours — même
-// regroupement Baby->discipline "adulte" et Kobudo->Aikibudo que pour le paiement dans son ensemble.
-// Réutilisé à la fois pour déterminer la section du bordereau (1ère personne du paiement) et pour
-// repérer, ligne par ligne dans un bordereau familial, les membres qui ne pratiquent PAS la discipline
-// du bordereau (leur discipline doit alors être précisée en Observations).
+// 5 sections comptables, une par grande discipline — les cours Baby (Judo/Karaté) sont rattachés à
+// leur discipline "adulte". Le Kobudo a sa propre section, distincte de l'Aïkibudo (demande de Thomas :
+// "ajoute le kobudo, c'est different de l'aikibudo" — un regroupement Kobudo->Aïkibudo avait été mis en
+// place ici avant, à tort).
+const BORDEREAU_SECTIONS = ['Judo', 'Karate', 'Aikibudo', 'Kobudo', 'Taiso'];
+// Section bordereau d'un adhérent donné, selon son propre cours — même regroupement Baby->discipline
+// "adulte" que pour le paiement dans son ensemble. Réutilisé à la fois pour déterminer la section du
+// bordereau (1ère personne du paiement) et pour repérer, ligne par ligne dans un bordereau familial,
+// les membres qui ne pratiquent PAS la discipline du bordereau (leur discipline doit alors être
+// précisée en Observations).
 function memberBordereauSection(m){
   if(!m) return null;
   const group = data.groups.find(g=>g.id===m.groupId);
@@ -10876,7 +10900,6 @@ function memberBordereauSection(m){
   if(!disc) return null;
   if(disc==='Baby Judo') return 'Judo';
   if(disc==='Baby Karate') return 'Karate';
-  if(disc==='Kobudo') return 'Aikibudo';
   return BORDEREAU_SECTIONS.includes(disc) ? disc : null;
 }
 function paymentBordereauSection(p){
