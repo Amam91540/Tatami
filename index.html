@@ -4014,16 +4014,20 @@ function renderGroupsTab(){
     wrap.innerHTML = `<div class="empty">Aucun cours pour l'instant. Ajoutez votre premier cours ci-dessus — par exemple « Judo débutants » ou « Karaté ados ».</div>`;
     return;
   }
-  // « Licence à prendre » ne doit JAMAIS apparaître du tout (même en en-tête, à 0 pratiquant) en
-  // vue "saison en cours" — demande explicite de Thomas. Les groupes ordinaires, eux, existent des
-  // deux côtés (même cours reconduit d'une saison à l'autre) et continuent donc à toujours
-  // s'afficher ; seul ce groupe très particulier (dont TOUS les membres ont forNextSeason=true par
-  // construction, voir createPendingLicenseRecord) est retiré de la liste elle-même hors saison
-  // prochaine. Un essai précédent l'avait rendu visible dans les deux vues pour que le badge
-  // "documents déposés" reste repérable sans avoir à basculer de vue — mais ce n'est plus
-  // nécessaire : memberDocOwner (voir plus bas) fait maintenant remonter ce même badge directement
-  // sur la fiche D'ORIGINE de l'élève, dans son cours réel, en vue "saison en cours".
-  const visibleGroups = data.groups.filter(g=> nextSeasonView || !isLicensePendingGroup(g));
+  // « Licence à prendre » : historiquement TOUS ses membres avaient forNextSeason=true (en attente
+  // pour la saison prochaine, voir createPendingLicenseRecord), donc masquer ce groupe hors vue
+  // "saison prochaine" ne faisait que cacher une tuile vide (demande explicite de Thomas, pour ne
+  // pas polluer la vue "saison en cours" avec un cours à 0 pratiquant). Depuis l'archivage de
+  // saison (qui bascule forNextSeason=false sur le lot en attente sans changer leur groupId), ce
+  // groupe peut désormais contenir des fiches dont c'est justement la saison EN COURS — il doit
+  // alors s'afficher normalement dans cette vue, sinon ces fiches deviennent invisibles dans
+  // l'onglet Cours (visibles seulement via le sélecteur "fiches incomplètes"). On ne masque donc ce
+  // groupe en vue "saison en cours" que s'il est réellement vide pour cette vue.
+  const visibleGroups = data.groups.filter(g=>{
+    if(!isLicensePendingGroup(g)) return true;
+    if(nextSeasonView) return true;
+    return data.members.some(m=>m.groupId===g.id && !m.archived && !m.forNextSeason);
+  });
   wrap.innerHTML = (nextSeasonView ? nextSeasonBannerHtml() : '') + visibleGroups.map(g=>{
     const members = data.members.filter(m=>m.groupId===g.id && !m.archived && !!m.forNextSeason===nextSeasonView).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
     const draftId = 'draft-'+g.id;
