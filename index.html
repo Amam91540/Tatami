@@ -1992,7 +1992,7 @@ function activeNextSeasonYear(){
 // déployer : Apps Script > Déployer > Gérer les déploiements > copier l'URL de l'application web.
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbw5azI4IySpLdWlay3kw3QgAYjhA4QjUy-grFLnEEtqZXRbS7OZyaAwg8lOzKnxUOnuiw/exec';
 
-const ROLE_LABELS = { admin: 'Administrateur', prof: 'Professeur', comptable: 'Comptable' };
+const ROLE_LABELS = { admin: 'Administrateur', prof: 'Professeur', comptable: 'Trésorière' };
 
 // ---------------- PHOTOS (podium, pesées de compétition) ----------------
 // Jamais stockées dans `data` (donc jamais dans la synchro classeur classique) : seul l'id du
@@ -8282,7 +8282,7 @@ function openAccountOverlay(account){
       <label>Rôle
         <select id="accRole">
           <option value="prof" ${role==='prof'?'selected':''}>Professeur (son/ses cours uniquement, lecture seule)</option>
-          <option value="comptable" ${role==='comptable'?'selected':''}>Comptable (inscrits + cotisations uniquement)</option>
+          <option value="comptable" ${role==='comptable'?'selected':''}>Trésorière (inscrits + cotisations uniquement)</option>
           <option value="admin" ${role==='admin'?'selected':''}>Administrateur (accès complet)</option>
         </select>
       </label>
@@ -9715,7 +9715,14 @@ function renderSuiviTab(){
   const archiveEl = document.getElementById('suivi-archive-view');
   if(liveEl) liveEl.style.display = archive ? 'none' : '';
   if(archiveEl) archiveEl.style.display = archive ? '' : 'none';
+  // Le taux de présence n'a rien à faire sur un compte trésorière (accès volontairement limité aux
+  // inscrits et cotisations, voir filterDataForRole côté Code.gs qui ne lui envoie de toute façon
+  // aucune séance/présence) : on masque la section entière plutôt que de laisser une carte vide.
+  const session = getSession();
+  const tauxSection = document.querySelector('[data-group="suivi-taux"]');
+  if(tauxSection) tauxSection.style.display = (session && session.role==='comptable') ? 'none' : '';
   if(archive){ renderArchiveViewSuivi(archive); return; }
+  if(session && session.role==='comptable') return;
   const groupSel = document.getElementById('suiviGroup');
 
   // Pas de cours pré-sélectionné par défaut : la liste reste masquée tant qu'on n'a pas choisi un
@@ -11352,7 +11359,14 @@ function renderCompetitionsCalendarCard(){
   // elle est correctement cloisonnée (voir renderDisciplineCalendarCard).
   const session = getSession();
   const calendarSection = document.querySelector('[data-group="suivi-calendrier"]');
-  if(session && session.role==='prof'){
+  // Pour un compte trésorière, filterDataForRole (Code.gs) renvoie volontairement calendarEvents,
+  // deletedCalendarCompetitions, competitionOverrides et competitionProfiles vides (hors du
+  // périmètre "inscrits + cotisations" convenu pour ce rôle) : getAllCalendarEntries() reconstruisait
+  // alors ce calendrier à partir du seul calendrier fédéral BRUT d'origine (COMPETITION_CALENDAR),
+  // sans les corrections/mises à jour que l'admin y a apportées depuis — d'où l'impression
+  // d'"anciens événements" au lieu des vrais. Comme pour un prof, on masque simplement cette carte,
+  // qui n'a de toute façon rien à faire dans un compte limité aux cotisations.
+  if(session && (session.role==='prof' || session.role==='comptable')){
     if(calendarSection) calendarSection.style.display = 'none';
     wrap.innerHTML = '';
     return;
