@@ -2506,7 +2506,12 @@ function familyPortalDocumentStatus(m){
 // docXxxRejected), envoyé mais pas encore vérifié (fileId présent, case non cochée — VALIDATION
 // MANUELLE, on ne coche jamais tout seul), ou pas encore déposé.
 function familyPortalDocumentUploadHtml(m){
-  const items = MEMBER_DOCUMENT_ITEMS.filter(item=>item.key!=='docCotisation' && memberDocumentItemApplies(m, item));
+  // Demande de Thomas (RGPD) : le certificat médical (donnée de santé) ne se dépose plus depuis
+  // l'espace famille pour le moment — retiré ici en plus du blocage serveur (familyPortalUploadDocument),
+  // qui reste le vrai rempart. La case "Certificat médical / Questionnaire" continue d'apparaître dans
+  // le statut "Inscription complète/incomplète" ci-dessus (familyPortalDocumentStatus) : la famille sait
+  // toujours qu'il faut le fournir, juste plus par ce canal.
+  const items = MEMBER_DOCUMENT_ITEMS.filter(item=>item.key!=='docCotisation' && item.key!=='docMedicalCert' && memberDocumentItemApplies(m, item));
   if(!items.length) return '';
   const blocks = items.map(item=>{
     const validated = !!m[item.key];
