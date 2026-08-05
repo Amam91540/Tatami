@@ -3056,7 +3056,20 @@ async function logout(){
 // Vérifications/migrations qui doivent toujours s'appliquer une fois `data` déterminé, que ce
 // soit depuis le local (phase 1 de loadData) ou après fusion avec le classeur (phase 2) — d'où
 // leur regroupement ici plutôt qu'une duplication entre les deux phases.
-function applyDataInvariants(){
+// `trusted` : true uniquement quand `data` vient d'être remplacé par la version fraîchement lue du
+// classeur (fin de pullFromBackend, "Phase 2" de loadData() — voir son commentaire). Quand loadData()
+// démarre sur le cache local (localStorage), potentiellement périmé de plusieurs jours/semaines sur un
+// appareil resté hors ligne, ce cache peut ne PAS encore connaître un tombstone posé depuis un autre
+// appareil (ex: data.settings.deletedVeteranEventKeys). Bug réel remonté par Thomas (05/08/2026) :
+// les migrations "recrée si absent" (seedVeteranCalendar2026Once, ensureLicensePendingGroupOnce...)
+// concluaient à tort que le contenu manquait, le recréaient avec un id TOUT NEUF, puis appelaient
+// saveData() IMMÉDIATEMENT — avant même que Phase 2 n'ait eu la chance de corriger quoi que ce soit.
+// Cette sauvegarde prématurée fusionnait la recréation dans le classeur (fusion par id : jamais un
+// conflit, juste des lignes qui s'additionnent) — d'où des compétitions vétérans supprimées qui
+// "reviennent en double" au fil des rechargements sur différents appareils. Tant que `trusted` est
+// false, ces migrations ne sont même pas appelées : sans conséquence puisque Phase 2 remplace `data`
+// en entier juste après et rappelle applyDataInvariants(true) sur cette version, cette fois fiable.
+function applyDataInvariants(trusted){
   ensureSettings();
   ensureKnownRecurrence();
   // cleanupUnvalidatedSessions() a été retiré de cette liste : c'était un nettoyage ponctuel
@@ -3070,7 +3083,7 @@ function applyDataInvariants(){
   // ferait que polluer sa vue locale avec des ajouts que le serveur rejette de toute façon pour ce
   // rôle, voir sanitizePayloadForRole côté Code.gs).
   const session = getSession();
-  if(session && session.role==='admin'){
+  if(session && session.role==='admin' && trusted){
     if(seedVeteranCalendar2026Once()){ saveData(); }
     if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
     if(ensureLicensePendingGroupOnce()){ saveData(); }
@@ -3104,7 +3117,7 @@ async function loadData(){
   }catch(e){
     // pas encore de données enregistrées, ou stockage indisponible — on démarre avec une ardoise vierge
   }
-  applyDataInvariants();
+  applyDataInvariants(false); // cache local potentiellement périmé — voir commentaire de la fonction
   ready = true;
   document.getElementById('clubName').value = data.clubName || '';
   document.getElementById('clubContact').value = data.clubContact || '';
@@ -3218,7 +3231,7 @@ async function pullFromBackend({ silent = false } = {}){
         }
       }
       data.groups ||= []; data.members ||= []; data.sessions ||= []; data.attendance ||= {};
-      applyDataInvariants();
+      applyDataInvariants(true); // version fraîchement lue du classeur — voir commentaire de la fonction
       if(pendingMergeOnLoad){
         // Un changement fait juste avant ce rechargement n'avait pas encore été confirmé par le
         // serveur (voir mergeLocalPendingArray) : on relance tout de suite la sauvegarde pour qu'il
