@@ -507,6 +507,23 @@
   #family-portal-link-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
   #family-portal-link-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:460px; width:100%; margin-top:5vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
   #family-portal-link-overlay .fpl-link{ font-size:12.5px; word-break:break-all; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; color:var(--ink-dim); }
+  /* Signature électronique (Charte, Droit à l'image) depuis l'espace famille — voir
+     openSignatureOverlay/initSignaturePad. Plus large que les autres overlays (rio-card classique) :
+     doit accueillir le texte légal complet en plus du/des pad(s) de signature. */
+  #signature-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:160; padding:16px; overflow:auto; }
+  #signature-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
+  #signature-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:min(94vw, 620px); width:100%; margin-top:4vh; box-shadow:0 10px 40px rgba(0,0,0,.35); }
+  #signature-overlay .sig-doc-text{ background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:14px 16px; font-size:13.5px; line-height:1.6; max-height:38vh; overflow-y:auto; }
+  #signature-overlay .sig-doc-text p{ margin:0 0 10px; }
+  #signature-overlay .sig-doc-text p:last-child{ margin-bottom:0; }
+  #signature-overlay label{ display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--ink-dim); margin:10px 0; font-weight:600; }
+  #signature-overlay input[type="text"], #signature-overlay select{
+    padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--surface-2); color:var(--ink); font-family:'Inter',sans-serif; font-size:14px;
+  }
+  #signature-overlay .sig-approve-row{ display:flex; flex-direction:row; align-items:center; gap:8px; font-weight:600; color:var(--ink); font-size:13.5px; }
+  #signature-overlay .sig-pad-wrap{ margin-top:6px; }
+  #signature-overlay canvas.sig-pad{ width:100%; height:150px; display:block; border:1.5px dashed var(--line); border-radius:10px; background:#fff; touch-action:none; cursor:crosshair; }
+  #signature-overlay .sig-pad-actions{ display:flex; justify-content:flex-end; margin-top:6px; }
   .cwa-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
   .cwa-row:last-child{ border-bottom:none; }
   .cwa-row .cwa-name{ font-size:13.5px; }
@@ -1214,6 +1231,7 @@
 <div id="account-form-overlay"></div>
 <div id="change-password-overlay"></div>
 <div id="photo-lightbox-overlay"></div>
+<div id="signature-overlay"></div>
 <div id="family-portal-link-overlay"></div>
 <div id="family-portal-app"></div>
 <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" style="display:none">
@@ -2124,26 +2142,36 @@ function prepareDocumentFileForUpload(file){
 // famille indique la date écrite sur le certificat en même temps que le fichier, pour que le club
 // n'ait plus à l'ouvrir pour la reporter à la main sur la fiche officielle (voir toggle-member-document
 // côté admin, qui recopie cette date dans medicalCertDate uniquement au moment de la validation).
+// Envoi générique base64 vers familyPortalUploadDocument — factorisé pour être appelé aussi bien
+// depuis un dépôt de fichier classique (uploadFamilyDocumentToServer) que depuis un document généré
+// par signature électronique (generateAndUploadSignedDocument, voir plus haut) : la mise à jour de
+// l'état local (fileId/uploadedAt, remise en attente) ne doit jamais être dupliquée entre les deux.
+async function sendFamilyDocumentBase64(memberId, docKey, base64, mimeType, certDate){
+  const payload = { action:'familyPortalUploadDocument', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, memberId, docKey, base64, mimeType };
+  if(docKey==='docMedicalCert' && certDate) payload.certDate = certDate;
+  const res = await fetch(BACKEND_URL, {
+    method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  });
+  const json = await res.json();
+  if(json && json.ok){
+    const m = (data.members||[]).find(x=>x.id===memberId);
+    if(m){
+      m[docKey+'FileId'] = json.fileId; m[docKey+'UploadedAt'] = json.uploadedAt;
+      // Un nouveau dépôt repasse toujours en attente côté serveur (voir familyPortalUploadDocument),
+      // y compris pour remplacer un document déjà validé ou précédemment refusé — on reflète ça
+      // immédiatement ici plutôt que d'attendre une relecture complète.
+      m[docKey] = false; m[docKey+'Rejected'] = false;
+      if(docKey==='docMedicalCert' && certDate) m.docMedicalCertDate = certDate;
+    }
+  }
+  return json;
+}
 async function uploadFamilyDocumentToServer(memberId, docKey, file, certDate){
   try{
     const { base64, mimeType } = await prepareDocumentFileForUpload(file);
-    const payload = { action:'familyPortalUploadDocument', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, memberId, docKey, base64, mimeType };
-    if(docKey==='docMedicalCert' && certDate) payload.certDate = certDate;
-    const res = await fetch(BACKEND_URL, {
-      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload)
-    });
-    const json = await res.json();
+    const json = await sendFamilyDocumentBase64(memberId, docKey, base64, mimeType, certDate);
     if(json && json.ok){
-      const m = (data.members||[]).find(x=>x.id===memberId);
-      if(m){
-        m[docKey+'FileId'] = json.fileId; m[docKey+'UploadedAt'] = json.uploadedAt;
-        // Un nouveau dépôt repasse toujours en attente côté serveur (voir familyPortalUploadDocument),
-        // y compris pour remplacer un document déjà validé ou précédemment refusé — on reflète ça
-        // immédiatement ici plutôt que d'attendre une relecture complète.
-        m[docKey] = false; m[docKey+'Rejected'] = false;
-        if(docKey==='docMedicalCert' && certDate) m.docMedicalCertDate = certDate;
-      }
       showToast('Document envoyé — en attente de vérification par le club.');
       renderFamilyPortalTabContent();
     } else {
@@ -2577,11 +2605,19 @@ function familyPortalDocumentUploadHtml(m){
     // les familles de modifier/importer un nouveau document, même si celui-ci a été validé") — un
     // nouveau fichier repasse automatiquement en attente de vérification côté serveur (voir
     // familyPortalUploadDocument, qui décoche la case et lève un éventuel refus précédent).
+    // Signature électronique (voir openSignatureOverlay) : proposée EN PLUS du dépôt de scan classique
+    // (pas en remplacement) pour la Charte et le Droit à l'image — une famille qui préfère toujours
+    // imprimer/signer/scanner sur papier garde cette option.
+    const signControl = SIGNABLE_DOC_KEYS.includes(item.key) ? `
+      <div style="margin-top:6px;">
+        <button type="button" class="ghost" data-fp-doc-sign="${item.key}" data-member="${m.id}" style="padding:4px 10px; font-size:12px;">✍️ Remplir et signer en ligne</button>
+      </div>` : '';
     const uploadControl = `
       ${dateControl}
+      ${signControl}
       <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
         <input type="file" accept="image/*,.pdf" data-fp-doc-input="${item.key}" data-member="${m.id}" style="font-size:12px; max-width:100%;">
-        <button class="ghost" data-fp-doc-upload="${item.key}" data-member="${m.id}" style="padding:4px 10px; font-size:12px;">📎 ${fileId?'Redéposer':'Déposer'}</button>
+        <button class="ghost" data-fp-doc-upload="${item.key}" data-member="${m.id}" style="padding:4px 10px; font-size:12px;">📎 ${fileId?'Redéposer un scan':'Ou déposer un scan'}</button>
       </div>`;
     return `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--surface-2);">
       <div style="font-size:13.5px; font-weight:600;">${escapeHtml(item.label)}</div>
@@ -2694,6 +2730,278 @@ function wireFamilyPortalInscription(body){
   body.querySelectorAll('[data-fp-doc-download]').forEach(btn=>{
     btn.addEventListener('click', ()=> downloadFamilyDocument(btn.dataset.member, btn.dataset.fpDocDownload));
   });
+  body.querySelectorAll('[data-fp-doc-sign]').forEach(btn=>{
+    btn.addEventListener('click', ()=> openSignatureOverlay(btn.dataset.member, btn.dataset.fpDocSign));
+  });
+}
+
+// ==================================================================================
+// SIGNATURE ÉLECTRONIQUE (Charte, Droit à l'image) — espace famille
+// ==================================================================================
+// Voir échange avec Thomas (06/08/2026) : plutôt que de scanner un papier signé à la main, la
+// famille remplit et signe directement à l'écran. Le PDF généré ici est envoyé par le MÊME canal que
+// le dépôt d'un fichier classique (sendFamilyDocumentBase64 / familyPortalUploadDocument côté
+// Code.gs, INCHANGÉ) : aucune nouvelle colonne, aucun nouveau circuit de validation/refus admin, le
+// document apparaît exactement comme un dépôt de scan aux yeux du club.
+const SIGNABLE_DOC_KEYS = ['docCharte', 'docDroitImage'];
+
+// Texte de la Charte : fidèle au document papier d'origine (6 engagements + paragraphe
+// d'acceptation) — jamais de nom substitué DANS le corps du texte (le papier d'origine n'en contient
+// pas), l'identité du signataire est ajoutée séparément juste avant la signature.
+function charteParagraphs(){
+  return [
+    'Je respecte mes partenaires, les élèves, les professeurs, les dirigeants, le personnel et les arbitres.',
+    'Je représente mon club, je me dois d’avoir un comportement exemplaire.',
+    'Je veille toujours à laisser propres les endroits où je pratique.',
+    'Je ne dois pas avoir envers mes partenaires de comportement physique ou verbal harcelant, sexiste, homophobe, raciste ou discriminatoire.',
+    'Je m’engage à appliquer et défendre le principe absolu d’égalité entre femmes et hommes.',
+    'Je prends soin de ma santé et veille à mon hygiène (corporelle, kimono, etc…).',
+    'En signant cette Charte, je m’engage à respecter tous les points cités ci-dessus, dans le cas contraire je m’expose à de possibles sanctions de la part du Comité Directeur de l’AMAM.'
+  ];
+}
+// Texte du Droit à l'image, adapté majeur/mineur (voir échange avec Thomas 06/08/2026). Ajoute par
+// rapport au document papier d'origine une durée limitée (saison en cours, renouvelable chaque
+// saison) et un droit de retrait explicite avec clause de non-discrimination — absents du papier
+// d'origine, ajoutés ici sur recommandation RGPD/CNIL pour ce type d'autorisation d'image. Le reste
+// (archives + publication interne uniquement, gratuité) reprend le texte d'origine à l'identique.
+function droitImageParagraphs(m, signerName, signerRole, clubContact){
+  const isMajor = memberIsMajor(m);
+  const seasonLabel = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
+  const name = signerName || '…';
+  const openLine = isMajor
+    ? `Je soussigné(e), ${name}, autorise l’Académie Menneçoise d’Arts Martiaux (AMAM) à utiliser mon image individuelle ou en groupe, à compter de ce jour, étant précisé que cette utilisation ne pourra concerner que les archives de l’AMAM et la publication interne (brochure, site internet, ainsi que les supports de communication et de présentation de l’AMAM).`
+    : `Je soussigné(e), ${name}, agissant en qualité de ${signerRole || 'responsable légal'} de ${m.name||''}, et certifiant être habilité(e) à donner seul(e) cette autorisation au titre de l’autorité parentale, autorise l’Académie Menneçoise d’Arts Martiaux (AMAM) à utiliser l’image individuelle ou en groupe de ${m.name||''}, à compter de ce jour, étant précisé que cette utilisation ne pourra concerner que les archives de l’AMAM et la publication interne (brochure, site internet, ainsi que les supports de communication et de présentation de l’AMAM).`;
+  return [
+    openLine,
+    'L’AMAM s’engage à ne tirer aucun bénéfice financier de son utilisation. Cette autorisation est donnée à titre gratuit.',
+    `Cette autorisation est valable pour la saison sportive ${seasonLabel} et sera à renouveler chaque saison. ${isMajor?'Je peux':'Nous pouvons'} la retirer à tout moment en écrivant au club${clubContact?' ('+clubContact+')':''}. Le refus ou le retrait de cette autorisation n’a aucune conséquence sur ${isMajor?'ma pratique':'la pratique de mon enfant'} au sein du club.`
+  ];
+}
+
+// Pad de signature minimaliste (canvas + pointer events) : pas de lissage/pression, juste assez
+// pour capturer un tracé reconnaissable — évite une dépendance externe pour un besoin aussi simple.
+function setupSignatureCanvasSize(canvas){
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(280, Math.round(rect.width)) * dpr;
+  canvas.height = Math.round(150 * dpr);
+}
+function initSignaturePad(canvas){
+  const ctx = canvas.getContext('2d');
+  ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1a1a1a';
+  let drawing = false, hasStroke = false, lastX = 0, lastY = 0;
+  function posFromEvent(e){
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: (clientX-rect.left) * (canvas.width/rect.width), y: (clientY-rect.top) * (canvas.height/rect.height) };
+  }
+  function start(e){ e.preventDefault(); drawing = true; const p = posFromEvent(e); lastX = p.x; lastY = p.y; }
+  function move(e){
+    if(!drawing) return;
+    e.preventDefault();
+    const p = posFromEvent(e);
+    ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(p.x, p.y); ctx.stroke();
+    lastX = p.x; lastY = p.y; hasStroke = true;
+  }
+  function end(){ drawing = false; }
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start, { passive:false });
+  canvas.addEventListener('touchmove', move, { passive:false });
+  canvas.addEventListener('touchend', end);
+  return {
+    clear(){ ctx.clearRect(0,0,canvas.width,canvas.height); hasStroke = false; },
+    isEmpty(){ return !hasStroke; },
+    toDataURL(){ return canvas.toDataURL('image/png'); }
+  };
+}
+
+function closeSignatureOverlay(){
+  const overlay = document.getElementById('signature-overlay');
+  if(overlay){ overlay.classList.remove('show'); overlay.innerHTML = ''; }
+}
+function buildSignatureOverlayHtml(m, docKey, isMajor){
+  const isCharte = docKey==='docCharte';
+  const docLabel = isCharte ? 'la Charte des Membres' : 'le Droit à l’image';
+  const previewParagraphs = isCharte ? charteParagraphs() : droitImageParagraphs(m, isMajor ? (m.name||'') : '', '', data.clubContact);
+  const textHtml = previewParagraphs.map(p=>`<p>${escapeHtml(p)}</p>`).join('');
+  const signer1Block = isMajor ? `
+    <label>Nom et prénom (signataire)
+      <input type="text" id="sigSigner1Name" value="${escapeHtml(m.name||'')}">
+    </label>` : `
+    <label>Nom et prénom du responsable légal
+      <input type="text" id="sigSigner1Name" placeholder="Nom Prénom">
+    </label>
+    <label>Lien avec l’enfant
+      <select id="sigSigner1Role">
+        <option value="mère">Mère</option>
+        <option value="père">Père</option>
+        <option value="tuteur légal">Tuteur légal</option>
+      </select>
+    </label>`;
+  const secondSignerToggle = (!isCharte && !isMajor) ? `
+    <div style="margin-top:14px;">
+      <button type="button" class="ghost" id="sigToggleSecondSigner" style="width:100%; padding:8px; font-size:12.5px;">+ Ajouter un second signataire (autre parent)</button>
+      <div id="sigSecondSignerBlock" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed var(--line);">
+        <label>Nom et prénom du second signataire
+          <input type="text" id="sigSigner2Name" placeholder="Nom Prénom">
+        </label>
+        <label>Lien avec l’enfant
+          <select id="sigSigner2Role">
+            <option value="père">Père</option>
+            <option value="mère">Mère</option>
+            <option value="tuteur légal">Tuteur légal</option>
+          </select>
+        </label>
+        <div class="sig-pad-wrap">
+          <canvas class="sig-pad" id="sigCanvas2"></canvas>
+          <div class="sig-pad-actions"><button type="button" class="ghost" id="sigClear2" style="padding:4px 10px; font-size:12px;">Effacer</button></div>
+        </div>
+      </div>
+    </div>` : '';
+  return `
+    <div class="rio-card">
+      <h3 style="margin:0 0 4px;">✍️ Signer ${docLabel}</h3>
+      <div class="fp-empty" style="margin-bottom:10px;">${escapeHtml(m.name||'')}</div>
+      <div class="sig-doc-text">${textHtml}</div>
+      ${signer1Block}
+      <label class="sig-approve-row">
+        <input type="checkbox" id="sigApproveCheckbox" style="width:auto;">
+        <span>J’ai lu et j’approuve ce document (« lu et approuvé »)</span>
+      </label>
+      <div class="sig-pad-wrap">
+        <div style="font-size:12.5px; color:var(--ink-dim); margin-bottom:4px;">Signature</div>
+        <canvas class="sig-pad" id="sigCanvas1"></canvas>
+        <div class="sig-pad-actions"><button type="button" class="ghost" id="sigClear1" style="padding:4px 10px; font-size:12px;">Effacer</button></div>
+      </div>
+      ${secondSignerToggle}
+      <div style="display:flex; gap:8px; margin-top:16px;">
+        <button type="button" class="ghost" id="sigCancelBtn" style="flex:1;">Annuler</button>
+        <button type="button" class="primary" id="sigSubmitBtn" style="flex:1;">Valider et envoyer</button>
+      </div>
+    </div>`;
+}
+function wireSignatureOverlay(m, docKey, isMajor){
+  const overlay = document.getElementById('signature-overlay');
+  const isCharte = docKey==='docCharte';
+  const canvas1 = overlay.querySelector('#sigCanvas1');
+  setupSignatureCanvasSize(canvas1);
+  const pad1 = initSignaturePad(canvas1);
+  overlay.querySelector('#sigClear1').addEventListener('click', ()=> pad1.clear());
+  let pad2 = null;
+  const refreshText = ()=>{
+    if(isCharte) return; // texte fixe, jamais de substitution
+    const name = overlay.querySelector('#sigSigner1Name').value.trim();
+    const roleEl = overlay.querySelector('#sigSigner1Role');
+    const role = roleEl ? roleEl.value : '';
+    overlay.querySelector('.sig-doc-text').innerHTML = droitImageParagraphs(m, name, role, data.clubContact).map(p=>`<p>${escapeHtml(p)}</p>`).join('');
+  };
+  overlay.querySelector('#sigSigner1Name').addEventListener('input', refreshText);
+  const roleSel = overlay.querySelector('#sigSigner1Role');
+  if(roleSel) roleSel.addEventListener('change', refreshText);
+  const toggleBtn = overlay.querySelector('#sigToggleSecondSigner');
+  if(toggleBtn){
+    toggleBtn.addEventListener('click', ()=>{
+      const block = overlay.querySelector('#sigSecondSignerBlock');
+      const showing = block.style.display !== 'none';
+      block.style.display = showing ? 'none' : 'block';
+      toggleBtn.textContent = showing ? '+ Ajouter un second signataire (autre parent)' : '✕ Retirer le second signataire';
+      if(!showing && !pad2){
+        const canvas2 = overlay.querySelector('#sigCanvas2');
+        setupSignatureCanvasSize(canvas2);
+        pad2 = initSignaturePad(canvas2);
+        overlay.querySelector('#sigClear2').addEventListener('click', ()=> pad2.clear());
+      }
+    });
+  }
+  overlay.querySelector('#sigCancelBtn').addEventListener('click', closeSignatureOverlay);
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closeSignatureOverlay(); });
+  overlay.querySelector('#sigSubmitBtn').addEventListener('click', async ()=>{
+    const approveEl = overlay.querySelector('#sigApproveCheckbox');
+    if(!approveEl.checked){ showToast('Coche « lu et approuvé » avant de valider.'); return; }
+    if(pad1.isEmpty()){ showToast('Signature manquante.'); return; }
+    const signer1Name = isMajor ? (overlay.querySelector('#sigSigner1Name').value.trim() || m.name || '') : overlay.querySelector('#sigSigner1Name').value.trim();
+    if(!isMajor && !signer1Name){ showToast('Indique le nom du responsable légal.'); return; }
+    const roleEl = overlay.querySelector('#sigSigner1Role');
+    const signer1Role = roleEl ? roleEl.value : '';
+    const secondBlock = overlay.querySelector('#sigSecondSignerBlock');
+    const secondBlockVisible = secondBlock && secondBlock.style.display !== 'none';
+    let signer2Name = '', signer2Role = '', sig2DataUrl = '';
+    if(secondBlockVisible && pad2 && !pad2.isEmpty()){
+      signer2Name = overlay.querySelector('#sigSigner2Name').value.trim();
+      signer2Role = overlay.querySelector('#sigSigner2Role').value;
+      if(signer2Name) sig2DataUrl = pad2.toDataURL();
+    }
+    const btn = overlay.querySelector('#sigSubmitBtn');
+    btn.disabled = true; btn.textContent = 'Génération en cours…';
+    try{
+      await generateAndUploadSignedDocument(m, docKey, {
+        signer1Name, signer1Role, signer2Name, signer2Role,
+        sig1DataUrl: pad1.toDataURL(), sig2DataUrl
+      });
+      closeSignatureOverlay();
+    } catch(err){
+      showToast('Échec de la génération/envoi : ' + (err && err.message ? err.message : err));
+      btn.disabled = false; btn.textContent = 'Valider et envoyer';
+    }
+  });
+}
+function openSignatureOverlay(memberId, docKey){
+  const m = (data.members||[]).find(x=>x.id===memberId);
+  if(!m) return;
+  const overlay = document.getElementById('signature-overlay');
+  if(!overlay) return;
+  const isMajor = memberIsMajor(m);
+  overlay.innerHTML = buildSignatureOverlayHtml(m, docKey, isMajor);
+  overlay.classList.add('show');
+  wireSignatureOverlay(m, docKey, isMajor);
+}
+// Construit le PDF final (letterhead + texte légal + identité + image(s) de signature) — même
+// idiome html2canvas+jsPDF que le reste de l'appli (voir buildChequeSportHtml), capturé hors-écran
+// via captureOffscreenSection puis posé sur une page A4 via addCanvasFitOrTop.
+function buildSignatureDocumentPdfHtml(m, docKey, fv){
+  const logoImg = document.querySelector('header.topbar .club-logo-light');
+  const logoSrc = logoImg ? logoImg.src : '';
+  const isCharte = docKey==='docCharte';
+  const title = isCharte ? 'Charte des Membres de l’AMAM' : 'Formulaire de Droit à l’Image';
+  const paragraphs = isCharte ? charteParagraphs() : droitImageParagraphs(m, fv.signer1Name, fv.signer1Role, data.clubContact);
+  const dateLabel = fmtDateLong(todayStr());
+  const signatureBlockHtml = (name, role, sigDataUrl, isFirst)=> !sigDataUrl ? '' : `
+    <div style="margin-top:${isFirst?26:20}px;">
+      <div style="font-size:12.5px;">${escapeHtml(role ? `${role} — ${name}` : name)}</div>
+      <div style="font-size:11px; color:#666; margin:2px 0 6px;">Lu et approuvé — signé électroniquement le ${dateLabel}</div>
+      <img src="${sigDataUrl}" style="height:70px; max-width:300px; display:block;">
+    </div>`;
+  return `
+    <div style="width:700px; padding:30px 46px 40px; background:#fff; box-sizing:border-box; font-family:'Inter',sans-serif; color:#1a1a1a; font-size:13.5px; line-height:1.65;">
+      <div class="recap-header" style="margin-bottom:20px;">
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="height:54px;">` : ''}
+        <div><div class="rh-club">${escapeHtml(data.clubName||'')}</div><div class="rh-sub">${escapeHtml(title)}</div></div>
+      </div>
+      ${isCharte ? `<div style="text-align:center; font-weight:800; font-size:15px; margin-bottom:18px;">${escapeHtml(title)}</div>` : ''}
+      ${paragraphs.map(p=>`<p style="margin-top:14px;">${escapeHtml(p)}</p>`).join('')}
+      <div style="margin-top:24px; font-size:12.5px;">Fait à Mennecy, le ${dateLabel}.</div>
+      ${signatureBlockHtml(fv.signer1Name, fv.signer1Role, fv.sig1DataUrl, true)}
+      ${signatureBlockHtml(fv.signer2Name, fv.signer2Role, fv.sig2DataUrl, false)}
+    </div>`;
+}
+async function generateAndUploadSignedDocument(m, docKey, fv){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    throw new Error('la génération de PDF n’a pas pu se charger — vérifie ta connexion.');
+  }
+  const html = buildSignatureDocumentPdfHtml(m, docKey, fv);
+  const canvas = await captureOffscreenSection(html, '', 700);
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit:'pt', format:'a4' });
+  addCanvasFitOrTop(pdf, canvas, 24);
+  const dataUri = pdf.output('datauristring');
+  const base64 = dataUri.slice(dataUri.indexOf(',')+1);
+  const json = await sendFamilyDocumentBase64(m.id, docKey, base64, 'application/pdf');
+  if(!(json && json.ok)) throw new Error(familyPortalErrorLabel(json && json.error));
+  showToast('Document signé et envoyé — en attente de vérification par le club.');
+  renderFamilyPortalTabContent();
 }
 
 // ---- Présences : dernières séances "pointées" (validated) de chaque enfant ----
@@ -3348,8 +3656,8 @@ function triggerAutoSync(){
 }
 let saveInFlight = false;
 let savePendingAfter = false;
-// Champs additionnels ponctuels à glisser dans le PROCHAIN envoi (ex: resetBordereauLog, voir
-// deleteAllBordereaux) — mémorisés à part de `data` (qui ne les contient jamais) pour survivre à un
+// Champs additionnels ponctuels à glisser dans le PROCHAIN envoi (ex: resetActivityLog, voir
+// renderActivityLogCard) — mémorisés à part de `data` (qui ne les contient jamais) pour survivre à un
 // report si une sauvegarde était déjà en cours au moment de l'appel (voir savePendingAfter juste en
 // dessous : le renvoi automatique appelle saveData() sans arguments, donc sans ce drapeau si on ne
 // le conservait pas ici).
@@ -6712,45 +7020,6 @@ async function deletePayment(paymentId, onDeleted){
   if(typeof onDeleted === 'function') onDeleted();
   showToast('Paiement supprimé');
 }
-// Supprime TOUTES les cotisations (tous élèves, toutes saisons confondues) — voir demande de
-// Thomas : supprimer des lignes à la main dans le classeur Google Sheets ne suffit pas, elles
-// réapparaissent dès qu'un appareil se resynchronise, car la protection anti-perte de données
-// (voir pickChangedById/saveData) ne renvoie que ce qui a changé depuis le dernier chargement de CET
-// appareil — sans savoir qu'une suppression a eu lieu ailleurs, il continue de renvoyer sa propre
-// copie locale, non supprimée. Passer par markDeleted() ici (comme deletePayment) trace la
-// suppression correctement (data.deletedIds.payments) pour qu'elle soit respectée par tous les
-// appareils lors de leur prochaine synchronisation, au lieu d'être silencieusement annulée.
-async function deleteAllPayments(){
-  const count = (data.payments||[]).length;
-  if(count===0){ showToast('Aucune cotisation enregistrée à supprimer'); return; }
-  if(!(await confirmDialog(`Supprimer DÉFINITIVEMENT les ${count} cotisation${count===1?'':'s'} enregistrée${count===1?'':'s'} dans l'application (tous élèves et toutes saisons confondus) ? Les fiches élèves et les cours ne sont pas touchés, seuls les paiements le sont. Cette action est irréversible depuis l'application — seule la sauvegarde quotidienne du classeur (si activée) permettrait de les retrouver.`, { danger:true, confirmLabel:`Supprimer les ${count} cotisations` }))) return;
-  (data.payments||[]).forEach(p=> markDeleted('payments', p.id));
-  data.payments = [];
-  saveData();
-  renderActiveTab();
-  showToast(`${count} cotisation${count===1?'':'s'} supprimée${count===1?'':'s'} définitivement`);
-}
-// Supprime TOUS les bordereaux de banque (journal des dépôts déjà générés). Contrairement aux
-// cotisations, le journal des bordereaux (data.settings.bordereauLog) n'est PAS une collection avec
-// tombstones individuels (comme payments/groups/members) : c'est un simple objet JSON dans les
-// réglages, fusionné côté serveur par union d'id (voir mergeJsonArrayById dans Code.gs) pour ne
-// jamais perdre l'entrée générée par un autre appareil — ce qui, par construction, empêche aussi de
-// le vider complètement depuis un seul appareil (un tableau vide envoyé se fait "réunioner" avec
-// l'ancien, qui revient donc en entier). Le drapeau resetBordereauLog (voir saveData/writeAllData
-// côté Code.gs) court-circuite exprès cette protection pour CETTE action précise, réservée à
-// l'admin. Nécessite d'avoir redéployé la dernière version de Code.gs pour fonctionner.
-async function deleteAllBordereaux(){
-  const count = (data.settings.bordereauLog||[]).length;
-  if(count===0){ showToast('Aucun bordereau enregistré à supprimer'); return; }
-  if(!(await confirmDialog(`Supprimer DÉFINITIVEMENT les ${count} bordereau${count===1?'':'x'} de banque enregistré${count===1?'':'s'} ? Les paiements déjà encaissés ne sont pas supprimés, seul leur rattachement à un bordereau est retiré (tu pourras les rattacher à un nouveau bordereau si besoin). Cette action est irréversible depuis l'application.`, { danger:true, confirmLabel:`Supprimer les ${count} bordereaux` }))) return;
-  (data.payments||[]).forEach(p=>{ p.bordereauFolio = null; p.bordereauSection = null; });
-  data.settings.bordereauLog = [];
-  data.settings.bordereauFolioCounters = {};
-  await saveData({ extraPayloadFields: { resetBordereauLog: true } });
-  renderActiveTab();
-  showToast(`${count} bordereau${count===1?'':'x'} supprimé${count===1?'':'s'} définitivement`);
-}
-
 function memberDueBadgeHtml(m){
   const due = memberRemainingDue(m);
   if(due.remaining===null) return `<span class="tag" style="background:#EEE; color:#888;">Tarif non calculable</span>`;
@@ -17758,16 +18027,6 @@ function renderArchiveCard(){
     <button class="danger" id="archiveSeasonBtn" style="width:100%;">Archiver la saison en cours et tout vider</button>
     <button class="ghost" id="importArchiveBtn" style="width:100%; margin-top:8px;">Importer une archive (.json)</button>
     <input type="file" id="importArchiveInput" accept=".json" style="display:none">
-    <div style="margin-top:16px; padding-top:14px; border-top:1px dashed var(--line);">
-      <p style="font-size:12px; color:var(--ink-dim); margin:0 0 8px; line-height:1.5;">
-        Supprimer une ligne de cotisation directement dans le classeur Google Sheets ne suffit pas : elle réapparaît dès qu'un appareil se resynchronise (protection anti-perte de données de l'appli). Utilise ce bouton pour supprimer définitivement <strong>toutes</strong> les cotisations enregistrées, quel que soit l'élève ou la saison.
-      </p>
-      <button class="danger" id="deleteAllPaymentsBtn" style="width:100%;">🗑️ Supprimer TOUTES les cotisations (${(data.payments||[]).length})</button>
-      <p style="font-size:12px; color:var(--ink-dim); margin:12px 0 8px; line-height:1.5;">
-        Même chose pour les bordereaux de banque déjà générés : les paiements concernés restent enregistrés, seul leur rattachement à un bordereau est retiré.
-      </p>
-      <button class="danger" id="deleteAllBordereauxBtn" style="width:100%;">🗑️ Supprimer TOUS les bordereaux (${(data.settings.bordereauLog||[]).length})</button>
-    </div>
     ${archives.length===0 ? '<div class="empty" style="margin-top:12px;">Aucune saison archivée pour l’instant.</div>' : archives.map(a=>{
       const expanded = !!ui.archiveExpanded[a.id];
       return `
@@ -17788,8 +18047,6 @@ function renderArchiveCard(){
     }).join('')}
   `;
   document.getElementById('archiveSeasonBtn').addEventListener('click', archiveCurrentSeason);
-  document.getElementById('deleteAllPaymentsBtn').addEventListener('click', deleteAllPayments);
-  document.getElementById('deleteAllBordereauxBtn').addEventListener('click', deleteAllBordereaux);
   document.getElementById('importArchiveBtn').addEventListener('click', ()=> document.getElementById('importArchiveInput').click());
   document.getElementById('importArchiveInput').addEventListener('change', importArchiveFile);
   document.getElementById('toggleArchiveCardHiddenBtn').addEventListener('click', ()=>{ saveArchiveCardHidden(true); renderArchiveCard(); });
