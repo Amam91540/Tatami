@@ -3228,6 +3228,12 @@ async function pullFromBackend({ silent = false } = {}){
         }
         delete data.sessionInfo;
       }
+      // Statut de sauvegarde (admin seulement, voir Code.gs/getBackupStatus) : état éphémère
+      // d'affichage, gardé sur `ui` (jamais persisté ni renvoyé au serveur) plutôt que sur `data`.
+      if(json.backupStatus){
+        ui.backupStatus = json.backupStatus;
+        delete data.backupStatus;
+      }
       if(local && typeof local === 'object'){
         Object.keys(local).forEach(key=>{
           if(data[key] === undefined) data[key] = local[key];
@@ -8122,6 +8128,23 @@ function renderBackendSettings(){
   const wrap = document.getElementById('backend-settings');
   if(!wrap) return;
   const session = getSession();
+  const isAdmin = session && session.role==='admin';
+  // Sauvegarde automatique (voir Code.gs/backupSpreadsheet, déclencheur quotidien à 3h + copie
+  // immédiate avant les opérations de saison à risque) : visible seulement en admin, puisque le
+  // serveur ne renvoie backupStatus que pour ce rôle (voir doPost/'read').
+  const bs = ui.backupStatus;
+  const backupBlockHtml = !isAdmin ? '' : `
+    <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
+      <h2 style="margin:0 0 6px;">Sauvegarde du classeur</h2>
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 10px; line-height:1.5;">
+        Copie complète et datée du classeur dans un dossier Drive « Sauvegardes Tatami », conservée ${bs?bs.retentionDays:30} jours — automatique chaque nuit à 3h, en plus d'une copie prise juste avant un archivage ou une préparation de saison.
+      </p>
+      <p style="font-size:13px; margin:0 0 10px;">
+        Dernière sauvegarde : <strong>${bs && bs.lastBackupAt ? fmtActivityDateTime(bs.lastBackupAt) : 'aucune pour l’instant'}</strong>
+      </p>
+      <button class="ghost" id="backupNowSettingsBtn" style="width:100%;">💾 Sauvegarder maintenant</button>
+    </div>
+  `;
   wrap.innerHTML = `
     <h2>Compte</h2>
     <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">
@@ -8131,7 +8154,15 @@ function renderBackendSettings(){
     <button class="ghost" id="pushBackendBtn" style="width:100%; margin-top:8px;">Envoyer mes données actuelles vers le classeur</button>
     <button class="ghost" id="pullBackendBtn" style="width:100%; margin-top:8px;">Charger les données du classeur (remplace celles de ce téléphone)</button>
     <button class="ghost icon-btn" id="logoutSettingsBtn" style="width:100%; margin-top:8px; color:var(--clay);">Se déconnecter</button>
+    ${backupBlockHtml}
   `;
+  const backupBtn = document.getElementById('backupNowSettingsBtn');
+  if(backupBtn) backupBtn.addEventListener('click', async ()=>{
+    backupBtn.disabled = true; backupBtn.textContent = 'Sauvegarde en cours…';
+    const ok = await backupNow();
+    showToast(ok ? 'Sauvegarde effectuée' : 'Échec de la sauvegarde (connexion ?)');
+    renderBackendSettings();
+  });
   document.getElementById('pushBackendBtn').addEventListener('click', async ()=>{
     const s = getSession();
     if(!s || !s.sessionToken){ showToast('Non connecté'); return; }
@@ -17073,12 +17104,35 @@ function archiveMemberById(archive, memberId){
   return archive.members.find(x=>x.id===memberId) || null;
 }
 
+// Sauvegarde immédiate du classeur (copie Drive datée, voir Code.gs/backupSpreadsheet), en plus du
+// déclencheur quotidien de 3h — demande de Thomas suite aux incidents de fiabilité rencontrés cette
+// saison lors des changements de saison. Volontairement silencieuse en cas d'échec (ex: hors ligne) :
+// une sauvegarde manquée ne doit jamais empêcher l'admin de continuer une opération déjà validée par
+// une boîte de confirmation, seulement lui donner un filet de sécurité en plus quand c'est possible.
+async function backupNow(){
+  const s = getSession();
+  if(!s || !s.sessionToken) return false;
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'backupNow', sessionToken: s.sessionToken })
+    });
+    const json = await res.json();
+    if(json && json.ok){ ui.backupStatus = { lastBackupAt: json.at, retentionDays: (ui.backupStatus||{}).retentionDays||30 }; return true; }
+  }catch(e){ /* silencieux, voir commentaire ci-dessus */ }
+  return false;
+}
+
 async function archiveCurrentSeason(){
   const defaultName = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
   const name = prompt('Nom de cette saison (ex. 2025-2026) :', defaultName);
   if(!name || !name.trim()) return;
   const hasNextSeasonPrep = data.members.some(m=>m.forNextSeason);
   if(!(await confirmDialog(`Archiver la saison « ${name.trim()} » puis vider les présences, convocations, résultats, stages et passages de grade validés pour repartir sur une nouvelle saison ?\n\nLes cours (groupes) ET les élèves resteront intacts et visibles dans l'onglet « Cours » — cette saison reste aussi consultable dans l'onglet Archives.${hasNextSeasonPrep ? `\n\nDes fiches « saison à venir » (${schoolYearLabel(activeNextSeasonYear())}) existent déjà : elles deviendront les fiches actives, et leurs anciennes fiches liées de la saison écoulée seront archivées automatiquement.` : ''}\n\nAssure-toi d'avoir fait un export Excel si besoin avant de continuer.`, { danger:true, title:'Archiver la saison', confirmLabel:'Archiver et vider' }))) return;
+
+  // Filet de sécurité en plus de la sauvegarde quotidienne de 3h : une copie Drive datée du
+  // classeur, prise juste avant cette opération à risque (voir backupNow ci-dessus).
+  await backupNow();
 
   const validatedPassages = (data.beltPassages||[]).filter(p=>p.printed);
   const snapshot = {
@@ -17631,6 +17685,9 @@ async function prepareNextSeasonLicenses(){
   if(!data.settings.preparedSeasonYear) data.settings.preparedSeasonYear = nextSeasonStartYear();
   const nextYear = activeNextSeasonYear();
   if(!(await confirmDialog(`Créer ${eligible.length} fiche(s) liée(s) dans « Licence à prendre » pour préparer la saison ${schoolYearLabel(nextYear)} ?\n\nLes fiches d'origine restent inchangées et actives dans leur cours actuel (appel, présences...) — les fiches liées serviront de brouillon pour la nouvelle saison, et resteront synchronisées avec l'original (nom, ceinture, coordonnées...) jusqu'à validation. Le Comité directeur n'est pas concerné.`, { confirmLabel:'Créer les fiches' }))) return;
+  // Filet de sécurité en plus de la sauvegarde quotidienne de 3h (voir backupNow ci-dessus,
+  // même raisonnement qu'avant archiveCurrentSeason).
+  await backupNow();
   eligible.forEach(m=> createPendingLicenseRecord(m, licenseGroup.id));
   saveData();
   ui.viewingSeasonId = 'next';
