@@ -3014,18 +3014,35 @@ async function generateAndUploadSignedDocument(m, docKey, fv){
 }
 
 // ---- Présences : dernières séances "pointées" (validated) de chaque enfant ----
+// 3 premières lettres du jour de la semaine (lun., mar., ...) — table fixe plutôt que
+// toLocaleDateString('fr-FR',{weekday:'short'}) : rendu garanti identique sur tous les navigateurs,
+// sans dépendre des données Intl/ICU disponibles côté client (demande de Thomas, espace famille).
+const WEEKDAY_SHORT_FR = ['dim.','lun.','mar.','mer.','jeu.','ven.','sam.'];
+function weekdayShortFr(dateStr){
+  if(!dateStr) return '';
+  const d = dateStr.includes('T') ? new Date(dateStr) : new Date(dateStr+'T00:00:00');
+  if(isNaN(d.getTime())) return '';
+  return WEEKDAY_SHORT_FR[d.getDay()];
+}
 function familyPortalPresencesHtml(){
   const members = data.members||[];
   if(!members.length) return '<div class="fp-card"><div class="fp-empty">Aucune information disponible.</div></div>';
   return members.map(m=>{
-    const sessions = (data.sessions||[]).filter(s=>s.groupId===m.groupId && s.validated).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,20);
+    // Stat discrète (ex: "9/50 présences") : calculée sur TOUTES les séances pointées de la saison,
+    // pas seulement les 20 plus récentes affichées ci-dessous (slice), pour rester représentative
+    // même une fois la saison bien avancée.
+    const allSessions = (data.sessions||[]).filter(s=>s.groupId===m.groupId && s.validated);
+    const presentCount = allSessions.filter(s=> isPresent((data.attendance[s.id]||{})[m.id])).length;
+    const statHtml = allSessions.length ? `<div class="fp-empty" style="margin:2px 0 8px;">${presentCount}/${allSessions.length} présences</div>` : '';
+    const sessions = [...allSessions].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,20);
     const rows = sessions.map(s=>{
       const status = (data.attendance[s.id]||{})[m.id];
       const bg = isPresent(status) ? 'var(--tatami-dim)' : (isExcused(status) ? 'var(--surface-2)' : 'var(--clay-dim)');
       const fg = isPresent(status) ? 'var(--tatami)' : (isExcused(status) ? 'var(--ink-dim)' : 'var(--clay)');
-      return `<div class="fp-row"><span>${fmtDate(s.date)}${s.time?' — '+escapeHtml(s.time):''}</span><span class="tag" style="background:${bg}; color:${fg}; font-weight:700;">${attendanceLabel(status)}</span></div>`;
+      const dayPrefix = weekdayShortFr(s.date);
+      return `<div class="fp-row"><span>${dayPrefix?escapeHtml(dayPrefix)+' ':''}${fmtDate(s.date)}${s.time?' — '+escapeHtml(s.time):''}</span><span class="tag" style="background:${bg}; color:${fg}; font-weight:700;">${attendanceLabel(status)}</span></div>`;
     }).join('');
-    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${rows || '<div class="fp-empty">Aucun cours pointé pour l’instant.</div>'}</div>`;
+    return `<div class="fp-card"><div class="fp-member-label">${escapeHtml(m.name)}</div>${statHtml}${rows || '<div class="fp-empty">Aucun cours pointé pour l’instant.</div>'}</div>`;
   }).join('');
 }
 
