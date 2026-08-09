@@ -9329,6 +9329,11 @@ function renderInactiveMembersCard(){
   const session = getSession();
   if(!session || session.role!=='admin'){ wrap.innerHTML = ''; return; }
   const items = inactiveMembersForRgpdReview();
+  // Historique des suppressions déjà effectuées (voir logRgpdDeletion) : les plus récentes en tête,
+  // limité à 20 lignes affichées pour ne pas allonger la carte indéfiniment — le journal complet, lui,
+  // n'est jamais tronqué côté données (data.settings.rgpdDeletionLog), seul l'affichage l'est.
+  const deletionLog = Array.isArray(data.settings.rgpdDeletionLog) ? data.settings.rgpdDeletionLog : [];
+  const recentDeletions = deletionLog.slice().sort((a,b)=> new Date(b.ts) - new Date(a.ts)).slice(0,20);
   wrap.innerHTML = `
     <h2>🗑️ Fiches inactives depuis ${INACTIVE_MEMBER_RGPD_SEASONS_THRESHOLD} saisons ou plus</h2>
     <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">
@@ -9345,15 +9350,44 @@ function renderInactiveMembersCard(){
           <button class="ghost icon-btn" data-action="delete-inactive-member" data-id="${m.id}" title="Supprimer définitivement" style="flex-shrink:0; padding:8px 9px;">🗑️</button>
         </div>`).join('')}
     </div>`}
+    ${recentDeletions.length ? `
+    <details style="margin-top:14px;">
+      <summary style="cursor:pointer; font-size:12.5px; color:var(--ink-dim);">📜 Historique des suppressions définitives (${deletionLog.length})</summary>
+      <div style="display:flex; flex-direction:column; gap:2px; margin-top:8px;">
+        ${recentDeletions.map(e=>`
+          <div class="convoc-row" style="align-items:flex-start;">
+            <div class="info">
+              <div class="n">${escapeHtml(e.memberName||'(fiche supprimée)')}</div>
+              <div class="e">Supprimée le ${fmtDate(e.ts)} par ${escapeHtml(e.accountName||'?')}${e.accountRole?` (${escapeHtml(e.accountRole)})`:''}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </details>` : ''}
   `;
   wrap.querySelectorAll('[data-action="delete-inactive-member"]').forEach(btn=>{
     btn.addEventListener('click', ()=> deleteInactiveMemberPermanently(btn.dataset.id));
+  });
+}
+// Journal des suppressions RGPD (audit sécurité/fiabilité du 10/08/2026, point MINEUR "les
+// suppressions RGPD faites par l'admin ne laissent aucune trace") : contrairement à logActivity, qui
+// ignore volontairement les actions admin (voir sa définition — le journal d'activité sert à
+// surveiller les AUTRES comptes, pas l'admin lui-même), cette entrée est écrite quel que soit le rôle
+// connecté, car c'est justement la seule action pour laquelle une preuve/traçabilité compte vraiment
+// (date + qui a agi, en cas de question ultérieure d'une famille ou de contrôle de conformité).
+function logRgpdDeletion(memberName, memberId){
+  const session = getSession();
+  if(!Array.isArray(data.settings.rgpdDeletionLog)) data.settings.rgpdDeletionLog = [];
+  data.settings.rgpdDeletionLog.push({
+    id: uid(), ts: new Date().toISOString(),
+    memberId, memberName,
+    accountName: (session && session.name) || '', accountRole: (session && session.role) || ''
   });
 }
 async function deleteInactiveMemberPermanently(memberId){
   const m = (data.members||[]).find(x=>x.id===memberId);
   if(!m) return;
   if(!(await confirmDialog(`Supprimer DÉFINITIVEMENT la fiche de ${m.name} ? Ses documents (certificat, charte, droit à l'image...) seront aussi effacés du Drive du club. Cette action est irréversible.`, { danger:true, title:'Suppression définitive (RGPD)', confirmLabel:'Supprimer définitivement' }))) return;
+  logRgpdDeletion(m.name, m.id);
   markDeleted('members', memberId);
   data.members = data.members.filter(x=>x.id!==memberId);
   await saveData();
