@@ -438,7 +438,17 @@
   #incomplete-fiches-overlay .ifo-fields input, #incomplete-fiches-overlay .ifo-fields select{
     padding:8px 9px; border-radius:8px; border:1px solid var(--line); background:var(--surface-2); color:var(--ink); font-family:'Inter',sans-serif; font-size:13.5px;
   }
-  #confirm-dialog-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:140; padding:16px; align-items:center; justify-content:center; }
+  /* BUG RÉEL remonté par Thomas (09/08/2026) : "le bouton retirer mon autorisation d'image ne
+     fonctionne pas, il ne se passe rien". Cause : #confirm-dialog-overlay était en z-index:140,
+     largement SOUS #family-portal-app (z-index:400, fond opaque plein écran) — voir le commentaire
+     sur #signature-overlay plus bas, qui avait déjà dû passer à 410 pour la même raison. Tant que
+     confirmDialog() n'était appelée QUE depuis l'appli admin (jamais depuis l'espace famille), ce
+     conflit restait invisible : withdrawFamilyImageConsent est le tout premier appel de
+     confirmDialog() depuis l'espace famille, donc le premier à révéler ce trou. La boîte de
+     confirmation s'affichait bel et bien (display:flex appliqué), mais entièrement masquée derrière
+     le fond plein écran de l'espace famille — d'où "rien ne se passe" à l'œil de l'utilisateur.
+     z-index:420 : au-dessus des deux (400 et 410), pour rester fiable quel que soit l'écran ouvert. */
+  #confirm-dialog-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:420; padding:16px; align-items:center; justify-content:center; }
   #confirm-dialog-overlay.show{ display:flex; }
   #confirm-dialog-overlay .cfd-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:420px; width:100%; box-shadow:0 10px 40px rgba(0,0,0,.3); }
   #confirm-dialog-overlay .cfd-message{ font-size:14px; line-height:1.55; color:var(--ink); margin:0; }
