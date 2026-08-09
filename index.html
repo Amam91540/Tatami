@@ -2437,6 +2437,25 @@ async function requestFamilyPortalLink(memberId){
 function familyPortalUrlFromToken(token){
   return `${location.origin}${location.pathname}?famille=${token}`;
 }
+// Révocation du lien (audit sécurité du 10/08/2026, "jetons famille... sans expiration") : casse
+// volontairement le lien déjà envoyé à cette famille — voir revokeFamilyPortalLink côté Code.gs.
+async function requestRevokeFamilyPortalLink(memberId){
+  const s = getSession();
+  if(!s || !s.sessionToken){ showToast('Non connecté'); return false; }
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'revokeFamilyPortalLink', sessionToken: s.sessionToken, memberId })
+    });
+    const json = await res.json();
+    if(json && json.ok) return true;
+    showToast((json && (json.message||json.error)) || 'Échec de la révocation du lien');
+    return false;
+  }catch(e){
+    showToast('Impossible de révoquer le lien (connexion ?)');
+    return false;
+  }
+}
 function closeFamilyPortalLinkOverlay(){
   const overlay = document.getElementById('family-portal-link-overlay');
   if(overlay){ overlay.classList.remove('show'); overlay.innerHTML = ''; }
@@ -2472,6 +2491,7 @@ async function openFamilyPortalLinkOverlay(memberId){
         <button class="primary" id="fplCopyBtn">📋 Copier le lien</button>
         ${m && m.email ? `<button class="ghost" id="fplEmailBtn">✉️ Envoyer par email</button>` : ''}
         ${waNumber ? `<button class="ghost" id="fplWhatsappBtn">💬 Envoyer via WhatsApp</button>` : ''}
+        <button class="ghost" id="fplRevokeBtn" style="color:#c0392b;">🚫 Révoquer ce lien</button>
         <button class="ghost" id="fplCloseBtn">Fermer</button>
       </div>
     </div>`;
@@ -2492,6 +2512,16 @@ async function openFamilyPortalLinkOverlay(memberId){
   const waBtn = document.getElementById('fplWhatsappBtn');
   if(waBtn) waBtn.addEventListener('click', ()=>{
     window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(shareText)}`, '_blank');
+  });
+  // Révocation (audit sécurité du 10/08/2026) : à utiliser seulement en cas de doute sur une fuite —
+  // casse le lien déjà envoyé à CETTE famille. Confirmation demandée car un clic accidentel obligerait
+  // à renvoyer un nouveau lien à la famille.
+  const revokeBtn = document.getElementById('fplRevokeBtn');
+  if(revokeBtn) revokeBtn.addEventListener('click', async ()=>{
+    const ok = await confirmDialog(`Révoquer le lien d'espace famille de ${namesLabel} ? Le lien déjà envoyé arrêtera immédiatement de fonctionner — il faudra en renvoyer un nouveau si besoin.`, { confirmLabel:'Révoquer', danger:true });
+    if(!ok) return;
+    const success = await requestRevokeFamilyPortalLink(memberId);
+    if(success){ showToast('Lien révoqué — renvoie-en un nouveau si besoin.'); closeFamilyPortalLinkOverlay(); }
   });
 }
 
