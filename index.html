@@ -3133,7 +3133,11 @@ function wireSignatureOverlay(m, docKey, isMajor){
       });
       closeSignatureOverlay();
     } catch(err){
-      showToast('Échec de la génération/envoi : ' + (err && err.message ? err.message : err));
+      // Message générique côté famille (audit du 09/08/2026, point P2 UX) : l'erreur technique brute
+      // (souvent un simple problème réseau ou un échec ponctuel de génération PDF) n'apporte rien à un
+      // parent et l'inquiète pour rien — gardée en console pour le débogage, jamais affichée telle quelle.
+      console.error('Échec signature ' + docKey + ' :', err);
+      showToast('Impossible d’envoyer le document signé. Vérifie ta connexion et réessaie — si le problème persiste, contacte le club.');
       btn.disabled = false; btn.textContent = 'Valider et envoyer';
     }
   });
@@ -3325,7 +3329,10 @@ function wireInscriptionOverlay(m, isMajor){
       await generateAndUploadInscriptionDocument(m, isMajor, fields, pad1.toDataURL());
       closeSignatureOverlay();
     } catch(err){
-      showToast('Échec de la génération/envoi : ' + (err && err.message ? err.message : err));
+      // Même correctif que pour la signature Charte/Droit à l'image ci-dessus (audit du 09/08/2026,
+      // point P2 UX) : message générique côté famille, erreur technique gardée en console uniquement.
+      console.error('Échec envoi feuille d’inscription :', err);
+      showToast('Impossible d’envoyer la fiche d’inscription. Vérifie ta connexion et réessaie — si le problème persiste, contacte le club.');
       btn.disabled = false; btn.textContent = 'Valider et envoyer';
     }
   });
@@ -3778,7 +3785,7 @@ function familyPortalRgpdHtml(){
     <h3>🔒 Vos données personnelles</h3>
     <p>Les informations concernant ${escapeHtml((data.clubName||'le club'))} sont gérées par l’Académie Menneçoise d’Arts Martiaux (AMAM), association loi 1901, représentée par sa Présidente — Dojo Municipal de Villeroy, Boulevard Charles de Gaulle, 91540 Mennecy.</p>
     <p>Elles servent uniquement à la gestion des inscriptions, au suivi pédagogique (présences, passages de grade), aux convocations aux compétitions et aux cotisations, ainsi qu’aux obligations fédérales liées à la licence (identité, certificat médical ou attestation de santé selon l’âge). Elles ne sont communiquées à aucun tiers en dehors de ces besoins.</p>
-    <p>Elles sont conservées 3 ans après la fin de l’adhésion, délai correspondant aux besoins comptables et assurantiels de l’association.</p>
+    <p>Elles sont conservées pendant la durée de l’adhésion, augmentée de 5 ans, à l’exception du certificat médical (ou de l’attestation de questionnaire de santé pour les mineurs), conservé pendant toute sa durée de validité réglementaire jusqu’à son remplacement.</p>
     <p>Conformément au Règlement Général sur la Protection des Données (RGPD), vous disposez à tout moment d’un droit d’accès, de rectification et de suppression de ces données. Pour l’exercer, écrivez au club :</p>
     <p style="color:var(--ink-dim); font-size:13px;">${contactHtml}</p>
   </div>`;
@@ -9249,9 +9256,14 @@ function renderActivityLogCard(){
 }
 
 /* ---------------- FICHES INACTIVES DEPUIS PLUSIEURS SAISONS — RGPD (admin uniquement) ---------------- */
-// Audit du 09/08/2026, point P1 : la note RGPD du club fixe une conservation de 3 ans après la fin
-// de l'adhésion (voir l'onglet RGPD de l'espace famille), mais rien dans l'outil ne permettait de
-// repérer CONCRÈTEMENT les fiches concernées — jusqu'ici une règle écrite, jamais vérifiable.
+// Audit du 09/08/2026, point P1 : la note RGPD du club fixe une conservation de la durée de
+// l'adhésion + 5 ans après son terme (voir le Dossier de conformité RGPD, section 7, et l'onglet RGPD
+// de l'espace famille — mis à jour le 09/08/2026 pour remplacer une durée de 3 ans mentionnée par
+// erreur dans une version antérieure), mais rien dans l'outil ne permettait de repérer CONCRÈTEMENT
+// les fiches concernées — jusqu'ici une règle écrite, jamais vérifiable. Le seuil se compte en
+// SAISONS (une saison sportive ≈ un an) plutôt qu'en années civiles exactes, cohérent avec la
+// granularité de data.archivedSeasons.
+const INACTIVE_MEMBER_RGPD_SEASONS_THRESHOLD = 5;
 // Une fiche devient "archivée" (member.archived) quand un import Excel ne la retrouve plus dans
 // l'effectif (voir showImportArchiveOverlay) ou automatiquement au roulement de saison (fiche jumelle
 // non reprise, voir archiveCurrentSeason) — mais aucune date n'est enregistrée à ce moment-là. On se
@@ -9278,7 +9290,7 @@ function inactiveMembersForRgpdReview(){
   return (data.members||[])
     .filter(m=>m.archived)
     .map(m=>({ member:m, inactiveSeasons: memberInactiveSeasonsCount(m) }))
-    .filter(x=> x.inactiveSeasons===null || x.inactiveSeasons>=3)
+    .filter(x=> x.inactiveSeasons===null || x.inactiveSeasons>=INACTIVE_MEMBER_RGPD_SEASONS_THRESHOLD)
     .sort((a,b)=> (b.inactiveSeasons==null?999:b.inactiveSeasons) - (a.inactiveSeasons==null?999:a.inactiveSeasons));
 }
 function renderInactiveMembersCard(){
@@ -9288,9 +9300,9 @@ function renderInactiveMembersCard(){
   if(!session || session.role!=='admin'){ wrap.innerHTML = ''; return; }
   const items = inactiveMembersForRgpdReview();
   wrap.innerHTML = `
-    <h2>🗑️ Fiches inactives depuis 3 saisons ou plus</h2>
+    <h2>🗑️ Fiches inactives depuis ${INACTIVE_MEMBER_RGPD_SEASONS_THRESHOLD} saisons ou plus</h2>
     <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">
-      La note RGPD du club prévoit de conserver les données d'un élève 3 ans maximum après la fin de son adhésion. Voici les fiches archivées (élèves non repris) concernées — à vérifier avant suppression définitive.
+      La note RGPD du club prévoit de conserver les données d'un élève pendant la durée de l'adhésion + 5 ans maximum après son terme. Voici les fiches archivées (élèves non repris) concernées — à vérifier avant suppression définitive.
     </p>
     ${items.length===0 ? '<div class="empty">Aucune fiche concernée pour l’instant.</div>' : `
     <div style="display:flex; flex-direction:column; gap:2px;">
@@ -12448,7 +12460,7 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
       <button class="ghost" id="bordereauPreviewCancelBtn">Fermer</button>
     </div>
     <p style="text-align:center; color:var(--ink-dim); font-size:12.5px; margin:0 0 12px;">Aperçu — ${escapeHtml(section)}, Folio N°${folio}. "Nom du chèque" et "Observations" sont modifiables à la main — utilise "Enregistrer sans générer" pour mémoriser tes corrections sans télécharger le PDF tout de suite.</p>
-    <div style="max-width:1300px; margin:0 auto;">${tableHtml}</div>
+    <div style="max-width:1300px; margin:0 auto; overflow-x:auto;">${tableHtml}</div>
   `;
   overlay.classList.add('show');
   // Relit les champs modifiables du tableau — factorisé car utilisé aussi bien par "Enregistrer sans
@@ -14915,7 +14927,7 @@ function renderArchivedEventResultsHtml(ev){
   if(presents.length===0) return '<div class="empty">Aucun participant présent.</div>';
   const shiai = isShiaiEvent(ev.name);
   const { rows } = buildResultRowsHtml(presents, birthDateOf, shiai);
-  return `<table class="recap-table" style="margin-top:8px;"><tr><th>Élève</th><th>Catégorie</th><th>Poids</th><th>Résultat</th></tr>${rows.map(r=>`<tr>${r.html}</tr>`).join('')}</table>`;
+  return `<div style="overflow-x:auto; margin-top:8px;"><table class="recap-table" style="min-width:480px;"><tr><th>Élève</th><th>Catégorie</th><th>Poids</th><th>Résultat</th></tr>${rows.map(r=>`<tr>${r.html}</tr>`).join('')}</table></div>`;
 }
 const resultsHistoryVisibility = cardVisibility('results-history', false);
 function loadResultsHistoryHidden(){ return resultsHistoryVisibility.get(); }
@@ -18009,11 +18021,20 @@ async function sendConvocationsWithPdf(){
   btn.disabled = true;
 
   const { jsPDF } = window.jspdf;
-  let sent = 0;
   const errors = [];
+  // Regroupement de l'envoi (audit performance du 09/08/2026, point MAJEUR "un appel réseau par
+  // élève") : chaque PDF et chaque texte restent générés INDIVIDUELLEMENT ci-dessous, exactement comme
+  // avant — rien ne change sur la personnalisation (nom, lien de confirmation propre à chaque élève,
+  // "vous"/"votre enfant" selon la majorité). Ce qui change, c'est qu'on ne les envoie plus un par un
+  // au fur et à mesure : on les accumule dans `items`, et un SEUL appel réseau part à la toute fin
+  // avec tout le lot — voir sendConvocationEmails côté Code.gs, qui accepte maintenant un textBody/
+  // htmlBody propre à chaque destinataire plutôt qu'un texte unique partagé par tout le lot.
+  const items = [];
+  const memberByEmail = {};
   for(let i=0;i<members.length;i++){
     const m = members[i];
-    btn.textContent = `Envoi en cours… (${i+1}/${members.length})`;
+    btn.textContent = `Génération des PDF… (${i+1}/${members.length})`;
+    memberByEmail[m.email] = m;
 
     const recipient = ev.recipients.find(r=>r.memberId===m.id);
     const link = recipient ? convocResponseLink(recipient.token) : '';
@@ -18057,6 +18078,12 @@ async function sendConvocationsWithPdf(){
     textBody += `\nSportivement,\n${data.clubName || 'Le club'}`;
     htmlBody += `<br>Sportivement,<br>${escapeHtml(data.clubName || 'Le club')}`;
 
+    items.push({ to: m.email, filename: `convocation-${(m.name||'eleve').replace(/\s+/g,'-')}.pdf`, pdfBase64, textBody, htmlBody });
+  }
+
+  let sent = 0;
+  if(items.length){
+    btn.textContent = `Envoi groupé en cours… (${items.length} destinataire${items.length===1?'':'s'})`;
     try{
       const res = await fetch(BACKEND_URL, {
         method:'POST',
@@ -18065,10 +18092,8 @@ async function sendConvocationsWithPdf(){
           action:'sendConvocation',
           sessionToken: session.sessionToken,
           subject:'Convocation — '+event,
-          textBody,
-          htmlBody,
           senderName: data.clubName || '',
-          items:[{ to: m.email, filename: `convocation-${(m.name||'eleve').replace(/\s+/g,'-')}.pdf`, pdfBase64 }]
+          items
         })
       });
       let json;
@@ -18077,12 +18102,19 @@ async function sendConvocationsWithPdf(){
         const raw = await res.text().catch(()=> '');
         throw new Error(`réponse invalide du script (HTTP ${res.status})${raw ? ' — '+raw.slice(0,200) : ''}`);
       }
-      if(json && json.ok && json.sent){ sent++; }
-      else if(json && json.error){ errors.push(`${displayNameOrder(m.name)} : ${json.error}`); }
-      else if(json && (json.failed||[]).length){ errors.push(`${displayNameOrder(m.name)} : ${json.failed[0].error||'échec côté Gmail'}`); }
-      else { errors.push(`${displayNameOrder(m.name)} : échec inconnu`); }
+      if(json && json.ok){
+        sent = json.sent || 0;
+        (json.failed||[]).forEach(f=>{
+          const member = memberByEmail[f.to];
+          errors.push(`${member ? displayNameOrder(member.name) : f.to} : ${f.error || 'échec côté Gmail'}`);
+        });
+      } else if(json && json.error){
+        errors.push(`Envoi groupé : ${json.error}`);
+      } else {
+        errors.push('Envoi groupé : réponse inattendue du serveur');
+      }
     }catch(err){
-      errors.push(`${displayNameOrder(m.name)} : ${err.message||err}`);
+      errors.push(`Envoi groupé : ${err.message||err}`);
     }
   }
 
