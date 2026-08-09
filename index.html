@@ -665,6 +665,18 @@
     max-width:90vw; text-align:center; white-space:normal;
   }
   .toast.show{ opacity:1; }
+  .save-alert{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:#FDF3E7; border:1.5px solid #B3492F; color:#B3492F;
+    padding:10px 10px 10px 16px; border-radius:12px; font-size:13px; z-index:55;
+    display:none; align-items:center; gap:10px; max-width:min(92vw,420px);
+    box-shadow:0 6px 20px rgba(0,0,0,.18); text-align:left;
+  }
+  .save-alert.show{ display:flex; }
+  .save-alert button{
+    background:none; border:none; color:#B3492F; font-size:16px; line-height:1;
+    padding:2px 4px; cursor:pointer; flex-shrink:0; font-weight:700;
+  }
   .settings-foot{ text-align:center; margin-top:22px; }
   .settings-foot button{ font-size:12px; color: var(--ink-dim); background:none; }
 
@@ -1135,6 +1147,16 @@
       </div>
     </div>
 
+    <div class="section-group" data-group="param-rgpd">
+      <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="param-rgpd">
+        <span>🔐 RGPD</span>
+        <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="section-group-body">
+        <div class="card" id="inactive-members-card" style="display:none;"></div>
+      </div>
+    </div>
+
     <div class="section-group" data-group="param-saison">
       <button type="button" class="section-group-header" data-action="toggle-section-group" data-group="param-saison">
         <span>📅 Saison &amp; calendrier</span>
@@ -1216,6 +1238,13 @@
 </nav>
 
 <div class="toast" id="toast"></div>
+<!-- Alerte d'échec de sauvegarde (voir saveData/showSaveFailureAlert) : contrairement au toast
+     classique ci-dessus qui s'efface tout seul en 1,8s, celle-ci reste affichée jusqu'à ce que la
+     personne la ferme elle-même — un échec de sauvegarde ne doit jamais pouvoir passer inaperçu
+     (audit fiabilité du 07/08/2026 : avant ce correctif, un échec autre que "session expirée"
+     avançait silencieusement le témoin de synchro, faisant disparaître la modification sans le
+     moindre message). Se referme aussi automatiquement dès qu'une sauvegarde réussit à nouveau. -->
+<div class="save-alert" id="save-alert"><span id="save-alert-msg"></span><button type="button" onclick="dismissSaveAlert()" aria-label="Fermer">✕</button></div>
 <div id="certificate-overlay"></div>
 <div id="convoc-print-overlay"></div>
 <div id="import-archive-overlay"></div>
@@ -1402,6 +1431,23 @@ function showToast(msg, duration){
   t.textContent = msg; t.classList.add('show');
   clearTimeout(t._h);
   t._h = setTimeout(()=>t.classList.remove('show'), duration || 1800);
+}
+
+// Alerte persistante réservée aux échecs de sauvegarde (voir saveData) : à la différence de
+// showToast ci-dessus, ne disparaît jamais tout seule — seulement au clic sur ✕, ou automatiquement
+// dès qu'une sauvegarde réussit à nouveau (dismissSaveAlert appelé depuis saveData). But : un échec
+// de sauvegarde ne doit jamais pouvoir passer inaperçu simplement parce que la personne n'a pas
+// regardé l'écran dans les 1,8 secondes qui suivent.
+function showSaveFailureAlert(msg){
+  const el = document.getElementById('save-alert');
+  const msgEl = document.getElementById('save-alert-msg');
+  if(!el || !msgEl) return;
+  msgEl.textContent = msg;
+  el.classList.add('show');
+}
+function dismissSaveAlert(){
+  const el = document.getElementById('save-alert');
+  if(el) el.classList.remove('show');
 }
 
 // Fabrique générique pour mémoriser l'affichage/masquage d'une carte dans localStorage.
@@ -1647,6 +1693,18 @@ function markDeleted(entity, id){
   if(!data.deletedIds || typeof data.deletedIds !== 'object') data.deletedIds = {};
   if(!Array.isArray(data.deletedIds[entity])) data.deletedIds[entity] = [];
   if(!data.deletedIds[entity].includes(id)) data.deletedIds[entity].push(id);
+  // Coupe le lien "fiche jumelle" (linkedMemberId, voir prepareNextSeasonLicenses / l'action
+  // 'validate-license' qui coupe déjà ce même lien des deux côtés à la validation normale) quand
+  // l'une des deux fiches liées est supprimée directement (retrait d'un cours, fusion de doublons)
+  // plutôt que validée — sans ce nettoyage, l'autre fiche continuerait de pointer vers un
+  // linkedMemberId qui n'existe plus : aucun risque de plantage (tout le code qui lit
+  // linkedMemberId vérifie déjà que la cible existe), mais une donnée incohérente en base (audit du
+  // 09/08/2026). Centralisé ici, plutôt que répété à chaque endroit qui supprime un élève, pour ne
+  // jamais oublier un futur cas d'appel.
+  if(entity==='members'){
+    const other = data.members.find(x=>x.linkedMemberId===id);
+    if(other) other.linkedMemberId = null;
+  }
 }
 function ensureKnownRecurrence(){
   const knownSchedules = {
@@ -2190,6 +2248,37 @@ async function uploadFamilyDocumentToServer(memberId, docKey, file, certDate){
   }
 }
 
+// Retrait de l'autorisation "Droit à l'image" depuis l'espace famille (voir audit du 09/08/2026) :
+// même circuit d'authentification par requête que les autres actions famille (token + date de
+// naissance, pas de session) — voir familyPortalWithdrawImageConsent côté Code.gs.
+async function withdrawFamilyImageConsent(memberId){
+  const ok = await confirmDialog(
+    'Le club ne pourra plus utiliser ni publier de nouvelles photos ou vidéos de cet élève. Vous pourrez donner à nouveau votre autorisation à tout moment si vous changez d’avis.',
+    { title: 'Retirer l’autorisation image ?', confirmLabel: 'Retirer l’autorisation', danger: true }
+  );
+  if(!ok) return;
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalWithdrawImageConsent', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, memberId })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      const m = (data.members||[]).find(x=>x.id===memberId);
+      if(m){
+        m.docDroitImage = false;
+        m.docDroitImageWithdrawn = true;
+        m.docDroitImageWithdrawnAt = json.withdrawnAt;
+      }
+      showToast('Autorisation image retirée.');
+      renderFamilyPortalTabContent();
+    } else {
+      showToast(familyPortalErrorLabel(json && json.error));
+    }
+  }catch(e){
+    showToast('Impossible de retirer l’autorisation (connexion ?)');
+  }
+}
 // Visionneuse plein écran pour une photo (podium ou compétition) : affichée DANS l'appli plutôt
 // qu'ouverte dans un nouvel onglet. window.open(dataUri, '_blank') semblait fonctionner mais ouvrait
 // en réalité une page vide ("about:blank") : les navigateurs récents (Chrome, Edge...) bloquent la
@@ -2519,7 +2608,8 @@ const FAMILY_PORTAL_TABS = [
   { key:'convocations', label:'Convocations' },
   { key:'calendrier', label:'Calendrier' },
   { key:'resultats', label:'Résultats' },
-  { key:'palmares', label:'Palmarès' }
+  { key:'palmares', label:'Palmarès' },
+  { key:'rgpd', label:'RGPD' }
 ];
 function renderFamilyPortalMain(){
   const container = document.getElementById('family-portal-app');
@@ -2549,6 +2639,7 @@ function renderFamilyPortalTabContent(){
   else if(familyPortalUi.tab==='calendrier'){ body.innerHTML = familyPortalCalendarHtml(); }
   else if(familyPortalUi.tab==='resultats'){ body.innerHTML = familyPortalResultsHtml(); wireFamilyPortalResults(body); }
   else if(familyPortalUi.tab==='palmares'){ body.innerHTML = familyPortalPalmaresHtml(); wireFamilyPortalPalmares(body); }
+  else if(familyPortalUi.tab==='rgpd'){ body.innerHTML = familyPortalRgpdHtml(); }
 }
 
 // ---- Inscription : statut du dossier (documents rendus/manquants — voir MEMBER_DOCUMENT_ITEMS,
@@ -2580,8 +2671,15 @@ function familyPortalDocumentUploadHtml(m){
     const fileId = m[item.key+'FileId'];
     const uploadedAt = m[item.key+'UploadedAt'];
     const isMedicalCert = item.key==='docMedicalCert';
+    // Retrait d'autorisation image (audit du 09/08/2026, point P1 : "le retrait est promis dans le
+    // texte mais n'existe pas encore") — uniquement pour docDroitImage. Vérifié AVANT "validated" :
+    // un retrait repasse validated à false côté serveur, mais l'ancien fileId reste présent, donc ce
+    // statut doit primer sur la branche fileId ci-dessous elle aussi.
+    const withdrawn = item.key==='docDroitImage' && !!m[item.key+'Withdrawn'];
     let statusHtml;
-    if(validated){
+    if(withdrawn){
+      statusHtml = `<span style="color:var(--clay); font-weight:700;">🚫 Autorisation retirée${m.docDroitImageWithdrawnAt?' le '+fmtDate(m.docDroitImageWithdrawnAt):''}</span><div style="font-size:12px; margin-top:2px;">Vous pouvez donner à nouveau votre autorisation à tout moment ci-dessous.</div>`;
+    } else if(validated){
       statusHtml = `<span style="color:var(--tatami); font-weight:700;">✅ Reçu et vérifié</span>`;
       if(isMedicalCert && m.docMedicalCertDate) statusHtml += `<div style="font-size:12px; margin-top:2px;">Date du certificat : ${fmtDate(m.docMedicalCertDate)}</div>`;
     } else if(rejected){
@@ -2600,6 +2698,13 @@ function familyPortalDocumentUploadHtml(m){
     const downloadControl = fileId ? `
       <div style="margin-top:6px;">
         <button type="button" class="ghost" data-fp-doc-download="${item.key}" data-member="${m.id}" style="padding:4px 10px; font-size:12px;">⬇️ Télécharger mon document</button>
+      </div>` : '';
+    // Bouton de retrait (voir audit 09/08/2026) : uniquement quand une autorisation est ACTIVEMENT
+    // en cours (validated, pas encore retirée) — pas de sens à le proposer sur un document simplement
+    // en attente de vérification ou refusé, qui ne constitue pas encore une autorisation effective.
+    const withdrawControl = (item.key==='docDroitImage' && validated && !withdrawn) ? `
+      <div style="margin-top:6px;">
+        <button type="button" class="ghost" data-fp-doc-withdraw-image="1" data-member="${m.id}" style="padding:4px 10px; font-size:12px; color:var(--clay); border-color:var(--clay);">🚫 Retirer mon autorisation image</button>
       </div>` : '';
     // Date du certificat médical (voir demande de Thomas) : uniquement pour ce document, saisie par
     // la famille en même temps que le fichier — le club la recopiera sur la fiche officielle au
@@ -2636,6 +2741,7 @@ function familyPortalDocumentUploadHtml(m){
       <div style="font-size:13.5px; font-weight:600;">${escapeHtml(item.label)}</div>
       <div style="font-size:12.5px; margin-top:2px;">${statusHtml}</div>
       ${downloadControl}
+      ${withdrawControl}
       ${uploadControl}
     </div>`;
   }).join('');
@@ -2746,6 +2852,9 @@ function wireFamilyPortalInscription(body){
   body.querySelectorAll('[data-fp-doc-sign]').forEach(btn=>{
     btn.addEventListener('click', ()=> openSignatureOverlay(btn.dataset.member, btn.dataset.fpDocSign));
   });
+  body.querySelectorAll('[data-fp-doc-withdraw-image]').forEach(btn=>{
+    btn.addEventListener('click', ()=> withdrawFamilyImageConsent(btn.dataset.member));
+  });
 }
 
 // ==================================================================================
@@ -2782,17 +2891,30 @@ function charteParagraphs(){
 // saison) et un droit de retrait explicite avec clause de non-discrimination — absents du papier
 // d'origine, ajoutés ici sur recommandation RGPD/CNIL pour ce type d'autorisation d'image. Le reste
 // (archives + publication interne uniquement, gratuité) reprend le texte d'origine à l'identique.
-function droitImageParagraphs(m, signerName, signerRole, clubContact){
+// signer2Name/signer2Role/soleParent : voir audit du 09/08/2026 — la publication de l'image d'un
+// mineur est un acte non usuel qui suppose en principe l'accord des DEUX titulaires de l'autorité
+// parentale, pas d'un seul. Le texte reflète donc trois cas : majeur (inchangé), mineur avec les
+// deux parents cosignataires (formulation au pluriel, aucune certification "seul(e)" nécessaire), et
+// mineur avec un seul signataire qui déclare EXPLICITEMENT exercer seul l'autorité parentale (ou que
+// l'autre titulaire est indisponible) — jamais implicite comme avant ce correctif.
+function droitImageParagraphs(m, signerName, signerRole, clubContact, signer2Name, signer2Role, soleParent){
   const isMajor = memberIsMajor(m);
   const seasonLabel = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
   const name = signerName || '…';
-  const openLine = isMajor
-    ? `Je soussigné(e), ${name}, autorise l’Académie Menneçoise d’Arts Martiaux (AMAM) à utiliser mon image individuelle ou en groupe, à compter de ce jour, étant précisé que cette utilisation ne pourra concerner que les archives de l’AMAM et la publication interne (brochure, site internet, ainsi que les supports de communication et de présentation de l’AMAM).`
-    : `Je soussigné(e), ${name}, agissant en qualité de ${signerRole || 'responsable légal'} de ${m.name||''}, et certifiant être habilité(e) à donner seul(e) cette autorisation au titre de l’autorité parentale, autorise l’Académie Menneçoise d’Arts Martiaux (AMAM) à utiliser l’image individuelle ou en groupe de ${m.name||''}, à compter de ce jour, étant précisé que cette utilisation ne pourra concerner que les archives de l’AMAM et la publication interne (brochure, site internet, ainsi que les supports de communication et de présentation de l’AMAM).`;
+  const hasSecondSigner = !isMajor && !soleParent && !!(signer2Name && signer2Name.trim());
+  let openLine;
+  if(isMajor){
+    openLine = `Je soussigné(e), ${name}, autorise l’Académie Menneçoise d’Arts Martiaux (AMAM) à utiliser mon image individuelle ou en groupe, à compter de ce jour, étant précisé que cette utilisation ne pourra concerner que les archives de l’AMAM et la publication interne (brochure, site internet, ainsi que les supports de communication et de présentation de l’AMAM).`;
+  } else if(hasSecondSigner){
+    openLine = `Nous soussigné(e)s, ${name} (${signerRole || 'responsable légal'}) et ${signer2Name} (${signer2Role || 'responsable légal'}), agissant en qualité de représentants légaux de ${m.name||''} et titulaires de l’autorité parentale à son égard, autorisons l’Académie Menneçoise d’Arts Martiaux (AMAM) à utiliser l’image individuelle ou en groupe de ${m.name||''}, à compter de ce jour, étant précisé que cette utilisation ne pourra concerner que les archives de l’AMAM et la publication interne (brochure, site internet, ainsi que les supports de communication et de présentation de l’AMAM).`;
+  } else {
+    openLine = `Je soussigné(e), ${name}, agissant en qualité de ${signerRole || 'responsable légal'} de ${m.name||''}, et certifiant exercer seul(e) l’autorité parentale à son égard (l’autre titulaire de l’autorité parentale étant indisponible ou n’y étant pas opposé), autorise l’Académie Menneçoise d’Arts Martiaux (AMAM) à utiliser l’image individuelle ou en groupe de ${m.name||''}, à compter de ce jour, étant précisé que cette utilisation ne pourra concerner que les archives de l’AMAM et la publication interne (brochure, site internet, ainsi que les supports de communication et de présentation de l’AMAM).`;
+  }
+  const usPlural = hasSecondSigner;
   return [
     openLine,
     'L’AMAM s’engage à ne tirer aucun bénéfice financier de son utilisation. Cette autorisation est donnée à titre gratuit.',
-    `Cette autorisation est valable pour la saison sportive ${seasonLabel} et sera à renouveler chaque saison. ${isMajor?'Je peux':'Nous pouvons'} la retirer à tout moment en écrivant au club${clubContact?' ('+clubContact+')':''}. Le refus ou le retrait de cette autorisation n’a aucune conséquence sur ${isMajor?'ma pratique':'la pratique de mon enfant'} au sein du club.`
+    `Cette autorisation est valable pour la saison sportive ${seasonLabel} et sera à renouveler chaque saison. ${(isMajor || !usPlural)?'Je peux':'Nous pouvons'} la retirer à tout moment en écrivant au club${clubContact?' ('+clubContact+')':''}. Le refus ou le retrait de cette autorisation n’a aucune conséquence sur ${isMajor?'ma pratique':'la pratique de mon enfant'} au sein du club.`
   ];
 }
 
@@ -2842,6 +2964,10 @@ function closeSignatureOverlay(){
 }
 function buildSignatureOverlayHtml(m, docKey, isMajor){
   const isCharte = docKey==='docCharte';
+  // Droit à l'image d'un mineur : acte non usuel qui suppose en principe l'accord des DEUX
+  // titulaires de l'autorité parentale (audit du 09/08/2026) — jamais le cas de la Charte, dont le
+  // texte ne certifie rien de tel et ne concerne qu'un seul signataire quel que soit l'âge.
+  const isMinorDroitImage = !isCharte && !isMajor;
   const docLabel = isCharte ? 'la Charte des Membres' : 'le Droit à l’image';
   const previewParagraphs = isCharte ? charteParagraphs() : droitImageParagraphs(m, isMajor ? (m.name||'') : '', '', data.clubContact);
   const textHtml = previewParagraphs.map(p=>`<p>${escapeHtml(p)}</p>`).join('');
@@ -2849,6 +2975,7 @@ function buildSignatureOverlayHtml(m, docKey, isMajor){
     <label>Nom et prénom (signataire)
       <input type="text" id="sigSigner1Name" value="${escapeHtml(m.name||'')}">
     </label>` : `
+    ${isMinorDroitImage ? '<div style="font-size:12.5px; color:var(--ink-dim); margin:14px 0 6px; font-weight:600;">Premier signataire (responsable légal)</div>' : ''}
     <label>Nom et prénom du responsable légal
       <input type="text" id="sigSigner1Name" placeholder="Nom Prénom">
     </label>
@@ -2859,24 +2986,32 @@ function buildSignatureOverlayHtml(m, docKey, isMajor){
         <option value="tuteur légal">Tuteur légal</option>
       </select>
     </label>`;
-  const secondSignerToggle = (!isCharte && !isMajor) ? `
-    <div style="margin-top:14px;">
-      <button type="button" class="ghost" id="sigToggleSecondSigner" style="width:100%; padding:8px; font-size:12.5px;">+ Ajouter un second signataire (autre parent)</button>
-      <div id="sigSecondSignerBlock" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed var(--line);">
-        <label>Nom et prénom du second signataire
-          <input type="text" id="sigSigner2Name" placeholder="Nom Prénom">
-        </label>
-        <label>Lien avec l’enfant
-          <select id="sigSigner2Role">
-            <option value="père">Père</option>
-            <option value="mère">Mère</option>
-            <option value="tuteur légal">Tuteur légal</option>
-          </select>
-        </label>
-        <div class="sig-pad-wrap">
-          <canvas class="sig-pad" id="sigCanvas2"></canvas>
-          <div class="sig-pad-actions"><button type="button" class="ghost" id="sigClear2" style="padding:4px 10px; font-size:12px;">Effacer</button></div>
-        </div>
+  // Les deux blocs de signature sont affichés PAR DÉFAUT pour un mineur (avant ce correctif, le
+  // second signataire était une option repliée, ce qui laissait implicitement croire qu'un seul
+  // parent suffisait). La case ci-dessous permet de déclarer explicitement le cas où un seul parent
+  // signe, plutôt que de le déduire silencieusement d'un second bloc resté vide.
+  const soleParentCheckbox = isMinorDroitImage ? `
+    <label class="sig-approve-row" style="margin-top:16px;">
+      <input type="checkbox" id="sigSoleParent" style="width:auto;">
+      <span>J’exerce seul(e) l’autorité parentale (l’autre parent est indisponible ou ne peut pas cosigner)</span>
+    </label>` : '';
+  const secondSignerBlock = isMinorDroitImage ? `
+    <div id="sigSecondSignerBlock" style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--line); transition:opacity .15s ease;">
+      <div style="font-size:12.5px; color:var(--ink-dim); margin-bottom:6px; font-weight:600;">Second signataire (autre parent / tuteur légal)</div>
+      <label>Nom et prénom du second signataire
+        <input type="text" id="sigSigner2Name" placeholder="Nom Prénom">
+      </label>
+      <label>Lien avec l’enfant
+        <select id="sigSigner2Role">
+          <option value="père">Père</option>
+          <option value="mère">Mère</option>
+          <option value="tuteur légal">Tuteur légal</option>
+        </select>
+      </label>
+      <div class="sig-pad-wrap">
+        <div style="font-size:12.5px; color:var(--ink-dim); margin-bottom:4px;">Signature du second signataire</div>
+        <canvas class="sig-pad" id="sigCanvas2"></canvas>
+        <div class="sig-pad-actions"><button type="button" class="ghost" id="sigClear2" style="padding:4px 10px; font-size:12px;">Effacer</button></div>
       </div>
     </div>` : '';
   return `
@@ -2894,7 +3029,8 @@ function buildSignatureOverlayHtml(m, docKey, isMajor){
         <canvas class="sig-pad" id="sigCanvas1"></canvas>
         <div class="sig-pad-actions"><button type="button" class="ghost" id="sigClear1" style="padding:4px 10px; font-size:12px;">Effacer</button></div>
       </div>
-      ${secondSignerToggle}
+      ${soleParentCheckbox}
+      ${secondSignerBlock}
       <div style="display:flex; gap:8px; margin-top:16px;">
         <button type="button" class="ghost" id="sigCancelBtn" style="flex:1;">Annuler</button>
         <button type="button" class="primary" id="sigSubmitBtn" style="flex:1;">Valider et envoyer</button>
@@ -2904,34 +3040,51 @@ function buildSignatureOverlayHtml(m, docKey, isMajor){
 function wireSignatureOverlay(m, docKey, isMajor){
   const overlay = document.getElementById('signature-overlay');
   const isCharte = docKey==='docCharte';
+  const isMinorDroitImage = !isCharte && !isMajor;
   const canvas1 = overlay.querySelector('#sigCanvas1');
   setupSignatureCanvasSize(canvas1);
   const pad1 = initSignaturePad(canvas1);
   overlay.querySelector('#sigClear1').addEventListener('click', ()=> pad1.clear());
+  // Le second pad (mineur, Droit à l'image) est initialisé tout de suite : le bloc est visible par
+  // défaut désormais (voir buildSignatureOverlayHtml), plus besoin d'attendre un clic sur un bouton
+  // "+ Ajouter" comme avant ce correctif.
   let pad2 = null;
+  const canvas2 = overlay.querySelector('#sigCanvas2');
+  if(canvas2){
+    setupSignatureCanvasSize(canvas2);
+    pad2 = initSignaturePad(canvas2);
+    overlay.querySelector('#sigClear2').addEventListener('click', ()=> pad2.clear());
+  }
+  const soleParentEl = overlay.querySelector('#sigSoleParent');
+  const secondBlock = overlay.querySelector('#sigSecondSignerBlock');
   const refreshText = ()=>{
     if(isCharte) return; // texte fixe, jamais de substitution
     const name = overlay.querySelector('#sigSigner1Name').value.trim();
     const roleEl = overlay.querySelector('#sigSigner1Role');
     const role = roleEl ? roleEl.value : '';
-    overlay.querySelector('.sig-doc-text').innerHTML = droitImageParagraphs(m, name, role, data.clubContact).map(p=>`<p>${escapeHtml(p)}</p>`).join('');
+    const soleParent = soleParentEl ? soleParentEl.checked : false;
+    const name2El = overlay.querySelector('#sigSigner2Name');
+    const role2El = overlay.querySelector('#sigSigner2Role');
+    const name2 = name2El ? name2El.value.trim() : '';
+    const role2 = role2El ? role2El.value : '';
+    overlay.querySelector('.sig-doc-text').innerHTML = droitImageParagraphs(m, name, role, data.clubContact, name2, role2, soleParent).map(p=>`<p>${escapeHtml(p)}</p>`).join('');
   };
   overlay.querySelector('#sigSigner1Name').addEventListener('input', refreshText);
   const roleSel = overlay.querySelector('#sigSigner1Role');
   if(roleSel) roleSel.addEventListener('change', refreshText);
-  const toggleBtn = overlay.querySelector('#sigToggleSecondSigner');
-  if(toggleBtn){
-    toggleBtn.addEventListener('click', ()=>{
-      const block = overlay.querySelector('#sigSecondSignerBlock');
-      const showing = block.style.display !== 'none';
-      block.style.display = showing ? 'none' : 'block';
-      toggleBtn.textContent = showing ? '+ Ajouter un second signataire (autre parent)' : '✕ Retirer le second signataire';
-      if(!showing && !pad2){
-        const canvas2 = overlay.querySelector('#sigCanvas2');
-        setupSignatureCanvasSize(canvas2);
-        pad2 = initSignaturePad(canvas2);
-        overlay.querySelector('#sigClear2').addEventListener('click', ()=> pad2.clear());
-      }
+  const name2El = overlay.querySelector('#sigSigner2Name');
+  if(name2El) name2El.addEventListener('input', refreshText);
+  const role2Sel = overlay.querySelector('#sigSigner2Role');
+  if(role2Sel) role2Sel.addEventListener('change', refreshText);
+  // Cocher "j'exerce seul l'autorité parentale" grise le second bloc (non requis, mais reste
+  // modifiable si la case est décochée à nouveau — rien n'est effacé) plutôt que de le masquer, pour
+  // qu'il reste clair qu'un choix explicite a été fait, dans un sens ou dans l'autre.
+  if(soleParentEl && secondBlock){
+    soleParentEl.addEventListener('change', ()=>{
+      const checked = soleParentEl.checked;
+      secondBlock.style.opacity = checked ? '0.45' : '1';
+      secondBlock.querySelectorAll('input,select,button').forEach(el=>{ el.disabled = checked; });
+      refreshText();
     });
   }
   overlay.querySelector('#sigCancelBtn').addEventListener('click', closeSignatureOverlay);
@@ -2944,19 +3097,28 @@ function wireSignatureOverlay(m, docKey, isMajor){
     if(!isMajor && !signer1Name){ showToast('Indique le nom du responsable légal.'); return; }
     const roleEl = overlay.querySelector('#sigSigner1Role');
     const signer1Role = roleEl ? roleEl.value : '';
-    const secondBlock = overlay.querySelector('#sigSecondSignerBlock');
-    const secondBlockVisible = secondBlock && secondBlock.style.display !== 'none';
-    let signer2Name = '', signer2Role = '', sig2DataUrl = '';
-    if(secondBlockVisible && pad2 && !pad2.isEmpty()){
-      signer2Name = overlay.querySelector('#sigSigner2Name').value.trim();
-      signer2Role = overlay.querySelector('#sigSigner2Role').value;
-      if(signer2Name) sig2DataUrl = pad2.toDataURL();
+    let signer2Name = '', signer2Role = '', sig2DataUrl = '', soleParent = false;
+    if(isMinorDroitImage){
+      // La publication de l'image d'un mineur suppose en principe l'accord des DEUX titulaires de
+      // l'autorité parentale (acte non usuel) — voir audit du 09/08/2026. On ne déduit donc plus
+      // silencieusement "un seul parent signe" d'un second bloc resté vide : soit il est rempli et
+      // signé, soit la case dédiée doit être cochée explicitement.
+      soleParent = !!(soleParentEl && soleParentEl.checked);
+      if(!soleParent){
+        signer2Name = overlay.querySelector('#sigSigner2Name').value.trim();
+        signer2Role = overlay.querySelector('#sigSigner2Role').value;
+        if(!signer2Name || !pad2 || pad2.isEmpty()){
+          showToast('Renseigne et fais signer le second parent, ou coche « j’exerce seul l’autorité parentale ».');
+          return;
+        }
+        sig2DataUrl = pad2.toDataURL();
+      }
     }
     const btn = overlay.querySelector('#sigSubmitBtn');
     btn.disabled = true; btn.textContent = 'Génération en cours…';
     try{
       await generateAndUploadSignedDocument(m, docKey, {
-        signer1Name, signer1Role, signer2Name, signer2Role,
+        signer1Name, signer1Role, signer2Name, signer2Role, soleParent,
         sig1DataUrl: pad1.toDataURL(), sig2DataUrl
       });
       closeSignatureOverlay();
@@ -2992,7 +3154,7 @@ function buildSignatureDocumentPdfHtml(m, docKey, fv){
   const logoSrc = logoImg ? logoImg.src : '';
   const isCharte = docKey==='docCharte';
   const title = isCharte ? 'Charte des Membres de l’AMAM' : 'Formulaire de Droit à l’Image';
-  const paragraphs = isCharte ? charteParagraphs() : droitImageParagraphs(m, fv.signer1Name, fv.signer1Role, data.clubContact);
+  const paragraphs = isCharte ? charteParagraphs() : droitImageParagraphs(m, fv.signer1Name, fv.signer1Role, data.clubContact, fv.signer2Name, fv.signer2Role, fv.soleParent);
   const dateLabel = fmtDateLong(todayStr());
   const signatureBlockHtml = (name, role, sigDataUrl, isFirst)=> !sigDataUrl ? '' : `
     <div style="margin-top:${isFirst?26:20}px;">
@@ -3589,6 +3751,28 @@ function wireFamilyPortalPalmares(body){
     btn.addEventListener('click', ()=> generateMemberPalmaresPdf(btn.dataset.fpPalmares));
   });
 }
+// Information RGPD destinée aux familles (voir audit conformité du 09/08/2026 : la note interne et
+// la clause de sous-traitance existaient déjà au bureau, mais rien n'était visible par les familles
+// elles-mêmes dans l'application, alors que l'obligation d'information (articles 12 à 14 du RGPD)
+// porte sur elles). Reprend le fond du paragraphe déjà rédigé par Thomas dans la note interne
+// ("Annexe — Texte à intégrer sur le formulaire d'inscription"), adapté au registre "vous" utilisé
+// ailleurs dans l'espace famille — jamais le modèle d'accès "clé de connexion partagée" décrit dans
+// cette même note, devenu obsolète depuis le passage aux comptes individuels (admin/prof/secrétaire/
+// comptable), qui ne concerne de toute façon pas les familles. Purement informatif : aucun champ à
+// remplir, aucune action serveur.
+function familyPortalRgpdHtml(){
+  const contactHtml = (data.clubContact||'').trim()
+    ? (data.clubContact||'').split('\n').map(l=>escapeHtml(l)).join('<br>')
+    : 'amam91540@gmail.com';
+  return `<div class="fp-card">
+    <h3>🔒 Vos données personnelles</h3>
+    <p>Les informations concernant ${escapeHtml((data.clubName||'le club'))} sont gérées par l’Académie Menneçoise d’Arts Martiaux (AMAM), association loi 1901, représentée par sa Présidente — Dojo Municipal de Villeroy, Boulevard Charles de Gaulle, 91540 Mennecy.</p>
+    <p>Elles servent uniquement à la gestion des inscriptions, au suivi pédagogique (présences, passages de grade), aux convocations aux compétitions et aux cotisations, ainsi qu’aux obligations fédérales liées à la licence (identité, certificat médical ou attestation de santé selon l’âge). Elles ne sont communiquées à aucun tiers en dehors de ces besoins.</p>
+    <p>Elles sont conservées 3 ans après la fin de l’adhésion, délai correspondant aux besoins comptables et assurantiels de l’association.</p>
+    <p>Conformément au Règlement Général sur la Protection des Données (RGPD), vous disposez à tout moment d’un droit d’accès, de rectification et de suppression de ces données. Pour l’exercer, écrivez au club :</p>
+    <p style="color:var(--ink-dim); font-size:13px;">${contactHtml}</p>
+  </div>`;
+}
 
 function getSession(){
   try{ return JSON.parse(localStorage.getItem('dojo-session')||'null'); }catch(e){ return null; }
@@ -4103,6 +4287,19 @@ function mergeLocalPendingAttendance(serverAtt, localAtt, snapshotAtt){
   return any ? merged : (serverAtt||{});
 }
 
+// Verrou d'écriture serveur (voir withMembersWriteLock côté Code.gs) : malgré son nom, il protège en
+// réalité 9 feuilles à chaque sauvegarde classique (groupes, membres, séances, présences, réglages,
+// convocations, stages, passages de grade, calendrier), avec 10s d'attente max avant ce message
+// précis. Deux sauvegardes qui se chevauchent (deux profs, ou un admin et un dépôt de document
+// famille) restent rares pour un club de cette taille, mais plutôt que de réduire ce verrou (perdrait
+// la protection entre deux sauvegardes admin/prof concurrentes sur les 8 autres feuilles — voir
+// échange avec Thomas du 09/08/2026), on réessaie automatiquement CE cas précis côté client : la
+// personne ne voit jamais l'alerte pour une collision qui se résorbe en une poignée de secondes.
+const SAVE_LOCK_BUSY_MESSAGE = 'Le serveur est momentanément occupé par une autre modification — réessaie dans quelques secondes.';
+const SAVE_LOCK_RETRY_MAX = 2;
+function saveLockRetryDelayMs(attemptNumber){
+  return 1200 + Math.floor(Math.random()*900) + (attemptNumber-1)*500; // léger backoff + aléa, pour éviter que deux appareils qui se sont heurtés une fois ne se re-heurtent au même instant en retentant
+}
 async function saveData(opts){
   try{
     localStorage.setItem('dojo-data', JSON.stringify(data));
@@ -4118,6 +4315,7 @@ async function saveData(opts){
     savePendingAfter = true; // une sauvegarde est déjà en cours : on en referont une juste après avec l'état le plus récent
     return;
   }
+  const lockRetryCount = (opts && opts.lockRetryCount) || 0;
   const extraPayloadFields = pendingExtraPayloadFields;
   pendingExtraPayloadFields = null;
   saveInFlight = true;
@@ -4158,6 +4356,27 @@ async function saveData(opts){
       showLoginScreen('Session expirée, reconnecte-toi pour continuer à synchroniser.');
       return;
     }
+    // Un succès ne se déduit plus par élimination (l'absence de l'erreur 'unauthorized'), mais se
+    // VÉRIFIE explicitement : le serveur renvoie toujours {ok:true} pour une écriture réussie (voir
+    // doPost dans Code.gs). Tout le reste — verrou "Membres" momentanément occupé, exception côté
+    // serveur, réponse illisible (json === null, ci-dessus) — doit être traité comme un échec : sans
+    // ce contrôle, ces cas avançaient silencieusement le témoin de synchro comme si l'écriture avait
+    // réussi, faisant disparaître la modification au prochain chargement sans le moindre message
+    // (constat le plus sérieux de l'audit fiabilité du 07/08/2026).
+    if(!json || json.ok !== true){
+      // Collision de verrou serveur (voir SAVE_LOCK_BUSY_MESSAGE ci-dessus) : ce cas précis se
+      // résorbe presque toujours en quelques secondes tout seul, donc on réessaie automatiquement
+      // avant d'ennuyer la personne avec une alerte — jusqu'à SAVE_LOCK_RETRY_MAX fois. Les données
+      // à renvoyer sont recalculées au moment du retry (pickChangedById relit `data` à cet instant),
+      // donc toute modification faite PENDANT l'attente est automatiquement incluse, pas perdue.
+      if(json && json.error === SAVE_LOCK_BUSY_MESSAGE && lockRetryCount < SAVE_LOCK_RETRY_MAX){
+        const nextAttempt = lockRetryCount + 1;
+        setTimeout(()=> saveData({ extraPayloadFields, lockRetryCount: nextAttempt }), saveLockRetryDelayMs(nextAttempt));
+        return;
+      }
+      showSaveFailureAlert('Sauvegarde en ligne échouée — ta dernière modification est gardée en local, nouvel essai à la prochaine sauvegarde.');
+      return;
+    }
     // Les suppressions qu'on vient d'envoyer ont été appliquées côté classeur : on ne retire QUE
     // celles-là de la liste en attente (pas toute la liste, qui peut déjà contenir une suppression
     // plus récente demandée pendant cet envoi et jamais encore transmise).
@@ -4170,8 +4389,9 @@ async function saveData(opts){
     // succès — jamais recalculée depuis l'état courant de `data`, qui peut déjà être en avance.
     advanceSyncedSnapshot(sentChanged);
     flashSyncDot();
+    dismissSaveAlert(); // une sauvegarde qui repasse au vert efface toute alerte laissée par un échec précédent
   }catch(e){
-    showToast('Sauvegarde en ligne impossible — gardée en local seulement');
+    showSaveFailureAlert('Sauvegarde en ligne impossible (connexion) — ta dernière modification est gardée en local, nouvel essai à la prochaine sauvegarde.');
   } finally {
     saveInFlight = false;
     if(savePendingAfter){
@@ -4356,7 +4576,7 @@ function openChangePasswordOverlay(){
         <input type="password" id="cpCurrent" autocomplete="current-password">
       </label>
       <label>Nouveau mot de passe
-        <input type="password" id="cpNew" placeholder="4 caractères minimum" autocomplete="new-password">
+        <input type="password" id="cpNew" placeholder="10 caractères minimum" autocomplete="new-password">
       </label>
       <label>Confirmer le nouveau mot de passe
         <input type="password" id="cpConfirm" autocomplete="new-password">
@@ -4374,7 +4594,7 @@ function openChangePasswordOverlay(){
     const newPassword = document.getElementById('cpNew').value;
     const confirmPassword = document.getElementById('cpConfirm').value;
     if(!currentPassword){ statusEl.textContent = 'Saisis ton mot de passe actuel.'; statusEl.style.color = '#B3492F'; return; }
-    if(!newPassword || newPassword.length < 4){ statusEl.textContent = 'Nouveau mot de passe trop court (4 caractères minimum).'; statusEl.style.color = '#B3492F'; return; }
+    if(!newPassword || newPassword.length < 10){ statusEl.textContent = 'Nouveau mot de passe trop court (10 caractères minimum).'; statusEl.style.color = '#B3492F'; return; }
     if(newPassword !== confirmPassword){ statusEl.textContent = 'Les deux nouveaux mots de passe ne correspondent pas.'; statusEl.style.color = '#B3492F'; return; }
     const s = getSession();
     if(!s || !s.sessionToken){ statusEl.textContent = 'Non connecté.'; statusEl.style.color = '#B3492F'; return; }
@@ -4576,7 +4796,7 @@ const TAB_RENDER_FNS = {
   suivi: [renderSuiviTab, renderSuiviAlerts, renderCompetitionsCalendarCard, renderCotisationsCard, renderDisciplineCalendarCard],
   convoc: [renderConvocTab],
   resultats: [renderResultsTab],
-  param: [renderDuplicateGroupsCard, renderDuplicateMembersCard, renderFamilySuggestionsCard, renderFamilyGroupsCard, renderAgeSettings, renderMembershipFeesSettings, renderAttestationSettings, renderImportedCompetitionsSettings, renderBackendSettings, renderAccountsCard, renderActivityLogCard, renderLicensePendingCard, renderArchiveCard, renderBirthdaysCard, renderExportCard]
+  param: [renderDuplicateGroupsCard, renderDuplicateMembersCard, renderFamilySuggestionsCard, renderFamilyGroupsCard, renderAgeSettings, renderMembershipFeesSettings, renderAttestationSettings, renderImportedCompetitionsSettings, renderBackendSettings, renderAccountsCard, renderActivityLogCard, renderInactiveMembersCard, renderLicensePendingCard, renderArchiveCard, renderBirthdaysCard, renderExportCard]
 };
 function renderActiveTab(){
   if(!ready) return;
@@ -9017,6 +9237,79 @@ function renderActivityLogCard(){
     showToast('Journal vidé');
   });
 }
+
+/* ---------------- FICHES INACTIVES DEPUIS PLUSIEURS SAISONS — RGPD (admin uniquement) ---------------- */
+// Audit du 09/08/2026, point P1 : la note RGPD du club fixe une conservation de 3 ans après la fin
+// de l'adhésion (voir l'onglet RGPD de l'espace famille), mais rien dans l'outil ne permettait de
+// repérer CONCRÈTEMENT les fiches concernées — jusqu'ici une règle écrite, jamais vérifiable.
+// Une fiche devient "archivée" (member.archived) quand un import Excel ne la retrouve plus dans
+// l'effectif (voir showImportArchiveOverlay) ou automatiquement au roulement de saison (fiche jumelle
+// non reprise, voir archiveCurrentSeason) — mais aucune date n'est enregistrée à ce moment-là. On se
+// base donc sur data.archivedSeasons (un instantané PAR saison archivée, avec sa propre liste de
+// membres à ce moment précis) pour retrouver la DERNIÈRE saison dans laquelle la fiche apparaissait
+// encore : la différence avec la saison en cours donne le nombre de saisons d'inactivité. Une fiche
+// jamais vue dans aucune saison archivée (ex: quittée avant la toute première « Archiver la
+// saison ») n'a pas de repère fiable — on la montre quand même, marquée « à vérifier », plutôt que de
+// risquer de la laisser invisible indéfiniment.
+function memberLastKnownActiveSeasonYear(m){
+  const years = (data.archivedSeasons||[])
+    .filter(a=>(a.members||[]).some(x=>x.id===m.id))
+    .map(a=>(a.settings && a.settings.seasonStartYear) || null)
+    .filter(y=>y!=null);
+  return years.length ? Math.max(...years) : null;
+}
+function memberInactiveSeasonsCount(m){
+  const lastActive = memberLastKnownActiveSeasonYear(m);
+  if(lastActive==null) return null;
+  const currentYear = data.settings.seasonStartYear || autoSeasonStartYear();
+  return Math.max(0, currentYear - lastActive);
+}
+function inactiveMembersForRgpdReview(){
+  return (data.members||[])
+    .filter(m=>m.archived)
+    .map(m=>({ member:m, inactiveSeasons: memberInactiveSeasonsCount(m) }))
+    .filter(x=> x.inactiveSeasons===null || x.inactiveSeasons>=3)
+    .sort((a,b)=> (b.inactiveSeasons==null?999:b.inactiveSeasons) - (a.inactiveSeasons==null?999:a.inactiveSeasons));
+}
+function renderInactiveMembersCard(){
+  const wrap = document.getElementById('inactive-members-card');
+  if(!wrap) return;
+  const session = getSession();
+  if(!session || session.role!=='admin'){ wrap.innerHTML = ''; return; }
+  const items = inactiveMembersForRgpdReview();
+  wrap.innerHTML = `
+    <h2>🗑️ Fiches inactives depuis 3 saisons ou plus</h2>
+    <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 12px; line-height:1.5;">
+      La note RGPD du club prévoit de conserver les données d'un élève 3 ans maximum après la fin de son adhésion. Voici les fiches archivées (élèves non repris) concernées — à vérifier avant suppression définitive.
+    </p>
+    ${items.length===0 ? '<div class="empty">Aucune fiche concernée pour l’instant.</div>' : `
+    <div style="display:flex; flex-direction:column; gap:2px;">
+      ${items.map(({member:m, inactiveSeasons})=>`
+        <div class="convoc-row" style="align-items:flex-start;">
+          <div class="info">
+            <div class="n">${escapeHtml(m.name)}</div>
+            <div class="e">${inactiveSeasons==null ? 'Dernière saison active inconnue — à vérifier manuellement' : `Inactif depuis ${inactiveSeasons} saison${inactiveSeasons===1?'':'s'}`}</div>
+          </div>
+          <button class="ghost icon-btn" data-action="delete-inactive-member" data-id="${m.id}" title="Supprimer définitivement" style="flex-shrink:0; padding:8px 9px;">🗑️</button>
+        </div>`).join('')}
+    </div>`}
+  `;
+  wrap.querySelectorAll('[data-action="delete-inactive-member"]').forEach(btn=>{
+    btn.addEventListener('click', ()=> deleteInactiveMemberPermanently(btn.dataset.id));
+  });
+}
+async function deleteInactiveMemberPermanently(memberId){
+  const m = (data.members||[]).find(x=>x.id===memberId);
+  if(!m) return;
+  if(!(await confirmDialog(`Supprimer DÉFINITIVEMENT la fiche de ${m.name} ? Ses documents (certificat, charte, droit à l'image...) seront aussi effacés du Drive du club. Cette action est irréversible.`, { danger:true, title:'Suppression définitive (RGPD)', confirmLabel:'Supprimer définitivement' }))) return;
+  markDeleted('members', memberId);
+  data.members = data.members.filter(x=>x.id!==memberId);
+  await saveData();
+  renderInactiveMembersCard();
+  renderActiveTab();
+  showToast('Fiche supprimée définitivement.');
+}
+
 async function fetchAccounts(){
   const s = getSession();
   if(!s || !s.sessionToken) return [];
@@ -9122,7 +9415,7 @@ function openAccountOverlay(account){
         <input type="text" id="accUsername" value="${account ? escapeHtml(account.username||'') : ''}" placeholder="Ex : julien.judo" autocomplete="off">
       </label>
       <label>${isEdit ? 'Nouveau mot de passe (laisser vide pour ne pas changer)' : 'Mot de passe'}
-        <input type="password" id="accPassword" placeholder="4 caractères minimum" autocomplete="new-password">
+        <input type="password" id="accPassword" placeholder="10 caractères minimum" autocomplete="new-password">
       </label>
       <label>Rôle
         <select id="accRole">
@@ -9182,7 +9475,8 @@ function openAccountOverlay(account){
     const preservedHiddenNames = (account && Array.isArray(account.groupNames)) ? account.groupNames.filter(n=>!visibleGroupNames.has(n)) : [];
     const groupNames = selRole==='prof' ? [...new Set([...checkedNames, ...preservedHiddenNames])] : [];
     if(!username){ statusEl.textContent = 'Identifiant requis.'; statusEl.style.color = '#B3492F'; return; }
-    if(!isEdit && (!password || password.length < 4)){ statusEl.textContent = 'Mot de passe trop court (4 caractères minimum).'; statusEl.style.color = '#B3492F'; return; }
+    if(!isEdit && (!password || password.length < 10)){ statusEl.textContent = 'Mot de passe trop court (10 caractères minimum).'; statusEl.style.color = '#B3492F'; return; }
+    if(isEdit && password && password.length < 10){ statusEl.textContent = 'Nouveau mot de passe trop court (10 caractères minimum).'; statusEl.style.color = '#B3492F'; return; }
     if(selRole==='prof' && !groupIds.length){ statusEl.textContent = 'Sélectionne au moins un cours pour un compte prof.'; statusEl.style.color = '#B3492F'; return; }
     const s = getSession();
     if(!s || !s.sessionToken){ statusEl.textContent = 'Non connecté.'; statusEl.style.color = '#B3492F'; return; }
