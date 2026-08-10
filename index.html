@@ -1163,6 +1163,12 @@
         <svg class="section-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M9 6l6 6-6 6"/></svg>
       </button>
       <div class="section-group-body">
+        <div class="card">
+          <h2>Conservation et suppression des données</h2>
+          <p style="font-size:12.5px; color:var(--ink-dim); margin:-6px 0 0; line-height:1.5;">
+            Cette rubrique regroupe ce qui concerne la durée de conservation des fiches élèves et leur suppression, conformément à la note RGPD du club (adhésion + 5 ans maximum après le terme). Elle affiche automatiquement les fiches archivées (élèves non repris) concernées dès qu'il y en a, avec un bouton pour les supprimer définitivement, ainsi que l'historique des suppressions déjà effectuées.
+          </p>
+        </div>
         <div class="card" id="inactive-members-card" style="display:none;"></div>
       </div>
     </div>
@@ -4510,6 +4516,13 @@ function applyRoleUI(){
   if(accountsCard) accountsCard.style.display = (session && session.role === 'admin') ? '' : 'none';
   const activityLogCard = document.getElementById('activity-log-card');
   if(activityLogCard) activityLogCard.style.display = (session && session.role === 'admin') ? '' : 'none';
+  // Bug corrigé le 10/08/2026 : cette carte avait style="display:none" en dur dans le HTML et
+  // n'était jamais réaffichée nulle part (contrairement à accountsCard/activityLogCard juste
+  // au-dessus, qui suivent pourtant le même pattern) — la section RGPD des Réglages restait donc
+  // invisible EN PERMANENCE, même pour l'admin et même avec des fiches à traiter dedans. C'est ce que
+  // Thomas signalait comme "totalement vide".
+  const inactiveMembersCard = document.getElementById('inactive-members-card');
+  if(inactiveMembersCard) inactiveMembersCard.style.display = (session && session.role === 'admin') ? '' : 'none';
   // "Gros réglages" réservés à l'admin (demande Thomas pour le rôle Secrétaire) : archiver la
   // saison, réinitialiser toutes les données, préparer la saison suivante. Seul admin voit ces 3
   // cartes/boutons dans l'onglet Param — masquage affichage uniquement, la vraie protection
@@ -5020,6 +5033,7 @@ function renderGroupsTab(){
                 <button class="ghost icon-btn" data-action="member-history-pdf" data-id="${m.id}" title="Générer l'historique complet (résultats, passages de grade, stages) en PDF" style="padding:7px 10px;">📄 Historique PDF</button>
                 ${isAdminSession() ? `<button class="ghost icon-btn" data-action="family-portal-link" data-id="${m.id}" title="Envoyer l'accès à l'espace personnel famille" style="padding:7px 10px;">🔗 Espace famille</button>` : ''}
                 <button class="ghost icon-btn" data-action="edit-member-fiche" data-id="${m.id}" title="Modifier les informations" style="padding:7px 10px;">✏️</button>
+                ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="archive-member" data-id="${m.id}" title="Ne participe plus (licence non renouvelée...) sans rien supprimer" style="font-size:12px; padding:7px 10px;">Archiver</button>`}
                 ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="del-member" data-id="${m.id}" style="font-size:12px; padding:7px 10px;">Retirer</button>`}
               </div>`;
             }
@@ -5159,6 +5173,7 @@ function renderGroupsTab(){
           </div>
           <div style="display:flex; justify-content:flex-end; gap:8px;">
             <button class="ghost icon-btn" data-action="done-member-fiche" data-id="${m.id}" title="Terminer la modification" style="padding:7px 10px;">✓ Terminé</button>
+            ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="archive-member" data-id="${m.id}" title="Ne participe plus (licence non renouvelée...) sans rien supprimer" style="font-size:12px; padding:7px 10px;">Archiver</button>`}
             ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="del-member" data-id="${m.id}" style="font-size:12px; padding:7px 10px;">Retirer</button>`}
           </div>`;
           })() : ''}
@@ -5750,6 +5765,8 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
     markDeleted('members', btn.dataset.id);
     data.members = data.members.filter(x=>x.id!==btn.dataset.id);
     saveData(); renderActiveTab();
+  } else if(action==='archive-member'){
+    archiveMember(btn.dataset.id);
   } else if(action==='archived-search-btn'){
     const input = document.getElementById(btn.dataset.input);
     const query = input.value.trim();
@@ -5975,6 +5992,23 @@ function syncLinkedMember(m){
 // Réactive un élève archivé en le rattachant au cours indiqué : on modifie l'élève existant
 // (même id) au lieu d'en créer un nouveau, donc tout son historique (passages de grade,
 // résultats, stages, présences passées) reste automatiquement rattaché.
+// Demande Thomas du 10/08/2026 : le seul bouton disponible sur une fiche ("Retirer") supprime
+// définitivement (tombstone, voir del-member). Il manquait un moyen d'archiver un élève qui ne
+// renouvelle pas sa licence SANS effacer sa fiche (historique, résultats, passages de grade...).
+// Réutilise le flag member.archived déjà utilisé ailleurs (réimport Excel, roulement de saison) :
+// la fiche sort simplement des listes actives (cours, présences, convocations — voir les filtres
+// !m.archived un peu partout) et redevient trouvable via « Retrouver un élève archivé » sous la
+// liste du cours, ou réactivable depuis un futur réimport/rattachement (reactivateArchivedMember
+// juste en dessous).
+async function archiveMember(memberId){
+  if(isProfSession()) return;
+  const m = data.members.find(x=>x.id===memberId);
+  if(!m) return;
+  if(!(await confirmDialog(`Archiver la fiche de ${m.name} ? Elle disparaîtra des listes de cours, présences et convocations, mais rien n'est supprimé : historique et résultats restent consultables, et tu pourras la retrouver par son nom (recherche « archivé ») si elle revient.`, { confirmLabel:'Archiver' }))) return;
+  m.archived = true;
+  saveData(); renderActiveTab();
+  showToast(`${m.name} archivé(e)`);
+}
 function reactivateArchivedMember(memberId, newGroupId){
   const m = data.members.find(x=>x.id===memberId);
   const newGroup = data.groups.find(x=>x.id===newGroupId);
