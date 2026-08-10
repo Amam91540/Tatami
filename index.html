@@ -2244,6 +2244,11 @@ async function sendFamilyDocumentBase64(memberId, docKey, base64, mimeType, cert
       // y compris pour remplacer un document déjà validé ou précédemment refusé — on reflète ça
       // immédiatement ici plutôt que d'attendre une relecture complète.
       m[docKey] = false; m[docKey+'Rejected'] = false;
+      // Bug du 10/08/2026 : un redépôt du droit à l'image après un retrait doit lever ce retrait
+      // (même logique que le serveur, voir familyPortalUploadDocument côté Code.gs) — sinon
+      // familyPortalDocumentUploadHtml continue d'afficher "Autorisation retirée" indéfiniment, même
+      // une fois le nouveau document validé par le club.
+      if(docKey==='docDroitImage'){ m.docDroitImageWithdrawn = false; m.docDroitImageWithdrawnAt = ''; }
       if(docKey==='docMedicalCert' && certDate) m.docMedicalCertDate = certDate;
     }
   }
