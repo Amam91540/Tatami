@@ -1413,7 +1413,7 @@ function matchBeltRank(text){
 }
 
 let data = { clubName:'', groups:[], members:[], sessions:[], attendance:{}, settings:{} };
-let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, viewingSeasonId:null, committeeSearchOpen:{}, addOtherGroupOpen:{} };
+let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, viewingSeasonId:null, committeeSearchOpen:{}, addOtherGroupOpen:{}, showOnlyPendingDocuments:false };
 let ready = false;
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -5321,10 +5321,23 @@ function renderGroupsTab(){
     if(nextSeasonView) return true;
     return data.members.some(m=>m.groupId===g.id && !m.archived && !m.forNextSeason);
   });
-  wrap.innerHTML = (nextSeasonView ? nextSeasonBannerHtml() : '') + visibleGroups.map(g=>{
-    const members = data.members.filter(m=>m.groupId===g.id && !m.archived && !!m.forNextSeason===nextSeasonView).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+  // Filtre discret "élèves avec un document en attente" (demande de Thomas du 18/08/2026) : le badge
+  // ci-dessous n'apparaît QUE s'il y a au moins un dépôt à vérifier — rien à l'écran le reste du
+  // temps, c'est tout le sens du "discret". Un clic (voir listener plus bas) bascule
+  // ui.showOnlyPendingDocuments pour ne montrer QUE ces élèves, tous groupes confondus et dépliés
+  // automatiquement ; un second clic revient à la vue complète habituelle.
+  const inSeasonView = m=>!m.archived && !!m.forNextSeason===nextSeasonView;
+  const pendingDocMembers = data.members.filter(m=>inSeasonView(m) && visibleGroups.some(g=>g.id===m.groupId) && memberHasPendingDocuments(m));
+  const pendingFilterActive = ui.showOnlyPendingDocuments && pendingDocMembers.length>0;
+  const pendingFilterBadgeHtml = pendingDocMembers.length ? `
+    <div class="tag" data-action="toggle-pending-documents-filter" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px; margin-bottom:10px; ${pendingFilterActive ? 'background:#8a6a1a; border-color:#8a6a1a; color:#fff;' : 'background:#FFF6E0; border-color:#E8C468; color:#8a6a1a;'}">
+      🆕 ${pendingDocMembers.length} document${pendingDocMembers.length>1?'s':''} à vérifier${pendingFilterActive ? ' — vue filtrée, cliquer pour tout revoir' : ' — cliquer pour filtrer'}
+    </div>` : '';
+  const groupsToRender = pendingFilterActive ? visibleGroups.filter(g=>pendingDocMembers.some(m=>m.groupId===g.id)) : visibleGroups;
+  wrap.innerHTML = (nextSeasonView ? nextSeasonBannerHtml() : '') + pendingFilterBadgeHtml + groupsToRender.map(g=>{
+    const members = data.members.filter(m=>m.groupId===g.id && inSeasonView(m) && (!pendingFilterActive || memberHasPendingDocuments(m))).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
     const draftId = 'draft-'+g.id;
-    const expanded = !!ui.groupsExpanded[g.id];
+    const expanded = pendingFilterActive || !!ui.groupsExpanded[g.id];
     const committee = isCommitteeGroup(g);
     return `
     <div class="group-block" data-group="${g.id}">
@@ -6109,6 +6122,12 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
   if(toggleEl){
     const gid = toggleEl.dataset.id;
     ui.groupsExpanded[gid] = !ui.groupsExpanded[gid];
+    renderGroupsTab();
+    return;
+  }
+  const togglePendingDocsBtn = e.target.closest('[data-action="toggle-pending-documents-filter"]');
+  if(togglePendingDocsBtn){
+    ui.showOnlyPendingDocuments = !ui.showOnlyPendingDocuments;
     renderGroupsTab();
     return;
   }
