@@ -8188,6 +8188,17 @@ function openPaymentFormOverlay(opts){
       if(!data.payments) data.payments = [];
       const idx = data.payments.findIndex(p=>p.id===payload.id);
       if(idx>=0) data.payments[idx] = payload; else data.payments.push(payload);
+      // Coche automatiquement "Cotisation" dès que le reste dû de la personne tombe à 0 (ou moins)
+      // suite à ce paiement (demande Thomas). On ne la décoche jamais tout seul ensuite — une
+      // modification/suppression ultérieure du paiement qui repasse le solde au-dessus de 0 ne doit
+      // pas effacer une case qu'on a pu aussi cocher/valider à la main.
+      payload.allocations.forEach(a=>{
+        const member = data.members.find(mm=>mm.id===a.memberId);
+        if(member && !member.docCotisation){
+          const due = memberRemainingDue(member);
+          if(due.remaining!==null && due.remaining<=0) member.docCotisation = true;
+        }
+      });
       // Rattache automatiquement ce paiement à un bordereau dès son enregistrement (voir
       // autoAssignPaymentToBordereau) — sans effet si déjà rattaché (édition d'un paiement existant).
       autoAssignPaymentToBordereau(payload);
