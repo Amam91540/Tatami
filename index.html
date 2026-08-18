@@ -3656,6 +3656,13 @@ function inscriptionDisciplineChecks(m){
     aikibudoEnfants: disc==='AIKI ENFANTS', taiso: disc==='TAISO', kobudo: disc==='KOBUDO'
   };
 }
+// Champs volontairement SANS placeholder d'exemple et avec autocomplete="off" (demande Thomas du
+// 18/08/2026) : un champ vide affichait un texte d'exemple ("8 Ruelle du Vieux Moulin", "06 12 34 56
+// 78"...) qui pouvait être confondu avec une vraie valeur déjà saisie, et surtout — comme ces champs
+// ressemblent à s'y méprendre à un formulaire d'adresse/téléphone classique — le navigateur les
+// auto-remplissait parfois avec une adresse/un numéro déjà enregistrés ailleurs (autofill), donnant
+// l'impression que la fiche "prenait les infos d'un autre élève" alors qu'un champ réellement vide
+// doit rester totalement vide sur la page.
 function buildInscriptionOverlayHtml(m, isMajor){
   const nameParts = String(m.name||'').trim().split(/\s+/);
   const prenom = nameParts[0]||'';
@@ -3663,7 +3670,7 @@ function buildInscriptionOverlayHtml(m, isMajor){
   const curGroup = (data.groups||[]).find(g=>g.id===m.groupId);
   const whatsapp2Block = isMajor ? '' : `
     <label>Tel N°2 pour Groupe WhatsApp
-      <input type="text" id="insWhatsapp2" value="${escapeHtml(m.whatsappPhone2||'')}" placeholder="06 12 34 56 78">
+      <input type="text" id="insWhatsapp2" value="${escapeHtml(m.whatsappPhone2||'')}" autocomplete="off">
     </label>
     <label>Lien de parenté (Tel N°2)
       <select id="insWhatsapp2Role">
@@ -3681,31 +3688,31 @@ function buildInscriptionOverlayHtml(m, isMajor){
         <p style="margin:6px 0 0;"><strong>Discipline (cours actuel) :</strong> ${curGroup?escapeHtml(curGroup.name):'—'} <span style="color:var(--ink-dim);">(non modifiable ici — contacte Nathalie pour changer de cours)</span></p>
       </div>
       <label>Adresse
-        <input type="text" id="insAddress" value="${escapeHtml(m.address||'')}" placeholder="8 Ruelle du Vieux Moulin">
+        <input type="text" id="insAddress" value="${escapeHtml(m.address||'')}" autocomplete="off">
       </label>
       <div class="row" style="gap:8px; margin:0;">
         <label style="flex:1;">Code postal
-          <input type="text" id="insPostalCode" value="${escapeHtml(m.postalCode||'')}" placeholder="91540">
+          <input type="text" id="insPostalCode" value="${escapeHtml(m.postalCode||'')}" autocomplete="off">
         </label>
         <label style="flex:1;">Ville
-          <input type="text" id="insCity" value="${escapeHtml(m.city||'')}" placeholder="Mennecy">
+          <input type="text" id="insCity" value="${escapeHtml(m.city||'')}" autocomplete="off">
         </label>
       </div>
       <label>Téléphone
-        <input type="text" id="insPhone" value="${escapeHtml(m.phone||'')}" placeholder="06 12 34 56 78">
+        <input type="text" id="insPhone" value="${escapeHtml(m.phone||'')}" autocomplete="off">
       </label>
       <label>Email (bien lisible)
-        <input type="text" id="insEmail" value="${escapeHtml(m.email||'')}" placeholder="parent@exemple.fr">
+        <input type="text" id="insEmail" value="${escapeHtml(m.email||'')}" autocomplete="off">
       </label>
       <label>Lieu de naissance
-        <input type="text" id="insBirthPlace" value="${escapeHtml(m.birthPlace||'')}" placeholder="Évry">
+        <input type="text" id="insBirthPlace" value="${escapeHtml(m.birthPlace||'')}" autocomplete="off">
       </label>
       ${isMajor ? `
       <label>Profession (licenciés adultes)
-        <input type="text" id="insProfession" value="${escapeHtml(m.profession||'')}" placeholder="Profession">
+        <input type="text" id="insProfession" value="${escapeHtml(m.profession||'')}" autocomplete="off">
       </label>` : ''}
       <label>${isMajor?'Tel pour Groupe WhatsApp':'Tel N°1 pour Groupe WhatsApp'}
-        <input type="text" id="insWhatsapp1" value="${escapeHtml(m.whatsappPhone1||'')}" placeholder="06 12 34 56 78">
+        <input type="text" id="insWhatsapp1" value="${escapeHtml(m.whatsappPhone1||'')}" autocomplete="off">
       </label>
       <label>Lien de parenté${isMajor?'':' (Tel N°1)'}
         <select id="insWhatsapp1Role">
@@ -3881,11 +3888,14 @@ async function generateAndUploadInscriptionDocument(m, isMajor, fields, sigDataU
 }
 // Génération côté admin/secrétaire (demande Thomas du 18/08/2026) : exactement le même document que
 // celui rempli par la famille (buildInscriptionPdfHtml, même mise en forme) mais généré directement
-// depuis la fiche élève (cotisation), avec les informations DÉJÀ enregistrées sur la fiche — utile
-// pour une inscription faite en personne au club, sans passer par l'espace famille. Toujours sans
-// signature (le champ reste vierge sur le PDF, à faire signer à la main) : on ne génère jamais une
-// fausse signature électronique au nom de la famille, et un document déjà signé électroniquement par
-// la famille reste consultable via le bouton "📎 Voir" existant (memberDocumentViewButtonHtml).
+// depuis la fiche élève elle-même (bouton parmi Modifier/Archiver/Retirer — jamais depuis Détail &
+// cotisation, où il apparaissait au départ, sur demande explicite de Thomas), avec les informations
+// DÉJÀ enregistrées sur la fiche — utile pour une inscription faite en personne au club, sans passer
+// par l'espace famille. Un champ vide sur la fiche (m.xxx||'') reste un champ vide sur le PDF, jamais
+// une valeur d'exemple ni celle d'un autre élève. Toujours sans signature (le champ reste vierge sur
+// le PDF, à faire signer à la main) : on ne génère jamais une fausse signature électronique au nom de
+// la famille, et un document déjà signé électroniquement par la famille reste consultable via le
+// bouton "📎 Voir" existant (memberDocumentViewButtonHtml).
 function buildAdminInscriptionFields(m, isMajor){
   const fields = {
     address: m.address||'', postalCode: m.postalCode||'', city: m.city||'',
@@ -3896,6 +3906,9 @@ function buildAdminInscriptionFields(m, isMajor){
   else { fields.whatsappPhone2 = m.whatsappPhone2||''; fields.whatsappPhone2Role = m.whatsappPhone2Role||''; }
   return fields;
 }
+// Ouvre le PDF dans un nouvel onglet et lance directement l'impression (voir printDataUri) plutôt que
+// de forcer un téléchargement automatique (demande Thomas) : la visionneuse PDF native du navigateur
+// laisse ensuite le choix d'imprimer, d'enregistrer, ou simplement de fermer sans rien garder.
 async function generateInscriptionPdfForMember(memberId, btn){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
     showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
@@ -3913,9 +3926,8 @@ async function generateInscriptionPdfForMember(memberId, btn){
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
     addCanvasFitOrTop(pdf, canvas, 24);
-    const safeName = displayNameOrder(m.name).replace(/[\\/:*?"<>|]+/g,'').trim();
-    pdf.save(`${safeName} - Feuille d'inscription.pdf`);
-    showToast('Feuille d’inscription générée');
+    printDataUri(pdf.output('datauristring'));
+    showToast('Feuille d’inscription générée — imprime-la ou enregistre-la depuis l’onglet qui vient de s’ouvrir.');
   } catch(err){
     showToast('Échec de la génération : ' + (err.message||err));
   } finally {
@@ -5477,6 +5489,7 @@ function renderGroupsTab(){
               })() : ''}
               <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px; flex-wrap:wrap;">
                 <button class="ghost icon-btn" data-action="member-history-pdf" data-id="${m.id}" title="Générer l'historique complet (résultats, passages de grade, stages) en PDF" style="padding:7px 10px;">📄 Historique PDF</button>
+                ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="generate-inscription-pdf" data-id="${m.id}" title="Génère la feuille d'inscription pré-remplie avec les infos de la fiche (comme sur l'espace famille), sans signature — à imprimer" style="padding:7px 10px;">🖨 Feuille d'inscription</button>`}
                 ${isAdminSession() ? `<button class="ghost icon-btn" data-action="family-portal-link" data-id="${m.id}" title="Envoyer l'accès à l'espace personnel famille" style="padding:7px 10px;">🔗 Espace famille</button>` : ''}
                 <button class="ghost icon-btn" data-action="edit-member-fiche" data-id="${m.id}" title="Modifier les informations" style="padding:7px 10px;">✏️</button>
                 ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="archive-member" data-id="${m.id}" title="Ne participe plus (licence non renouvelée...) sans rien supprimer" style="font-size:12px; padding:7px 10px;">Archiver</button>`}
@@ -6204,6 +6217,8 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
   const action = btn.dataset.action;
   if(action==='member-history-pdf'){
     generateMemberPalmaresPdf(btn.dataset.id);
+  } else if(action==='generate-inscription-pdf'){
+    generateInscriptionPdfForMember(btn.dataset.id, btn);
   } else if(action==='family-portal-link'){
     openFamilyPortalLinkOverlay(btn.dataset.id);
   } else if(action==='del-member'){
@@ -8362,7 +8377,7 @@ function renderMemberCotisationOverlay(memberId){
           <label style="display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; cursor:pointer;">
             <input type="checkbox" data-action="toggle-member-document" data-key="${it.key}" ${checked?'checked':''}>
             ${escapeHtml(it.label)}
-          </label>${memberDocMedicalCertDateHintHtml(m, it.key)}${memberDocumentViewButtonHtml(m, it.key, it.label)}${it.key==='docFeuilleInscription' ? ` <button type="button" class="ghost" data-action="generate-inscription-pdf" data-member="${m.id}" style="padding:2px 8px; font-size:11px;" title="Génère le même document que celui rempli sur l'espace famille, avec les infos déjà sur la fiche — signature à faire à la main">🖨 Générer</button>` : ''}`;
+          </label>${memberDocMedicalCertDateHintHtml(m, it.key)}${memberDocumentViewButtonHtml(m, it.key, it.label)}`;
         }).join('')}
       </div>
       ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
@@ -8428,9 +8443,6 @@ function renderMemberCotisationOverlay(memberId){
       if(cb.dataset.key==='docMedicalCert' && cb.checked && !wasChecked) applyMedicalCertDateOnValidation(t);
       saveData(); renderActiveTab();
     });
-  });
-  overlay.querySelectorAll('[data-action="generate-inscription-pdf"]').forEach(btn=>{
-    btn.addEventListener('click', ()=> generateInscriptionPdfForMember(btn.dataset.member, btn));
   });
   document.getElementById('mc-feerank').addEventListener('change', e=>{
     m.feeRank = e.target.value; saveData(); renderMemberCotisationOverlay(memberId); renderActiveTab();
