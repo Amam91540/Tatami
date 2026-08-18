@@ -3879,6 +3879,49 @@ async function generateAndUploadInscriptionDocument(m, isMajor, fields, sigDataU
   showToast('Feuille d’inscription envoyée — en attente de vérification par le club.');
   renderFamilyPortalTabContent();
 }
+// Génération côté admin/secrétaire (demande Thomas du 18/08/2026) : exactement le même document que
+// celui rempli par la famille (buildInscriptionPdfHtml, même mise en forme) mais généré directement
+// depuis la fiche élève (cotisation), avec les informations DÉJÀ enregistrées sur la fiche — utile
+// pour une inscription faite en personne au club, sans passer par l'espace famille. Toujours sans
+// signature (le champ reste vierge sur le PDF, à faire signer à la main) : on ne génère jamais une
+// fausse signature électronique au nom de la famille, et un document déjà signé électroniquement par
+// la famille reste consultable via le bouton "📎 Voir" existant (memberDocumentViewButtonHtml).
+function buildAdminInscriptionFields(m, isMajor){
+  const fields = {
+    address: m.address||'', postalCode: m.postalCode||'', city: m.city||'',
+    phone: m.phone||'', email: m.email||'', birthPlace: m.birthPlace||'',
+    whatsappPhone1: m.whatsappPhone1||'', whatsappPhone1Role: m.whatsappPhone1Role||''
+  };
+  if(isMajor) fields.profession = m.profession||'';
+  else { fields.whatsappPhone2 = m.whatsappPhone2||''; fields.whatsappPhone2Role = m.whatsappPhone2Role||''; }
+  return fields;
+}
+async function generateInscriptionPdfForMember(memberId, btn){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const m = data.members.find(x=>x.id===memberId);
+  if(!m){ showToast('Élève introuvable'); return; }
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération…'; }
+  try{
+    const isMajor = memberIsMajor(m);
+    const fields = buildAdminInscriptionFields(m, isMajor);
+    const html = buildInscriptionPdfHtml(m, isMajor, fields, null);
+    const canvas = await captureOffscreenSection(html, '', 700);
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    addCanvasFitOrTop(pdf, canvas, 24);
+    const safeName = displayNameOrder(m.name).replace(/[\\/:*?"<>|]+/g,'').trim();
+    pdf.save(`${safeName} - Feuille d'inscription.pdf`);
+    showToast('Feuille d’inscription générée');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
 // Même circuit que sendFamilyDocumentBase64 (jeton+date de naissance), mais vers
 // familyPortalSubmitInscription (Code.gs) : en plus du fichier, transmet les champs proposés par la
 // famille — jamais appliqués tout de suite sur data.members (inscriptionPending, voir Code.gs),
@@ -8319,7 +8362,7 @@ function renderMemberCotisationOverlay(memberId){
           <label style="display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; cursor:pointer;">
             <input type="checkbox" data-action="toggle-member-document" data-key="${it.key}" ${checked?'checked':''}>
             ${escapeHtml(it.label)}
-          </label>${memberDocMedicalCertDateHintHtml(m, it.key)}${memberDocumentViewButtonHtml(m, it.key, it.label)}`;
+          </label>${memberDocMedicalCertDateHintHtml(m, it.key)}${memberDocumentViewButtonHtml(m, it.key, it.label)}${it.key==='docFeuilleInscription' ? ` <button type="button" class="ghost" data-action="generate-inscription-pdf" data-member="${m.id}" style="padding:2px 8px; font-size:11px;" title="Génère le même document que celui rempli sur l'espace famille, avec les infos déjà sur la fiche — signature à faire à la main">🖨 Générer</button>` : ''}`;
         }).join('')}
       </div>
       ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
@@ -8385,6 +8428,9 @@ function renderMemberCotisationOverlay(memberId){
       if(cb.dataset.key==='docMedicalCert' && cb.checked && !wasChecked) applyMedicalCertDateOnValidation(t);
       saveData(); renderActiveTab();
     });
+  });
+  overlay.querySelectorAll('[data-action="generate-inscription-pdf"]').forEach(btn=>{
+    btn.addEventListener('click', ()=> generateInscriptionPdfForMember(btn.dataset.member, btn));
   });
   document.getElementById('mc-feerank').addEventListener('change', e=>{
     m.feeRank = e.target.value; saveData(); renderMemberCotisationOverlay(memberId); renderActiveTab();
