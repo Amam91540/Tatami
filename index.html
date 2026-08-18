@@ -2229,7 +2229,7 @@ function prepareDocumentFileForUpload(file){
 // par signature électronique (generateAndUploadSignedDocument, voir plus haut) : la mise à jour de
 // l'état local (fileId/uploadedAt, remise en attente) ne doit jamais être dupliquée entre les deux.
 async function sendFamilyDocumentBase64(memberId, docKey, base64, mimeType, certDate){
-  const payload = { action:'familyPortalUploadDocument', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, memberId, docKey, base64, mimeType };
+  const payload = { action:'familyPortalUploadDocument', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, familyPassword: familyPortalUi.password, memberId, docKey, base64, mimeType };
   if(docKey==='docMedicalCert' && certDate) payload.certDate = certDate;
   const res = await fetch(BACKEND_URL, {
     method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
@@ -2281,7 +2281,7 @@ async function withdrawFamilyImageConsent(memberId){
   try{
     const res = await fetch(BACKEND_URL, {
       method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action:'familyPortalWithdrawImageConsent', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, memberId })
+      body: JSON.stringify({ action:'familyPortalWithdrawImageConsent', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, familyPassword: familyPortalUi.password, memberId })
     });
     const json = await res.json();
     if(json && json.ok){
@@ -2467,6 +2467,27 @@ async function requestRevokeFamilyPortalLink(memberId){
     return false;
   }
 }
+// Filet de sécurité admin (demande de Thomas du 18/08/2026) : pour une famille qui a créé un mot de
+// passe puis l'a oublié SANS avoir d'email valide en fiche (donc "mot de passe oublié" impossible),
+// permet de le supprimer — la famille retombe sur la connexion par date de naissance, jusqu'à ce
+// qu'elle en recrée un. Voir familyPortalAdminResetPassword côté Code.gs.
+async function requestFamilyPortalAdminResetPassword(memberId){
+  const s = getSession();
+  if(!s || !s.sessionToken){ showToast('Non connecté'); return false; }
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalAdminResetPassword', sessionToken: s.sessionToken, memberId })
+    });
+    const json = await res.json();
+    if(json && json.ok) return true;
+    showToast((json && (json.message||json.error)) || 'Échec de la réinitialisation du mot de passe');
+    return false;
+  }catch(e){
+    showToast('Impossible de réinitialiser le mot de passe (connexion ?)');
+    return false;
+  }
+}
 function closeFamilyPortalLinkOverlay(){
   const overlay = document.getElementById('family-portal-link-overlay');
   if(overlay){ overlay.classList.remove('show'); overlay.innerHTML = ''; }
@@ -2502,6 +2523,7 @@ async function openFamilyPortalLinkOverlay(memberId){
         <button class="primary" id="fplCopyBtn">📋 Copier le lien</button>
         ${m && m.email ? `<button class="ghost" id="fplEmailBtn">✉️ Envoyer par email</button>` : ''}
         ${waNumber ? `<button class="ghost" id="fplWhatsappBtn">💬 Envoyer via WhatsApp</button>` : ''}
+        ${info.hasPassword ? `<button class="ghost" id="fplResetPwBtn">🔑 Réinitialiser le mot de passe</button>` : ''}
         <button class="ghost" id="fplRevokeBtn" style="color:#c0392b;">🚫 Révoquer ce lien</button>
         <button class="ghost" id="fplCloseBtn">Fermer</button>
       </div>
@@ -2534,6 +2556,13 @@ async function openFamilyPortalLinkOverlay(memberId){
     const success = await requestRevokeFamilyPortalLink(memberId);
     if(success){ showToast('Lien révoqué — renvoie-en un nouveau si besoin.'); closeFamilyPortalLinkOverlay(); }
   });
+  const resetPwBtn = document.getElementById('fplResetPwBtn');
+  if(resetPwBtn) resetPwBtn.addEventListener('click', async ()=>{
+    const ok = await confirmDialog(`Réinitialiser le mot de passe de ${namesLabel} ? La famille devra se reconnecter avec la date de naissance, puis pourra recréer un mot de passe.`, { confirmLabel:'Réinitialiser', danger:true });
+    if(!ok) return;
+    const success = await requestFamilyPortalAdminResetPassword(memberId);
+    if(success){ showToast('Mot de passe réinitialisé.'); closeFamilyPortalLinkOverlay(); }
+  });
 }
 
 // ===================================================================================
@@ -2551,13 +2580,23 @@ async function openFamilyPortalLinkOverlay(memberId){
 // buildFamilyPortalData côté Code.gs — uniquement ses propres membres/convocations/sessions/etc.),
 // ce qui permet de réutiliser telles quelles les fonctions déjà existantes qui lisent `data`
 // (fmtDate, attendanceLabel, medalStyle, generateMemberPalmaresPdf...) sans les dupliquer.
-let familyPortalUi = { token: null, birthDate: '', tab: 'convocations', feedbackDrafts: {} };
+let familyPortalUi = { token: null, birthDate: '', password: '', hasPassword: false, tab: 'convocations', feedbackDrafts: {} };
 const familyPortalPhotoCache = {};
 
 function familyPortalTokenFromUrl(){
   try{ return new URLSearchParams(location.search).get('famille') || ''; }catch(e){ return ''; }
 }
+// Jeton de réinitialisation (voir familyPortalRequestPasswordReset côté Code.gs) : présent uniquement
+// sur le lien reçu par email suite à "mot de passe oublié", jamais dans le lien permanent normal.
+function familyPortalResetTokenFromUrl(){
+  try{ return new URLSearchParams(location.search).get('reset') || ''; }catch(e){ return ''; }
+}
 function familyPortalStorageKey(token){ return 'tatami-famille-bd-'+token; }
+// Mot de passe personnel (demande de Thomas du 18/08/2026) : mémorisé en local exactement comme la
+// date de naissance ci-dessus (même compromis simplicité/confort déjà accepté pour ce portail sans
+// session serveur — voir le commentaire en tête de cette section) — une clé distincte pour ne jamais
+// mélanger les deux formats.
+function familyPortalPasswordStorageKey(token){ return 'tatami-famille-mdp-'+token; }
 function ddmmyyyyFromIso(iso){
   const parts = String(iso||'').split('-');
   if(parts.length!==3) return '';
@@ -2565,6 +2604,10 @@ function ddmmyyyyFromIso(iso){
 }
 function familyPortalErrorLabel(err){
   if(err==='wrong_birthdate') return 'Date de naissance incorrecte.';
+  if(err==='wrong_password') return 'Mot de passe incorrect.';
+  if(err==='password_too_short') return 'Le mot de passe doit contenir au moins 4 caractères.';
+  if(err==='password_already_set') return 'Un mot de passe existe déjà pour cette famille.';
+  if(err==='invalid_reset_link' || err==='expired_reset_link') return 'Ce lien de réinitialisation n’est plus valide — refais une demande "mot de passe oublié".';
   if(err==='invalid_link') return 'Ce lien n’est plus valide — contacte le club pour en obtenir un nouveau.';
   if(err==='result_already_recorded') return 'Un résultat a déjà été enregistré par le club pour cette convocation — la réponse ne peut plus être modifiée.';
   // Certaines erreurs (ex: familyPortalUploadDocument) sont déjà des phrases en français prêtes à
@@ -2581,15 +2624,40 @@ async function bootFamilyPortal(token){
   if(!container) return;
   container.classList.add('show');
   familyPortalUi.token = token;
-  let prefill = '';
-  try{ prefill = localStorage.getItem(familyPortalStorageKey(token)) || ''; }catch(e){ prefill = ''; }
-  if(prefill){
-    renderFamilyPortalGate(token, prefill, true);
-    const ok = await attemptFamilyPortalLogin(token, prefill, { silent:true });
-    if(!ok) renderFamilyPortalGate(token, prefill, false);
-  } else {
-    renderFamilyPortalGate(token, '', false);
+
+  // Lien de réinitialisation (email "mot de passe oublié") : prioritaire sur tout le reste.
+  const resetToken = familyPortalResetTokenFromUrl();
+  if(resetToken){ renderFamilyPortalResetPasswordGate(token, resetToken); return; }
+
+  let prefillPassword = '';
+  try{ prefillPassword = localStorage.getItem(familyPortalPasswordStorageKey(token)) || ''; }catch(e){ prefillPassword = ''; }
+  if(prefillPassword){
+    renderFamilyPortalPasswordGate(token, { loading:true });
+    const ok = await attemptFamilyPortalPasswordLogin(token, prefillPassword, { silent:true });
+    if(ok) return;
+    // Mot de passe en cache invalide (changé/réinitialisé entretemps) : on retombe sur la suite ci-dessous.
   }
+
+  let prefillBirthDate = '';
+  try{ prefillBirthDate = localStorage.getItem(familyPortalStorageKey(token)) || ''; }catch(e){ prefillBirthDate = ''; }
+  if(prefillBirthDate){
+    renderFamilyPortalGate(token, prefillBirthDate, true);
+    const ok = await attemptFamilyPortalLogin(token, prefillBirthDate, { silent:true });
+    if(ok) return;
+    // A pu échouer avec 'password_required' (mot de passe créé depuis un autre appareil) : déjà géré
+    // dans attemptFamilyPortalLogin, qui bascule alors lui-même vers le formulaire mot de passe.
+    return;
+  }
+
+  // Rien en cache : on interroge le statut pour savoir quel formulaire présenter d'emblée.
+  let hasPassword = false;
+  try{
+    const res = await fetch(BACKEND_URL, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: JSON.stringify({ action:'familyPortalCheckStatus', token }) });
+    const json = await res.json();
+    hasPassword = !!(json && json.ok && json.hasPassword);
+  }catch(e){ hasPassword = false; }
+  if(hasPassword) renderFamilyPortalPasswordGate(token, {});
+  else renderFamilyPortalGate(token, '', false);
 }
 
 function renderFamilyPortalGate(token, prefillIso, loading){
@@ -2631,9 +2699,22 @@ async function attemptFamilyPortalLogin(token, isoBirthDate, opts){
     if(json && json.ok && json.data){
       data = json.data;
       familyPortalUi.birthDate = ddmmyyyy;
+      familyPortalUi.hasPassword = !!json.hasPassword;
       try{ localStorage.setItem(familyPortalStorageKey(token), isoBirthDate); }catch(e){}
+      // Incitation à créer un mot de passe (demande de Thomas du 18/08/2026) : uniquement lors d'une
+      // saisie active (pas sur une reconnexion silencieuse depuis le cache local, pour ne pas
+      // interrompre une visite de routine) — voir renderFamilyPortalCreatePasswordGate.
+      if(!json.hasPassword && !opts.silent){ renderFamilyPortalCreatePasswordGate(token); return true; }
       renderFamilyPortalMain();
       return true;
+    }
+    // Un mot de passe a été créé entretemps (autre appareil) : la date de naissance en cache ne
+    // suffit plus — on bascule directement vers le formulaire mot de passe plutôt que d'afficher une
+    // erreur déroutante ("date de naissance incorrecte" alors qu'elle est juste).
+    if(json && json.error === 'password_required'){
+      try{ localStorage.removeItem(familyPortalStorageKey(token)); }catch(e){}
+      renderFamilyPortalPasswordGate(token, {});
+      return false;
     }
     if(!opts.silent){
       const errEl = document.getElementById('fpGateError');
@@ -2642,6 +2723,7 @@ async function attemptFamilyPortalLogin(token, isoBirthDate, opts){
       if(btn) btn.disabled = false;
     } else {
       try{ localStorage.removeItem(familyPortalStorageKey(token)); }catch(e){}
+      renderFamilyPortalGate(token, '', false);
     }
     return false;
   }catch(e){
@@ -2650,6 +2732,218 @@ async function attemptFamilyPortalLogin(token, isoBirthDate, opts){
       if(errEl) errEl.textContent = 'Connexion impossible, réessaie dans quelques instants.';
     }
     return false;
+  }
+}
+
+// ---- Connexion par mot de passe (une fois créé — voir familyPortalSetPassword) ----
+function renderFamilyPortalPasswordGate(token, opts){
+  opts = opts || {};
+  const container = document.getElementById('family-portal-app');
+  if(!container) return;
+  container.innerHTML = `
+    <div class="fp-gate">
+      <div class="fp-gate-card">
+        <div class="fp-gate-eyebrow">Tatami</div>
+        <h1>Espace personnel famille</h1>
+        <label>Mot de passe
+          <input type="password" id="fpGatePassword" autocomplete="current-password">
+        </label>
+        <p class="fp-gate-error" id="fpGateError">${opts.loading ? 'Connexion en cours…' : ''}</p>
+        <button class="primary" id="fpGateSubmitBtn" style="width:100%;" ${opts.loading?'disabled':''}>Accéder à mon espace</button>
+        <button class="ghost" id="fpGateForgotBtn" style="width:100%; margin-top:10px;" ${opts.loading?'disabled':''}>Mot de passe oublié ?</button>
+      </div>
+    </div>`;
+  const submit = ()=>{
+    const input = document.getElementById('fpGatePassword');
+    const val = input ? input.value : '';
+    if(!val){ const err = document.getElementById('fpGateError'); if(err) err.textContent = 'Indique ton mot de passe'; return; }
+    attemptFamilyPortalPasswordLogin(token, val, { silent:false });
+  };
+  const btn = document.getElementById('fpGateSubmitBtn');
+  if(btn) btn.addEventListener('click', submit);
+  const input = document.getElementById('fpGatePassword');
+  if(input) input.addEventListener('keydown', e=>{ if(e.key==='Enter') submit(); });
+  const forgotBtn = document.getElementById('fpGateForgotBtn');
+  if(forgotBtn) forgotBtn.addEventListener('click', ()=> renderFamilyPortalForgotPasswordGate(token));
+}
+
+async function attemptFamilyPortalPasswordLogin(token, password, opts){
+  opts = opts || {};
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalPasswordLogin', token, familyPassword: password })
+    });
+    const json = await res.json();
+    if(json && json.ok && json.data){
+      data = json.data;
+      familyPortalUi.password = password;
+      familyPortalUi.hasPassword = true;
+      try{ localStorage.setItem(familyPortalPasswordStorageKey(token), password); }catch(e){}
+      renderFamilyPortalMain();
+      return true;
+    }
+    if(!opts.silent){
+      renderFamilyPortalPasswordGate(token, {});
+      const errEl = document.getElementById('fpGateError');
+      if(errEl) errEl.textContent = familyPortalErrorLabel(json && json.error);
+    } else {
+      try{ localStorage.removeItem(familyPortalPasswordStorageKey(token)); }catch(e){}
+    }
+    return false;
+  }catch(e){
+    if(!opts.silent){
+      const errEl = document.getElementById('fpGateError');
+      if(errEl) errEl.textContent = 'Connexion impossible, réessaie dans quelques instants.';
+    }
+    return false;
+  }
+}
+
+// ---- Création du mot de passe à la première connexion (demande de Thomas du 18/08/2026) ----
+function renderFamilyPortalCreatePasswordGate(token){
+  const container = document.getElementById('family-portal-app');
+  if(!container) return;
+  container.innerHTML = `
+    <div class="fp-gate">
+      <div class="fp-gate-card">
+        <div class="fp-gate-eyebrow">Tatami</div>
+        <h1>Créer un mot de passe</h1>
+        <p style="font-size:13px; color:var(--ink-dim); margin:0 0 16px;">Pour te connecter plus simplement la prochaine fois (sans redonner la date de naissance), tu peux créer un mot de passe personnel — facultatif.</p>
+        <label>Nouveau mot de passe
+          <input type="password" id="fpCreatePw1" autocomplete="new-password">
+        </label>
+        <label>Confirmer le mot de passe
+          <input type="password" id="fpCreatePw2" autocomplete="new-password">
+        </label>
+        <p class="fp-gate-error" id="fpGateError"></p>
+        <button class="primary" id="fpCreateSubmitBtn" style="width:100%;">Créer mon mot de passe</button>
+        <button class="ghost" id="fpCreateSkipBtn" style="width:100%; margin-top:10px;">Plus tard</button>
+      </div>
+    </div>`;
+  const skip = ()=> renderFamilyPortalMain();
+  document.getElementById('fpCreateSkipBtn').addEventListener('click', skip);
+  document.getElementById('fpCreateSubmitBtn').addEventListener('click', ()=> submitFamilyPortalCreatePassword(token));
+}
+
+async function submitFamilyPortalCreatePassword(token){
+  const pw1 = document.getElementById('fpCreatePw1').value;
+  const pw2 = document.getElementById('fpCreatePw2').value;
+  const errEl = document.getElementById('fpGateError');
+  if(pw1.length < 4){ if(errEl) errEl.textContent = 'Le mot de passe doit contenir au moins 4 caractères.'; return; }
+  if(pw1 !== pw2){ if(errEl) errEl.textContent = 'Les deux mots de passe ne correspondent pas.'; return; }
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalSetPassword', token, birthDate: familyPortalUi.birthDate, familyPassword: familyPortalUi.password, newPassword: pw1 })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      familyPortalUi.password = pw1;
+      familyPortalUi.hasPassword = true;
+      try{ localStorage.setItem(familyPortalPasswordStorageKey(token), pw1); }catch(e){}
+      try{ localStorage.removeItem(familyPortalStorageKey(token)); }catch(e){}
+      showToast('Mot de passe créé');
+      renderFamilyPortalMain();
+      return;
+    }
+    if(errEl) errEl.textContent = familyPortalErrorLabel(json && json.error);
+  }catch(e){
+    if(errEl) errEl.textContent = 'Impossible de créer le mot de passe, réessaie dans quelques instants.';
+  }
+}
+
+// ---- "Mot de passe oublié" : email + date de naissance envoyés au serveur, qui renvoie toujours le
+// même message générique (voir familyPortalRequestPasswordReset côté Code.gs — pas d'énumération). ----
+function renderFamilyPortalForgotPasswordGate(token){
+  const container = document.getElementById('family-portal-app');
+  if(!container) return;
+  container.innerHTML = `
+    <div class="fp-gate">
+      <div class="fp-gate-card">
+        <div class="fp-gate-eyebrow">Tatami</div>
+        <h1>Mot de passe oublié</h1>
+        <p style="font-size:13px; color:var(--ink-dim); margin:0 0 16px;">Indique l'email et la date de naissance d'un des membres de la famille : si ça correspond, un lien pour créer un nouveau mot de passe te sera envoyé par email.</p>
+        <label>Email
+          <input type="email" id="fpForgotEmail" autocomplete="email">
+        </label>
+        <label>Date de naissance
+          <input type="date" id="fpForgotBirthDate">
+        </label>
+        <p class="fp-gate-error" id="fpGateError"></p>
+        <button class="primary" id="fpForgotSubmitBtn" style="width:100%;">Envoyer</button>
+        <button class="ghost" id="fpForgotBackBtn" style="width:100%; margin-top:10px;">Retour</button>
+      </div>
+    </div>`;
+  document.getElementById('fpForgotBackBtn').addEventListener('click', ()=> renderFamilyPortalPasswordGate(token, {}));
+  document.getElementById('fpForgotSubmitBtn').addEventListener('click', ()=> submitFamilyPortalForgotPassword(token));
+}
+
+async function submitFamilyPortalForgotPassword(token){
+  const email = document.getElementById('fpForgotEmail').value.trim();
+  const iso = document.getElementById('fpForgotBirthDate').value;
+  const errEl = document.getElementById('fpGateError');
+  if(!email || !iso){ if(errEl) errEl.textContent = 'Indique un email et une date de naissance.'; return; }
+  const btn = document.getElementById('fpForgotSubmitBtn');
+  if(btn) btn.disabled = true;
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalRequestPasswordReset', token, email, birthDate: ddmmyyyyFromIso(iso), appOrigin: `${location.origin}${location.pathname}?famille=${token}` })
+    });
+    const json = await res.json();
+    if(errEl) errEl.textContent = (json && json.message) || 'Si ces informations correspondent à un membre de cette famille, un email de réinitialisation vient d’être envoyé.';
+  }catch(e){
+    if(errEl) errEl.textContent = 'Envoi impossible, réessaie dans quelques instants.';
+  }
+  if(btn) btn.disabled = false;
+}
+
+// ---- Écran atteint depuis le lien reçu par email (?famille=<jeton>&reset=<jeton de réinitialisation>) ----
+function renderFamilyPortalResetPasswordGate(token, resetToken){
+  const container = document.getElementById('family-portal-app');
+  if(!container) return;
+  container.innerHTML = `
+    <div class="fp-gate">
+      <div class="fp-gate-card">
+        <div class="fp-gate-eyebrow">Tatami</div>
+        <h1>Nouveau mot de passe</h1>
+        <label>Nouveau mot de passe
+          <input type="password" id="fpResetPw1" autocomplete="new-password">
+        </label>
+        <label>Confirmer le mot de passe
+          <input type="password" id="fpResetPw2" autocomplete="new-password">
+        </label>
+        <p class="fp-gate-error" id="fpGateError"></p>
+        <button class="primary" id="fpResetSubmitBtn" style="width:100%;">Valider</button>
+      </div>
+    </div>`;
+  document.getElementById('fpResetSubmitBtn').addEventListener('click', ()=> submitFamilyPortalResetPassword(token, resetToken));
+}
+
+async function submitFamilyPortalResetPassword(token, resetToken){
+  const pw1 = document.getElementById('fpResetPw1').value;
+  const pw2 = document.getElementById('fpResetPw2').value;
+  const errEl = document.getElementById('fpGateError');
+  if(pw1.length < 4){ if(errEl) errEl.textContent = 'Le mot de passe doit contenir au moins 4 caractères.'; return; }
+  if(pw1 !== pw2){ if(errEl) errEl.textContent = 'Les deux mots de passe ne correspondent pas.'; return; }
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalResetPassword', token, resetToken, newPassword: pw1 })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      // On retire ?reset=... de l'URL (le jeton de réinitialisation vient d'être consommé, il ne
+      // doit plus traîner dans l'historique/les favoris) puis on renvoie vers la connexion normale.
+      try{ history.replaceState(null, '', `${location.origin}${location.pathname}?famille=${token}`); }catch(e){}
+      showToast('Mot de passe modifié — connecte-toi avec ton nouveau mot de passe');
+      renderFamilyPortalPasswordGate(token, {});
+      return;
+    }
+    if(errEl) errEl.textContent = familyPortalErrorLabel(json && json.error);
+  }catch(e){
+    if(errEl) errEl.textContent = 'Impossible de valider, réessaie dans quelques instants.';
   }
 }
 
@@ -2809,7 +3103,7 @@ async function downloadFamilyDocument(memberId, docKey){
   try{
     const res = await fetch(BACKEND_URL, {
       method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action:'familyPortalGetDocuments', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, fileIds:[fileId] })
+      body: JSON.stringify({ action:'familyPortalGetDocuments', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, familyPassword: familyPortalUi.password, fileIds:[fileId] })
     });
     const json = await res.json();
     const dataUri = json && json.ok && json.documents && json.documents[fileId];
@@ -3500,7 +3794,7 @@ async function generateAndUploadInscriptionDocument(m, isMajor, fields, sigDataU
 // contrairement à docFeuilleInscriptionFileId/UploadedAt qui, eux, se reflètent immédiatement comme
 // n'importe quel autre dépôt de document.
 async function sendFamilyInscriptionBase64(memberId, base64, fields){
-  const payload = { action:'familyPortalSubmitInscription', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, memberId, base64, mimeType:'application/pdf', fields };
+  const payload = { action:'familyPortalSubmitInscription', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, familyPassword: familyPortalUi.password, memberId, base64, mimeType:'application/pdf', fields };
   const res = await fetch(BACKEND_URL, {
     method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
     body: JSON.stringify(payload)
@@ -3601,7 +3895,7 @@ async function familyPortalRespond(eventId, memberId, status){
   try{
     const res = await fetch(BACKEND_URL, {
       method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action:'familyPortalRespond', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, eventId, memberId, status })
+      body: JSON.stringify({ action:'familyPortalRespond', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, familyPassword: familyPortalUi.password, eventId, memberId, status })
     });
     const json = await res.json();
     if(json && json.ok){
@@ -3762,7 +4056,7 @@ async function getFamilyPortalPhotoDataUri(fileId){
   try{
     const res = await fetch(BACKEND_URL, {
       method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action:'familyPortalGetPhotos', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, fileIds:[fileId] })
+      body: JSON.stringify({ action:'familyPortalGetPhotos', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, familyPassword: familyPortalUi.password, fileIds:[fileId] })
     });
     const json = await res.json();
     const uri = json && json.ok && json.photos ? json.photos[fileId] : null;
@@ -3776,7 +4070,7 @@ async function familyPortalSaveFeedback(eventId, memberId){
   try{
     const res = await fetch(BACKEND_URL, {
       method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action:'familyPortalFeedback', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, eventId, memberId, text })
+      body: JSON.stringify({ action:'familyPortalFeedback', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, familyPassword: familyPortalUi.password, eventId, memberId, text })
     });
     const json = await res.json();
     if(json && json.ok){
