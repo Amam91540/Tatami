@@ -2962,8 +2962,16 @@ function renderFamilyPortalMain(){
   const names = (data.members||[]).map(m=>m.name).join(' et ');
   container.innerHTML = `
     <div class="fp-header">
-      <div class="fp-club">${escapeHtml(data.clubName||'Tatami')}</div>
-      <div class="fp-title">Espace de ${escapeHtml(names)}</div>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+        <div>
+          <div class="fp-club">${escapeHtml(data.clubName||'Tatami')}</div>
+          <div class="fp-title">Espace de ${escapeHtml(names)}</div>
+        </div>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <button id="fpChangePasswordBtn" class="icon-btn ghost" style="font-size:16px;" aria-label="Changer mon mot de passe" title="Changer mon mot de passe">🔑</button>
+          <button id="fpLogoutBtn" class="icon-btn ghost" style="font-size:16px;" aria-label="Se déconnecter" title="Se déconnecter">🚪</button>
+        </div>
+      </div>
     </div>
     <div class="fp-tabs">
       ${FAMILY_PORTAL_TABS.map(t=>`<button class="fp-tab-btn ${familyPortalUi.tab===t.key?'active':''}" data-fp-tab="${t.key}">${t.label}</button>`).join('')}
@@ -2972,7 +2980,90 @@ function renderFamilyPortalMain(){
   container.querySelectorAll('[data-fp-tab]').forEach(btn=>{
     btn.addEventListener('click', ()=>{ familyPortalUi.tab = btn.dataset.fpTab; renderFamilyPortalMain(); });
   });
+  // Changer mon mot de passe / Se déconnecter (demande de Thomas du 18/08/2026 : "ça existe déjà sur
+  // les comptes profs") — mêmes icônes/emplacement que l'en-tête staff (changePasswordBtn/logoutBtn).
+  const changePwBtn = document.getElementById('fpChangePasswordBtn');
+  if(changePwBtn) changePwBtn.addEventListener('click', familyPortalOpenPasswordSettings);
+  const logoutBtn = document.getElementById('fpLogoutBtn');
+  if(logoutBtn) logoutBtn.addEventListener('click', async ()=>{
+    const ok = await confirmDialog('Se déconnecter de l’espace famille ?', { confirmLabel:'Se déconnecter' });
+    if(!ok) return;
+    familyPortalLogout();
+  });
   renderFamilyPortalTabContent();
+}
+
+// Ouvre l'écran adapté selon qu'un mot de passe existe déjà ou non : "changer" (preuve de l'actuel)
+// si hasPassword, sinon directement l'écran de création (la date de naissance est déjà connue —
+// pas besoin de la redemander, contrairement à un visiteur qui vient d'arriver sur le lien).
+function familyPortalOpenPasswordSettings(){
+  if(familyPortalUi.hasPassword) renderFamilyPortalChangePasswordGate(familyPortalUi.token);
+  else renderFamilyPortalCreatePasswordGate(familyPortalUi.token);
+}
+
+function renderFamilyPortalChangePasswordGate(token){
+  const container = document.getElementById('family-portal-app');
+  if(!container) return;
+  container.innerHTML = `
+    <div class="fp-gate">
+      <div class="fp-gate-card">
+        <div class="fp-gate-eyebrow">Tatami</div>
+        <h1>Changer mon mot de passe</h1>
+        <label>Mot de passe actuel
+          <input type="password" id="fpChangePwCurrent" autocomplete="current-password">
+        </label>
+        <label>Nouveau mot de passe
+          <input type="password" id="fpChangePwNew" autocomplete="new-password">
+        </label>
+        <label>Confirmer le nouveau mot de passe
+          <input type="password" id="fpChangePwConfirm" autocomplete="new-password">
+        </label>
+        <p class="fp-gate-error" id="fpGateError"></p>
+        <button class="primary" id="fpChangePwSubmitBtn" style="width:100%;">Valider</button>
+        <button class="ghost" id="fpChangePwCancelBtn" style="width:100%; margin-top:10px;">Annuler</button>
+      </div>
+    </div>`;
+  document.getElementById('fpChangePwCancelBtn').addEventListener('click', renderFamilyPortalMain);
+  document.getElementById('fpChangePwSubmitBtn').addEventListener('click', ()=> submitFamilyPortalChangePassword(token));
+}
+
+async function submitFamilyPortalChangePassword(token){
+  const current = document.getElementById('fpChangePwCurrent').value;
+  const pw1 = document.getElementById('fpChangePwNew').value;
+  const pw2 = document.getElementById('fpChangePwConfirm').value;
+  const errEl = document.getElementById('fpGateError');
+  if(!current){ if(errEl) errEl.textContent = 'Indique ton mot de passe actuel.'; return; }
+  if(pw1.length < 4){ if(errEl) errEl.textContent = 'Le mot de passe doit contenir au moins 4 caractères.'; return; }
+  if(pw1 !== pw2){ if(errEl) errEl.textContent = 'Les deux mots de passe ne correspondent pas.'; return; }
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'familyPortalChangePassword', token, familyPassword: current, newPassword: pw1 })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      familyPortalUi.password = pw1;
+      familyPortalUi.hasPassword = true;
+      try{ localStorage.setItem(familyPortalPasswordStorageKey(token), pw1); }catch(e){}
+      showToast('Mot de passe modifié');
+      renderFamilyPortalMain();
+      return;
+    }
+    if(errEl) errEl.textContent = familyPortalErrorLabel(json && json.error);
+  }catch(e){
+    if(errEl) errEl.textContent = 'Impossible de modifier le mot de passe, réessaie dans quelques instants.';
+  }
+}
+
+// Déconnexion (demande de Thomas du 18/08/2026) : efface les deux identifiants mémorisés localement
+// (date de naissance ET mot de passe, selon lequel était actif) puis recharge la page — même principe
+// que logout() côté staff. bootFamilyPortal() retrouvera alors ?famille=<jeton> dans l'URL et
+// réaffichera le bon formulaire de connexion, sans rien avoir laissé en cache sur cet appareil.
+function familyPortalLogout(){
+  const token = familyPortalUi.token;
+  try{ localStorage.removeItem(familyPortalStorageKey(token)); }catch(e){}
+  try{ localStorage.removeItem(familyPortalPasswordStorageKey(token)); }catch(e){}
+  location.reload();
 }
 
 function renderFamilyPortalTabContent(){
