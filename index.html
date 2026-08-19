@@ -4562,6 +4562,7 @@ function applyDataInvariants(trusted){
     if(ensureLicensePendingGroupOnce()){ saveData(); }
     if(dedupeFederationMaterializedEvents()){ saveData(); }
     if(backfillLinkedMemberWeightCategoryOnce()){ saveData(); }
+    if(uppercaseMemberLastNamesOnce()){ saveData(); }
   }
   if(removeComiteDirecteurGroupPermanently()){ saveData(); }
   if(dedupeSpecialGroup(isLicensePendingGroup)){ saveData(); }
@@ -6668,7 +6669,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     if(m && row){
       const prenom = row.querySelector('[data-action="edit-firstname"]').value.trim();
       const nom = row.querySelector('[data-action="edit-lastname"]').value.trim();
-      const full = `${prenom} ${nom}`.trim();
+      const full = formatMemberFullName(prenom, nom);
       if(full){ m.name = full; syncLinkedMember(m); saveData(); }
     }
     return;
@@ -7639,6 +7640,29 @@ function mutualizedFeeDetails(m, group){
 function memberLastName(m){
   const parts = String(m.name||'').trim().split(/\s+/);
   return parts.length>1 ? parts.slice(1).join(' ') : '';
+}
+// Nom de famille toujours en MAJUSCULES sur la fiche (convention "Prénom NOM" des formulaires
+// officiels) — demande de Thomas du 19/08/2026. Seule la partie après le prénom passe en capitales,
+// jamais le prénom lui-même. Utilisées à la création (ajout manuel — openQuickAddMemberOverlay,
+// import Excel — importWorkbookMultiSheet/importSingleList) et à la modification (édition de fiche —
+// écouteur "edit-lastname"/"edit-firstname") d'une fiche élève, ainsi que par la migration une fois
+// (uppercaseMemberLastNamesOnce, plus bas) pour les fiches déjà importées avant ce correctif.
+function formatMemberFullName(prenom, nom){
+  const p = String(prenom||'').trim();
+  const n = String(nom||'').trim().toUpperCase();
+  return [p, n].filter(Boolean).join(' ');
+}
+// Même règle que formatMemberFullName ci-dessus, mais appliquée à un nom déjà combiné en un seul
+// champ ("Prénom Nom") — utile quand on ne dispose que d'une seule valeur texte (import "coller une
+// liste" — importSingleList, migration des fiches déjà en base) plutôt que de deux champs Prénom/Nom
+// séparés. Même découpage que memberLastName ci-dessus : le premier mot est le prénom (jamais
+// retouché), tout le reste est le nom de famille.
+function uppercaseLastNameInFullName(fullName){
+  const parts = String(fullName||'').trim().split(/\s+/).filter(Boolean);
+  if(parts.length<=1) return parts[0]||'';
+  const prenom = parts[0];
+  const nom = parts.slice(1).join(' ').toUpperCase();
+  return `${prenom} ${nom}`;
 }
 function memberAddressKey(m){
   const addr = normalizeForMatch(m.address);
@@ -10412,7 +10436,7 @@ function importSingleList(wb, groupId){
       else skipped++;
       return;
     }
-    data.members.push({ id: uid(), groupId, name });
+    data.members.push({ id: uid(), groupId, name: uppercaseLastNameInFullName(name) });
     added++;
   });
   saveData(); renderAll();
@@ -10498,7 +10522,10 @@ function importWorkbookMultiSheet(wb){
     seenByGroup.set(group.id, seen);
     for(let i=headerIdx+1;i<rows.length;i++){
       const row = rows[i];
-      const nom = toTitleCase(row[colNom]);
+      // Nom de famille toujours en MAJUSCULES (demande de Thomas du 19/08/2026 — voir
+      // formatMemberFullName) : contrairement au prénom, le nom importé n'est PAS passé par
+      // toTitleCase.
+      const nom = String(row[colNom]||'').trim().toUpperCase();
       const prenom = colPrenom>-1 ? toTitleCase(row[colPrenom]) : '';
       const fullName = [prenom, nom].filter(Boolean).join(' ').trim();
       if(!fullName) continue;
@@ -11364,7 +11391,7 @@ function openQuickAddMemberOverlay(defaultGroupId){
     }
     const prenom = val('prenom');
     const nom = val('nom');
-    const name = `${prenom} ${nom}`.trim();
+    const name = formatMemberFullName(prenom, nom);
     if(!name){
       showToast('Nom ou prénom manquant');
       return;
@@ -19568,6 +19595,23 @@ function backfillLinkedMemberWeightCategoryOnce(){
       other.weightCategory = m.weightCategory;
       changed = true;
     }
+  });
+  return changed;
+}
+// Rattrapage des fiches déjà importées AVANT la mise en majuscules systématique du nom de famille
+// (demande de Thomas du 19/08/2026 — voir formatMemberFullName/uppercaseLastNameInFullName) : sans
+// ce rattrapage, seules les NOUVELLES fiches (créées ou modifiées après ce correctif) auraient un nom
+// de famille en majuscules, les fiches déjà en base restant telles quelles indéfiniment. Même
+// philosophie que backfillLinkedMemberWeightCategoryOnce juste au-dessus : PAS de drapeau
+// hasOnceFlag — elle ne fait que corriger des fiches déjà existantes en place (jamais en créer), donc
+// parfaitement idempotente, et se relance sans risque ni coût notable à chaque chargement (juste une
+// comparaison de chaîne par fiche une fois toutes les fiches déjà à jour) — ce qui rattrape aussi sans
+// effort une fiche pas encore synchronisée sur un autre appareil.
+function uppercaseMemberLastNamesOnce(){
+  let changed = false;
+  data.members.forEach(m=>{
+    const fixed = uppercaseLastNameInFullName(m.name);
+    if(fixed && fixed !== m.name){ m.name = fixed; changed = true; }
   });
   return changed;
 }
