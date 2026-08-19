@@ -2365,6 +2365,27 @@ function printDataUri(dataUri){
     showToast('Impossible de préparer l’impression de ce document.');
   }
 }
+// Variante de printDataUri pour un PDF généré de façon ASYNCHRONE (ex: html2canvas qui prend
+// plusieurs centaines de ms à quelques secondes) — demande Thomas du 18/08/2026 : "je clique sur
+// Feuille d'inscription, rien ne s'ouvre, mais j'ai bien le message qui dit que la page est
+// ouverte". Cause : window.open() appelé APRÈS un await n'est plus considéré comme déclenché par un
+// geste utilisateur "frais" par certains navigateurs, qui le bloquent alors SILENCIEUSEMENT — la
+// fenêtre renvoyée n'est pas null (donc le garde-fou habituel ne le détecte pas) mais rien ne
+// s'affiche jamais. Le correctif : ouvrir la fenêtre tout de suite, de façon SYNCHRONE, dans le
+// handler de clic (voir generateInscriptionPdfForMember), avant tout traitement long — puis y
+// naviguer une fois le PDF prêt via cette fonction, plutôt que d'appeler window.open() une 2e fois.
+function navigateWindowToDataUri(w, dataUri){
+  if(!dataUri) return;
+  if(!w || w.closed){ showToast('Le navigateur a bloqué la fenêtre d’impression — autorise les pop-ups pour ce site.'); return; }
+  try{
+    const blobUrl = URL.createObjectURL(dataUriToBlob(dataUri));
+    w.location.href = blobUrl;
+    setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 700);
+    setTimeout(()=> URL.revokeObjectURL(blobUrl), 10000);
+  }catch(e){
+    showToast('Impossible de préparer l’impression de ce document.');
+  }
+}
 function openPhotoLightbox(dataUri, filename){
   const overlay = document.getElementById('photo-lightbox-overlay');
   if(!overlay || !dataUri) return;
@@ -2580,7 +2601,7 @@ async function openFamilyPortalLinkOverlay(memberId){
 // buildFamilyPortalData côté Code.gs — uniquement ses propres membres/convocations/sessions/etc.),
 // ce qui permet de réutiliser telles quelles les fonctions déjà existantes qui lisent `data`
 // (fmtDate, attendanceLabel, medalStyle, generateMemberPalmaresPdf...) sans les dupliquer.
-let familyPortalUi = { token: null, birthDate: '', password: '', hasPassword: false, tab: 'convocations', feedbackDrafts: {} };
+let familyPortalUi = { token: null, birthDate: '', password: '', hasPassword: false, tab: 'convocations', feedbackDrafts: {}, editingInscriptionMemberId: null };
 const familyPortalPhotoCache = {};
 
 function familyPortalTokenFromUrl(){
@@ -3206,6 +3227,12 @@ async function downloadFamilyDocument(memberId, docKey){
     showToast('Impossible de récupérer le document (connexion ?)');
   }
 }
+// Champs proposables à la modification directement depuis cette fiche (demande Thomas 19/08/2026) :
+// exactement le sous-ensemble de INSCRIPTION_EDITABLE_FIELDS (voir Code.gs) déjà affiché ici en
+// lecture — les autres champs de la liste blanche (lieu de naissance, profession, WhatsApp...) ne
+// sont pas montrés sur cette fiche et restent donc modifiables uniquement via la feuille
+// d'inscription en ligne (buildInscriptionOverlayHtml).
+const FAMILY_FICHE_EDITABLE_FIELDS = ['email', 'phone', 'address', 'postalCode', 'city'];
 function familyPortalInscriptionHtml(){
   const members = data.members||[];
   if(!members.length) return '<div class="fp-card"><div class="fp-empty">Aucune information disponible.</div></div>';
@@ -3215,19 +3242,51 @@ function familyPortalInscriptionHtml(){
     const statusHtml = status.complete
       ? `<div class="fp-empty" style="margin:2px 0 10px; color:var(--tatami); font-weight:700;">✅ Inscription complète</div>`
       : `<div class="fp-empty" style="margin:2px 0 10px; color:var(--clay); font-weight:700;">⚠️ Inscription incomplète — il manque : ${status.missing.map(l=>escapeHtml(l)).join(', ')}</div>`;
-    const rows = [['Date de naissance', m.birthDate ? fmtDate(m.birthDate) : '—']];
-    rows.push(['Sexe', m.gender ? (m.gender==='F'?'Fille':'Garçon') : '—']);
-    if(!groupHasNoBelt(curGroup) && m.belt) rows.push(['Ceinture', beltLabelFor(m.belt)]);
-    if(memberWeightCategoryEligible(m) && m.weightCategory) rows.push(['Catégorie de poids', `${m.weightCategory} kg`]);
-    rows.push(['Email (pour convocations)', m.email || '—']);
-    rows.push(['Téléphone', m.phone || '—']);
-    const addr = (m.address || m.postalCode || m.city) ? [m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') : '—';
-    rows.push(['Adresse', addr]);
-    rows.push(['Certificat médical', m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—']);
-    rows.push(['Type de certificat médical', m.questionnaireStatus || '—']);
-    rows.push(['N° de licence', m.licenseNumber || '—']);
-    rows.push(['Cours', curGroup ? curGroup.name : '—']);
-    const rowsHtml = rows.map(([label, value])=>`<div style="margin-top:8px;"><span class="field-label">${escapeHtml(label)}</span><div>${escapeHtml(String(value))}</div></div>`).join('');
+    // Mode édition (demande Thomas 19/08/2026) : bascule les 5 champs de coordonnées en champs
+    // saisissables, le reste de la fiche (date de naissance, ceinture, certificat médical, cours...)
+    // reste toujours en lecture seule — ce sont des informations administratives contrôlées par le
+    // club, jamais par la famille (INSCRIPTION_EDITABLE_FIELDS côté serveur ne les accepterait pas
+    // de toute façon).
+    const isEditing = familyPortalUi.editingInscriptionMemberId === m.id;
+    const staticRow = (label, value) => `<div style="margin-top:8px;"><span class="field-label">${escapeHtml(label)}</span><div>${escapeHtml(String(value))}</div></div>`;
+    const editRow = (label, key, value, type) => `<div style="margin-top:8px;"><span class="field-label">${escapeHtml(label)}</span><input type="${type||'text'}" data-fp-fiche-field="${escapeHtml(key)}" data-member="${escapeHtml(m.id)}" value="${escapeHtml(value||'')}" style="width:100%; margin-top:2px; padding:6px 8px; border:1px solid var(--border); border-radius:8px; font-size:14px; box-sizing:border-box;"></div>`;
+
+    let rowsHtml = staticRow('Date de naissance', m.birthDate ? fmtDate(m.birthDate) : '—');
+    rowsHtml += staticRow('Sexe', m.gender ? (m.gender==='F'?'Fille':'Garçon') : '—');
+    if(!groupHasNoBelt(curGroup) && m.belt) rowsHtml += staticRow('Ceinture', beltLabelFor(m.belt));
+    if(memberWeightCategoryEligible(m) && m.weightCategory) rowsHtml += staticRow('Catégorie de poids', `${m.weightCategory} kg`);
+    if(isEditing){
+      rowsHtml += editRow('Email (pour convocations)', 'email', m.email, 'email');
+      rowsHtml += editRow('Téléphone', 'phone', m.phone, 'tel');
+      rowsHtml += editRow('Adresse', 'address', m.address);
+      rowsHtml += editRow('Code postal', 'postalCode', m.postalCode);
+      rowsHtml += editRow('Ville', 'city', m.city);
+    } else {
+      rowsHtml += staticRow('Email (pour convocations)', m.email || '—');
+      rowsHtml += staticRow('Téléphone', m.phone || '—');
+      const addr = (m.address || m.postalCode || m.city) ? [m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') : '—';
+      rowsHtml += staticRow('Adresse', addr);
+    }
+    rowsHtml += staticRow('Certificat médical', m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—');
+    rowsHtml += staticRow('Type de certificat médical', m.questionnaireStatus || '—');
+    rowsHtml += staticRow('N° de licence', m.licenseNumber || '—');
+    rowsHtml += staticRow('Cours', curGroup ? curGroup.name : '—');
+
+    // Bandeau "en attente" (demande de la famille elle-même vue depuis son espace) — même donnée que
+    // memberInscriptionPendingHtml côté admin (m.inscriptionPending), mais sans boutons Accepter/
+    // Rejeter : la famille ne peut que constater que le club doit encore valider.
+    const pending = m.inscriptionPending;
+    const pendingCount = (pending && typeof pending==='object') ? Object.keys(pending).length : 0;
+    const pendingHtml = pendingCount
+      ? `<div style="margin-top:10px; padding:10px; border-radius:10px; background:#FFF6E0; border:1px solid #E8C468; font-size:12.5px; color:#8a6a1a; font-weight:600;">🆕 Modification${pendingCount>1?'s':''} envoyée${pendingCount>1?'s':''} — en attente de validation par le club${m.inscriptionPendingAt?' ('+fmtDate(m.inscriptionPendingAt)+')':''}.</div>`
+      : '';
+    const editControlsHtml = isEditing
+      ? `<div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
+          <button type="button" class="primary" data-fp-save-fiche="${escapeHtml(m.id)}" style="padding:7px 14px; font-size:13px;">✓ Enregistrer</button>
+          <button type="button" class="ghost" data-fp-cancel-edit-fiche="${escapeHtml(m.id)}" style="padding:7px 14px; font-size:13px;">Annuler</button>
+        </div>`
+      : `<div style="margin-top:12px;"><button type="button" class="ghost" data-fp-edit-fiche="${escapeHtml(m.id)}" style="padding:6px 12px; font-size:13px;">✏️ Modifier mes informations</button></div>`;
+
     // Deux cartes séparées par élève (demande de Thomas) : les documents à rendre d'un côté (action
     // à faire), la fiche d'information de l'autre (simple lecture/vérification) — plus lisible que
     // tout mélanger dans une seule carte, et cohérent avec la même séparation déjà utilisée côté
@@ -3242,10 +3301,12 @@ function familyPortalInscriptionHtml(){
       <div class="fp-member-label">${escapeHtml(m.name)}</div>
       <div style="font-size:11px; font-weight:600; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:6px;">🪪 Fiche de l'élève</div>
       <div style="font-size:14px; line-height:1.7;">${rowsHtml}</div>
+      ${pendingHtml}
+      ${editControlsHtml}
     </div>`;
     return docsCard + ficheCard;
   }).join('');
-  return `<div class="fp-card" style="background:var(--surface-2); border-style:dashed;"><div class="fp-empty" style="font-size:13px;">📋 Merci de vérifier ces informations et de signaler à Nathalie toute modification à effectuer.</div></div>${cards}`;
+  return `<div class="fp-card" style="background:var(--surface-2); border-style:dashed;"><div class="fp-empty" style="font-size:13px;">📋 Merci de vérifier ces informations. Utilise le bouton ✏️ Modifier mes informations pour proposer une correction (à valider par le club) — ou contacte Nathalie directement.</div></div>${cards}`;
 }
 function wireFamilyPortalInscription(body){
   body.querySelectorAll('[data-fp-doc-upload]').forEach(btn=>{
@@ -3291,6 +3352,67 @@ function wireFamilyPortalInscription(body){
   body.querySelectorAll('[data-fp-doc-withdraw-image]').forEach(btn=>{
     btn.addEventListener('click', ()=> withdrawFamilyImageConsent(btn.dataset.member));
   });
+  // Édition directe des coordonnées depuis la fiche (demande Thomas 19/08/2026) — voir
+  // familyPortalUpdateInscriptionFields côté Code.gs et FAMILY_FICHE_EDITABLE_FIELDS ci-dessus.
+  body.querySelectorAll('[data-fp-edit-fiche]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      familyPortalUi.editingInscriptionMemberId = btn.dataset.fpEditFiche;
+      renderFamilyPortalTabContent();
+    });
+  });
+  body.querySelectorAll('[data-fp-cancel-edit-fiche]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      familyPortalUi.editingInscriptionMemberId = null;
+      renderFamilyPortalTabContent();
+    });
+  });
+  body.querySelectorAll('[data-fp-save-fiche]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(btn.disabled) return;
+      const memberId = btn.dataset.fpSaveFiche;
+      const fields = {};
+      FAMILY_FICHE_EDITABLE_FIELDS.forEach(key=>{
+        const input = body.querySelector(`[data-fp-fiche-field="${key}"][data-member="${memberId}"]`);
+        if(input) fields[key] = input.value;
+      });
+      const originalLabel = btn.textContent;
+      btn.disabled = true; btn.textContent = '⏳ Envoi…';
+      const json = await submitFamilyInscriptionFieldsUpdate(memberId, fields);
+      if(json && json.ok){
+        showToast('Modifications envoyées — en attente de validation par le club.');
+        // Affichage immédiat du bandeau "en attente" sans attendre une resynchro complète — le
+        // serveur recalculera de toute façon son propre diff (fait foi) à la prochaine lecture.
+        const m = (data.members||[]).find(x=>x.id===memberId);
+        if(m){
+          const diff = {};
+          Object.keys(fields).forEach(k=>{ if(String(fields[k]||'').trim() !== String(m[k]||'').trim()) diff[k] = fields[k]; });
+          if(Object.keys(diff).length){ m.inscriptionPending = diff; m.inscriptionPendingAt = json.pendingAt || new Date().toISOString(); }
+        }
+        familyPortalUi.editingInscriptionMemberId = null;
+        renderFamilyPortalTabContent();
+      } else {
+        showToast((json && json.error) || 'Échec de l’envoi.');
+        btn.disabled = false; btn.textContent = originalLabel;
+      }
+    });
+  });
+}
+// Envoie au serveur les coordonnées modifiées par la famille depuis l'onglet Inscription (voir
+// familyPortalUpdateInscriptionFields côté Code.gs) — demande de Thomas du 19/08/2026. Même modèle
+// que sendFamilyInscriptionBase64 juste plus bas (inscriptionPending, validation manuelle par le
+// club), mais SANS passer par la signature de la feuille d'inscription : la famille peut corriger
+// ses coordonnées à tout moment, même après la validation initiale du dossier.
+async function submitFamilyInscriptionFieldsUpdate(memberId, fields){
+  const payload = { action:'familyPortalUpdateInscriptionFields', token: familyPortalUi.token, birthDate: familyPortalUi.birthDate, familyPassword: familyPortalUi.password, memberId, fields };
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload)
+    });
+    return await res.json();
+  }catch(e){
+    return { error: 'Impossible de contacter le serveur (connexion ?)' };
+  }
 }
 
 // ==================================================================================
@@ -3785,8 +3907,16 @@ function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
   const nom = nameParts.slice(1).join(' ');
   const seasonLabel = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
   const checks = inscriptionDisciplineChecks(m);
-  const box = on => on ? '☑' : '☐';
-  const dotLine = on => on ? '<strong>✓ (cochée automatiquement selon le cours actuel)</strong>' : '.........................';
+  // À côté de la discipline cochée automatiquement, indiquer le NIVEAU précis plutôt qu'une simple
+  // coche générique, pour les disciplines qui ont plusieurs niveaux/groupes (Judo 1/2/3/4, Baby Judo
+  // 1 ou 2, Karaté 1/2/Adultes...) — demande Thomas du 18/08/2026, affinée le 19/08/2026 : n'afficher
+  // QUE le niveau (ex: "3"), pas le nom complet du cours qui répéterait inutilement le nom de la
+  // discipline déjà écrit juste à côté (voir courseLevelSuffix). Un seul groupe peut être coché à la
+  // fois (checks est mutuellement exclusif), donc courseSuffix s'affiche toujours au bon endroit.
+  const curGroup = (data.groups||[]).find(g=>g.id===m.groupId);
+  const courseSuffix = curGroup ? courseLevelSuffix(curGroup.name) : '';
+  const box = (on, label) => `${on?'☑':'☐'} ${escapeHtml(label)}${on && courseSuffix ? ` <strong>— ${escapeHtml(courseSuffix)}</strong>` : ''}`;
+  const dotLine = on => on ? `<strong>✓${courseSuffix ? ' '+escapeHtml(courseSuffix) : ''}</strong>` : '.........................';
   const field = (label, value) => `<div style="margin-top:10px;"><span style="font-style:italic; text-decoration:underline;">${escapeHtml(label)} :</span> ${escapeHtml(value||'')}</div>`;
   // Ligne à compléter à la main (partie club) : un pointillé qui s'étire (border-bottom, flex) plutôt
   // qu'une longue suite de caractères "." — demande Thomas du 18/08/2026 : "trop de petits points"
@@ -3807,15 +3937,15 @@ function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
         <div style="flex:1;">
           <div>BABY-JUDO ${dotLine(checks.babyJudo)}</div>
           <div style="margin-top:4px;">JUDO ${dotLine(checks.judo)}</div>
-          <div style="margin-top:4px;">${box(checks.aikibudo)} AIKIBUDO</div>
-          <div style="margin-top:4px;">${box(checks.aikibudoSoft)} AIKIBUDO SOFT</div>
-          <div style="margin-top:4px;">${box(checks.kobudo)} KOBUDO</div>
+          <div style="margin-top:4px;">${box(checks.aikibudo, 'AIKIBUDO')}</div>
+          <div style="margin-top:4px;">${box(checks.aikibudoSoft, 'AIKIBUDO SOFT')}</div>
+          <div style="margin-top:4px;">${box(checks.kobudo, 'KOBUDO')}</div>
         </div>
         <div style="flex:1;">
           <div>BABY-KARATE ${dotLine(checks.babyKarate)}</div>
           <div style="margin-top:4px;">KARATE ${dotLine(checks.karate)}</div>
-          <div style="margin-top:4px;">${box(checks.taiso)} TAISO</div>
-          <div style="margin-top:4px;">${box(checks.aikibudoEnfants)} AIKIBUDO ENFANTS</div>
+          <div style="margin-top:4px;">${box(checks.taiso, 'TAISO')}</div>
+          <div style="margin-top:4px;">${box(checks.aikibudoEnfants, 'AIKIBUDO ENFANTS')}</div>
         </div>
       </div>
       <div style="margin-top:16px; height:6px; background:#1a1a1a;"></div>
@@ -3919,6 +4049,10 @@ function buildAdminInscriptionFields(m, isMajor){
 // Ouvre le PDF dans un nouvel onglet et lance directement l'impression (voir printDataUri) plutôt que
 // de forcer un téléchargement automatique (demande Thomas) : la visionneuse PDF native du navigateur
 // laisse ensuite le choix d'imprimer, d'enregistrer, ou simplement de fermer sans rien garder.
+// La fenêtre est ouverte TOUT DE SUITE, de façon synchrone (voir navigateWindowToDataUri) — sinon
+// window.open() appelé après le await de captureOffscreenSection (html2canvas, qui peut prendre
+// jusqu'à quelques secondes) est parfois bloqué silencieusement par le navigateur : bug remonté par
+// Thomas, le message de succès s'affichait mais aucune page ne s'ouvrait jamais.
 async function generateInscriptionPdfForMember(memberId, btn){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
     showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
@@ -3926,6 +4060,13 @@ async function generateInscriptionPdfForMember(memberId, btn){
   }
   const m = data.members.find(x=>x.id===memberId);
   if(!m){ showToast('Élève introuvable'); return; }
+  const printWindow = window.open('', '_blank');
+  if(printWindow){
+    try{
+      printWindow.document.write('<!DOCTYPE html><html><head><title>Génération…</title><meta charset="utf-8"></head><body style="font-family:sans-serif; padding:40px; text-align:center; color:#888;">Génération du PDF en cours…</body></html>');
+      printWindow.document.close();
+    }catch(e){}
+  }
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Génération…'; }
   try{
@@ -3936,9 +4077,10 @@ async function generateInscriptionPdfForMember(memberId, btn){
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
     addCanvasFitOrTop(pdf, canvas, 24);
-    printDataUri(pdf.output('datauristring'));
+    navigateWindowToDataUri(printWindow, pdf.output('datauristring'));
     showToast('Feuille d’inscription générée — imprime-la ou enregistre-la depuis l’onglet qui vient de s’ouvrir.');
   } catch(err){
+    if(printWindow && !printWindow.closed){ try{ printWindow.close(); }catch(e){} }
     showToast('Échec de la génération : ' + (err.message||err));
   } finally {
     if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
@@ -5883,10 +6025,29 @@ function memberDocumentViewButtonHtml(m, key, label){
   return ` <button type="button" class="ghost" data-action="view-member-document" data-file="${fileId}" data-filename="doc-${escapeHtml(key)}-${escapeHtml(safeName)}" style="padding:2px 8px; font-size:11px;" title="${escapeHtml(label||'')}">📎 Voir${uploadedAt?' — '+fmtDate(uploadedAt):''}</button>
     <button type="button" class="ghost" data-action="reject-member-document" data-member="${t.id}" data-key="${key}" style="padding:2px 8px; font-size:11px; color:var(--clay);" title="Refuser ce document — la famille devra en déposer un nouveau">❌ Refuser</button>`;
 }
+// Construit un lien "mailto:" pré-rempli à destination de la famille suite au refus d'un document
+// (demande de Thomas, 19/08/2026) : indique que le fichier a été supprimé, et laisse une ligne VIDE
+// après "Motif du refus :" pour que l'admin tape le motif à la main avant d'envoyer. On utilise
+// `location.href` (et non window.open) : c'est la façon standard et fiable d'invoquer le client mail
+// par défaut (Mail.app, Gmail configuré comme gestionnaire, etc.) — contrairement à window.open, ce
+// n'est jamais bloqué par un bloqueur de pop-up, y compris après un `await` (voir le bug similaire
+// rencontré avec la feuille d'inscription).
+function openRejectMemberDocumentEmail(m, label){
+  if(!m) return;
+  const email = String(m.email||'').trim();
+  if(!email){ showToast('Email de la famille introuvable sur la fiche — pensez à la prévenir manuellement.'); return; }
+  const studentName = m.name || '';
+  const subject = `Document refusé — ${label} — ${studentName}`.trim();
+  const body = `Bonjour,\n\nLe document "${label}" déposé pour ${studentName} a été refusé et a été supprimé de notre système.\n\nMotif du refus : \n\nMerci de bien vouloir déposer un nouveau document sur l'espace famille.\n\nCordialement,\n${(data.clubName||'').trim()}`;
+  const mailtoUri = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = mailtoUri;
+}
 // Envoie le refus au serveur (rejectMemberDocument, Code.gs) puis met à jour l'état local et
 // rafraîchit l'overlay concerné (cotisation OU fiches incomplètes — le bouton "Refuser" apparaît
 // dans les deux, voir memberDocumentViewButtonHtml) pour que les boutons Voir/Refuser disparaissent
 // et que le document redevienne "à déposer" immédiatement, sans attendre une réouverture manuelle.
+// Ouvre aussi un email pré-rempli à la famille (uniquement en cas de refus, jamais à la validation —
+// demande de Thomas) via openRejectMemberDocumentEmail ci-dessus.
 async function rejectMemberDocumentOnServer(memberId, docKey){
   const s = getSession();
   if(!s || !s.sessionToken){ showToast('Non connecté'); return; }
@@ -5910,6 +6071,7 @@ async function rejectMemberDocumentOnServer(memberId, docKey){
       if(cotOverlay && cotOverlay.classList.contains('show') && m) renderMemberCotisationOverlay(m.id);
       const ifOverlay = document.getElementById('incomplete-fiches-overlay');
       if(ifOverlay && ifOverlay.classList.contains('show')) openIncompleteFichesOverlay();
+      if(m) openRejectMemberDocumentEmail(m, label);
     } else {
       showToast((json && json.error) || 'Échec du refus');
     }
@@ -7309,6 +7471,31 @@ function renderMembershipFeesSettings(){
 // Déduit la discipline (au sens de la grille tarifaire) à partir du nom du cours. Les 6 cours
 // actuels de l'AMAM sont tous du Judo (Baby Judo, Judo 1 à 4) ou du Taïso, mais on couvre aussi les
 // autres disciplines de la grille au cas où d'autres cours seraient créés plus tard.
+// Extrait la partie "niveau" du nom de cours après avoir retiré les mots de discipline connus (ex:
+// "Judo 3" -> "3", "Baby Judo 1" -> "1", "Karate Adultes" -> "Adultes") — demande de Thomas
+// (19/08/2026) : sur le PDF d'inscription, à côté de la discipline cochée, n'afficher QUE ce
+// suffixe distinctif plutôt que de répéter tout le nom du cours. Si rien ne reste après le
+// nettoyage (ex: groupe nommé juste "Judo", sans niveau), retourne une chaîne vide : la coche seule
+// suffit alors, il n'y a rien de plus à préciser. L'ordre des remplacements compte : les combinaisons
+// à 2 mots (Baby Judo, Baby Karate, Aikibudo Soft) doivent être retirées AVANT les mots seuls (Judo,
+// Karate, Aikibudo) pour ne pas laisser "Baby"/"Soft" orphelins.
+function courseLevelSuffix(groupName){
+  if(!groupName) return '';
+  return String(groupName)
+    .replace(/baby[\s-]*judo/gi, '')
+    .replace(/baby[\s-]*karat[eé]?/gi, '')
+    .replace(/aikibudo\s*soft/gi, '')
+    .replace(/a[iï]kibudo/gi, '')
+    .replace(/kobudo/gi, '')
+    .replace(/ta[iï][sz]o/gi, '')
+    .replace(/karat[eé]?/gi, '')
+    .replace(/judo/gi, '')
+    .replace(/enfants?/gi, '')
+    .replace(/\bbaby\b/gi, '')
+    .replace(/^[\s\-–—:./]+|[\s\-–—:./]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 function courseDisciplineKey(groupName){
   const n = String(groupName||'').toLowerCase();
   if(/aikibudo\s*soft/.test(n)) return 'AIKIBUDO SOFT';
