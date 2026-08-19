@@ -3788,6 +3788,11 @@ function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
   const box = on => on ? '☑' : '☐';
   const dotLine = on => on ? '<strong>✓ (cochée automatiquement selon le cours actuel)</strong>' : '.........................';
   const field = (label, value) => `<div style="margin-top:10px;"><span style="font-style:italic; text-decoration:underline;">${escapeHtml(label)} :</span> ${escapeHtml(value||'')}</div>`;
+  // Ligne à compléter à la main (partie club) : un pointillé qui s'étire (border-bottom, flex) plutôt
+  // qu'une longue suite de caractères "." — demande Thomas du 18/08/2026 : "trop de petits points"
+  // pour "Inscription faite par" et "Nom du chèque", qui retombaient sur une 2e ligne au lieu de
+  // rester sur la même ligne que leur libellé. flexGrow règle la longueur relative du pointillé.
+  const blankLine = (flexGrow) => `<span style="display:inline-block; flex:${flexGrow||1}; min-width:16px; height:12px; border-bottom:1px dotted #333; margin:0 4px;"></span>`;
   const dateLabel = fmtDateLong(todayStr());
   return `
     <div style="width:700px; padding:26px 40px 34px; background:#fff; box-sizing:border-box; font-family:'Inter',sans-serif; color:#1a1a1a; font-size:13px; line-height:1.55;">
@@ -3836,12 +3841,17 @@ function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
       <div style="margin:16px 0; text-align:center; letter-spacing:2px; color:#999; font-size:11px;">☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺</div>
       <div style="background:#c9c9c9; text-align:center; font-weight:700; font-style:italic; padding:4px 0; border:1px solid #999;">PARTIE RESERVEE AU CLUB</div>
       <div style="border:1px solid #999; padding:10px 14px; margin-top:0;">
-        <div><strong style="font-style:italic;">INSCRIPTION</strong> <span style="font-style:italic;">faite par :</span> ................................................................. <span style="font-style:italic;">le</span> .................................................
+        <div style="display:flex; align-items:flex-end; white-space:nowrap;">
+          <strong style="font-style:italic; flex-shrink:0;">INSCRIPTION</strong>
+          <span style="font-style:italic; flex-shrink:0; margin-left:4px;">faite par :</span>
+          ${blankLine(2)}
+          <span style="font-style:italic; flex-shrink:0;">le</span>
+          ${blankLine(1)}
         </div>
         <div style="display:flex; gap:20px; margin-top:8px; font-size:12px;">
-          <div style="flex:1;">INSCRIPTION : ...................</div>
-          <div style="flex:1;">Nbre de CHEQUES : ...........</div>
-          <div style="flex:1;">NOM DU CHEQUE : ..........................................</div>
+          <div style="flex:1; display:flex; align-items:flex-end; white-space:nowrap;">INSCRIPTION :${blankLine(1)}</div>
+          <div style="flex:1; display:flex; align-items:flex-end; white-space:nowrap;">Nbre de CHEQUES :${blankLine(1)}</div>
+          <div style="flex:2; display:flex; align-items:flex-end; white-space:nowrap;">NOM DU CHEQUE :${blankLine(1)}</div>
         </div>
         <div style="display:flex; gap:20px; margin-top:6px; font-size:12px;">
           <div style="flex:1;">DIVERS : ..............................</div>
