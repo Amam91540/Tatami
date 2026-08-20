@@ -1082,6 +1082,10 @@
           </div>
           <div id="event-photos-gallery" style="margin-top:10px;"></div>
           <div id="results-list" style="margin-top:10px;"></div>
+          <label class="row" id="publishOnSiteRow" style="align-items:center; gap:8px; margin-top:10px; display:none;">
+            <input type="checkbox" id="publishOnSiteCheckbox">
+            <span>Publier les résultats sur le site internet</span>
+          </label>
           <button class="ghost icon-btn" id="archiveResultsEventBtn" style="width:100%; margin-top:10px; display:none;">🗄️ Archiver cette compétition</button>
         </div>
       </div>
@@ -1657,7 +1661,13 @@ function ensureSettings(){
   // le lui demander. Un prof/comptable ne peut qu'AJOUTER ses propres entrées (jamais modifier ou
   // supprimer celles des autres) — voir sanitizePayloadForRole côté Code.gs.
   if(!Array.isArray(data.settings.activityLog)) data.settings.activityLog = [];
-  data.convocEvents.forEach(ev=>{ if(ev.archived===undefined) ev.archived = false; });
+  data.convocEvents.forEach(ev=>{
+    if(ev.archived===undefined) ev.archived = false;
+    // Case "Publier les résultats sur le site internet" (demande de Thomas du 19/08/2026) —
+    // indépendante de resultsArchived (archivage interne) : marqueur consulté manuellement par
+    // Thomas, sans effet automatique côté app.
+    if(ev.publishOnSite===undefined) ev.publishOnSite = false;
+  });
   data.groups.forEach(g=>{ g.recurrence ||= []; });
   // Cotisations : carnet de paiements (data.payments) + familles détectées/validées manuellement
   // (data.settings.familyGroups) + suggestions de rapprochement ignorées par le club, pour ne plus
@@ -15756,6 +15766,24 @@ function updateArchiveResultsButton(){
     showToast('Compétition archivée');
   };
 }
+// Case "Publier les résultats sur le site internet" (demande de Thomas du 19/08/2026) — sur le
+// modèle exact d'updateArchiveResultsButton juste au-dessus, mais totalement indépendante de
+// l'archivage (ev.resultsArchived) : une compétition peut être publiable sans être archivée, et
+// inversement. Aucun effet automatique de publication réelle — sert uniquement de marqueur que
+// Thomas coche manuellement pour son propre suivi.
+function updatePublishOnSiteCheckbox(){
+  const row = document.getElementById('publishOnSiteRow');
+  const checkbox = document.getElementById('publishOnSiteCheckbox');
+  if(!row || !checkbox) return;
+  const ev = ui.resultsEventId ? data.convocEvents.find(e=>e.id===ui.resultsEventId) : null;
+  if(!ev){ row.style.display = 'none'; return; }
+  row.style.display = '';
+  checkbox.checked = !!ev.publishOnSite;
+  checkbox.onchange = ()=>{
+    ev.publishOnSite = checkbox.checked;
+    saveData();
+  };
+}
 function renderArchivedEventResultsHtml(ev){
   const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
   const memberOf = r => data.members.find(x=>x.id===r.memberId);
@@ -16180,9 +16208,10 @@ function renderResultsTab(){
     if(events.some(ev=>ev.id===prev)) sel.value = prev;
   }
   ui.resultsEventId = sel.value || null;
-  sel.onchange = ()=>{ ui.resultsEventId = sel.value; renderResultsList(); updateArchiveResultsButton(); };
+  sel.onchange = ()=>{ ui.resultsEventId = sel.value; renderResultsList(); updateArchiveResultsButton(); updatePublishOnSiteCheckbox(); };
   renderResultsList();
   updateArchiveResultsButton();
+  updatePublishOnSiteCheckbox();
 
   const searchInput = document.getElementById('resultsSearchInput');
   searchInput.oninput = ()=> renderResultsSearchList(searchInput.value.trim());
