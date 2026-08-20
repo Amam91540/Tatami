@@ -1087,6 +1087,7 @@
             <span>Publier les résultats sur le site internet</span>
           </label>
           <button class="ghost icon-btn" id="archiveResultsEventBtn" style="width:100%; margin-top:10px; display:none;">🗄️ Archiver cette compétition</button>
+          <button class="danger icon-btn" id="deleteResultsEventBtn" style="width:100%; margin-top:8px; display:none;">🗑️ Supprimer cette compétition</button>
         </div>
       </div>
     </div>
@@ -15825,6 +15826,34 @@ function updatePublishOnSiteCheckbox(){
     saveData();
   };
 }
+// Bouton "Supprimer cette compétition" directement dans l'onglet Résultats (demande de Thomas du
+// 20/08/2026) — une suppression complète et irréversible de la compétition, sur le modèle exact de
+// "del-history" dans renderConvocCurrent (même markDeleted('convocEvents', ...), même retrait de
+// data.convocEvents), mais accessible sans avoir à aller chercher l'événement dans l'onglet
+// Convocations. Volontairement pas de restriction de rôle particulière au-delà de celles déjà en
+// place sur cet onglet (session admin/secrétaire) : une compétition mal créée ou en double doit
+// pouvoir être retirée par la même personne qui gère les résultats au quotidien.
+function updateDeleteResultsEventButton(){
+  const deleteBtn = document.getElementById('deleteResultsEventBtn');
+  if(!deleteBtn) return;
+  const ev = ui.resultsEventId ? data.convocEvents.find(e=>e.id===ui.resultsEventId) : null;
+  if(!ev){ deleteBtn.style.display = 'none'; return; }
+  deleteBtn.style.display = '';
+  deleteBtn.onclick = async ()=>{
+    const presentsCount = recipientsInSeasonView(ev.recipients||[]).filter(r=>r.response==='present').length;
+    const resultsCount = recipientsInSeasonView(ev.recipients||[]).filter(r=>r.result && String(r.result).trim()).length;
+    const warning = resultsCount>0
+      ? ` ${resultsCount} résultat${resultsCount>1?'s':''} déjà enregistré${resultsCount>1?'s':''} ser${resultsCount>1?'ont':'a'} perdu${resultsCount>1?'s':''}.`
+      : '';
+    if(!(await confirmDialog(`Supprimer définitivement « ${ev.name} » ? Cette action est irréversible.${warning}`, { danger:true, confirmLabel:'Supprimer' }))) return;
+    markDeleted('convocEvents', ev.id);
+    data.convocEvents = data.convocEvents.filter(x=>x.id!==ev.id);
+    ui.resultsEventId = null;
+    saveData();
+    renderResultsTab();
+    showToast('Compétition supprimée');
+  };
+}
 function renderArchivedEventResultsHtml(ev){
   const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
   const memberOf = r => data.members.find(x=>x.id===r.memberId);
@@ -16249,10 +16278,11 @@ function renderResultsTab(){
     if(events.some(ev=>ev.id===prev)) sel.value = prev;
   }
   ui.resultsEventId = sel.value || null;
-  sel.onchange = ()=>{ ui.resultsEventId = sel.value; renderResultsList(); updateArchiveResultsButton(); updatePublishOnSiteCheckbox(); };
+  sel.onchange = ()=>{ ui.resultsEventId = sel.value; renderResultsList(); updateArchiveResultsButton(); updatePublishOnSiteCheckbox(); updateDeleteResultsEventButton(); };
   renderResultsList();
   updateArchiveResultsButton();
   updatePublishOnSiteCheckbox();
+  updateDeleteResultsEventButton();
 
   const searchInput = document.getElementById('resultsSearchInput');
   searchInput.oninput = ()=> renderResultsSearchList(searchInput.value.trim());
