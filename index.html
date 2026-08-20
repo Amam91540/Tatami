@@ -4573,8 +4573,14 @@ function applyDataInvariants(trusted){
     if(dedupeFederationMaterializedEvents()){ saveData(); }
     if(backfillLinkedMemberWeightCategoryOnce()){ saveData(); }
     if(uppercaseMemberLastNamesOnce()){ saveData(); }
-    if(refreshResultAgeCategories()){ saveData(); }
   }
+  // refreshResultAgeCategories() n'est PAS réservé à l'admin (contrairement au bloc juste au-dessus) :
+  // c'est un pur recalcul sans aucun risque de doublon, et la saisie des résultats au quotidien se
+  // fait très largement par le compte secrétaire — un rattrapage limité à l'admin ne se déclenchait
+  // donc quasiment jamais en pratique (bug remonté par Thomas le 20/08/2026 : ageCategory restait
+  // vide). Le calcul au point d'entrée (voir applyResultAgeCategory, appelé à chaque site qui modifie
+  // rec.result) reste la source principale ; ceci n'est qu'un filet de sécurité.
+  if(refreshResultAgeCategories()){ saveData(); }
   if(removeComiteDirecteurGroupPermanently()){ saveData(); }
   if(dedupeSpecialGroup(isLicensePendingGroup)){ saveData(); }
   if(renamePoussinetsToMiniPoussins()){ saveData(); }
@@ -13861,14 +13867,28 @@ function groupedCategoryLabel(birthDate, member){
   if(rank.bandIdx>=0 && rank.bandIdx<bands.length) return bands[rank.bandIdx].label;
   return 'Sans catégorie';
 }
+// Calcule/pose r.ageCategory (ex "Minimes", "Vétérans") sur UN destinataire de convocation — demande
+// de Thomas du 19/08/2026 (exposer la catégorie d'âge calculée d'un résultat de compétition vers
+// l'extérieur, jamais la date de naissance elle-même, voir CONVOC_COLUMNS côté Code.gs). Petit
+// correctif du 20/08/2026 : ageCategory restait VIDE pour de nouveaux résultats parce que seul
+// confirmAddResultBtn ("Ajouter ce participant") posait ce champ — la saisie du quotidien se fait en
+// réalité surtout via les résultats en ligne dans la liste et le mode "jour de compétition" (tapis),
+// qui modifiaient rec.result directement sans jamais appeler ce calcul. Centralisé ici et appelé
+// désormais à CHAQUE site qui modifie rec.result (voir les appels à applyResultAgeCategory dans tout
+// le fichier), plus le rattrapage refreshResultAgeCategories() ci-dessous pour les résultats déjà en
+// base avant ce correctif.
+function applyResultAgeCategory(rec){
+  if(!rec) return;
+  const member = data.members.find(m=>m.id===rec.memberId);
+  rec.ageCategory = rec.viaVeterans ? 'Vétérans' : (member ? groupedCategoryLabel(member.birthDate, member) : 'Sans catégorie');
+}
 // Rattrapage : recalcule r.ageCategory sur CHAQUE destinataire de convocation ayant un résultat —
-// demande de Thomas du 19/08/2026 (exposer la catégorie d'âge calculée d'un résultat de compétition,
-// jamais la date de naissance elle-même). recipient.ageCategory est déjà posé au moment même de
-// l'ajout d'un résultat (voir confirmAddResultBtn), mais ce rattrapage couvre aussi les résultats
-// modifiés a posteriori depuis la liste (poids/résultat corrigés, pas seulement via "Ajouter ce
-// participant") et les fiches déjà en base avant ce correctif — même philosophie idempotente que
+// couvre les résultats déjà en base avant ce correctif (ou saisis pendant la fenêtre où seul
+// confirmAddResultBtn posait ce champ). Même philosophie idempotente que
 // backfillLinkedMemberWeightCategoryOnce/uppercaseMemberLastNamesOnce : pas de drapeau hasOnceFlag,
-// se relance sans risque ni coût notable à chaque chargement.
+// se relance sans risque ni coût notable à chaque chargement — et volontairement PAS limité au rôle
+// admin (voir applyDataInvariants) puisqu'un pur recalcul sans risque de doublon, contrairement aux
+// autres migrations réservées à l'admin juste au-dessus.
 function refreshResultAgeCategories(){
   let changed = false;
   (data.convocEvents||[]).forEach(ev=>{
@@ -16572,10 +16592,9 @@ function initAddResultForm(){
     // Catégorie d'âge calculée (ex "Minimes", "Vétérans") au moment même de l'enregistrement du
     // résultat — demande de Thomas du 19/08/2026 : exposer cette catégorie vers l'extérieur (export
     // Sheets, voir CONVOC_COLUMNS côté Code.gs) SANS jamais exposer la date de naissance elle-même.
-    // Même logique que partout ailleurs dans l'app pour l'affichage (groupedCategoryLabel), avec le
-    // même cas particulier Vétérans (voir recipient.viaVeterans juste au-dessus, DOIT être déjà à
-    // jour avant ce calcul).
-    recipient.ageCategory = recipient.viaVeterans ? 'Vétérans' : groupedCategoryLabel(member.birthDate, member);
+    // Voir applyResultAgeCategory (doit être appelé APRÈS recipient.viaVeterans, déjà à jour juste
+    // au-dessus).
+    applyResultAgeCategory(recipient);
     saveData();
 
     ui.addResultDraftEventId = ev.id;
@@ -16937,6 +16956,7 @@ function renderResultsList(){
       const rec = evObj && evObj.recipients.find(x=>x.memberId===inp.dataset.member);
       if(!rec) return;
       rec.result = inp.value.trim();
+      applyResultAgeCategory(rec);
       saveData();
       if(inp.tagName==='SELECT') inp.setAttribute('style', `max-width:100px; flex-shrink:0; ${medalStyle(rec.result)}`);
       if(ui.resultsSelectedMemberId===rec.memberId) renderPalmares();
@@ -17134,6 +17154,7 @@ function renderCompetitionDayMode(){
       const rec = evObj && evObj.recipients.find(x=>x.memberId===btn.dataset.member);
       if(!rec) return;
       rec.result = (rec.result===btn.dataset.value) ? '' : btn.dataset.value;
+      applyResultAgeCategory(rec);
       saveData();
       const row = btn.closest('.compday-row');
       if(row){
@@ -17159,6 +17180,7 @@ function renderCompetitionDayMode(){
       const rec = evObj && evObj.recipients.find(x=>x.memberId===inp.dataset.member);
       if(!rec) return;
       rec.result = inp.value.trim();
+      applyResultAgeCategory(rec);
       saveData();
       const row = inp.closest('.compday-row');
       if(row){
@@ -17179,6 +17201,7 @@ function renderCompetitionDayMode(){
       const current = parseInt(rec.result,10) || 0;
       const next = Math.max(0, current + (Number(btn.dataset.dir)||0));
       rec.result = String(next);
+      applyResultAgeCategory(rec);
       saveData();
       const row = btn.closest('.compday-row');
       if(row){
