@@ -4568,7 +4568,7 @@ function applyDataInvariants(trusted){
   const session = getSession();
   if(session && session.role==='admin' && trusted){
     if(healOrphanedPreparedSeasonYear()){ saveData(); }
-    if(seedVeteranCalendar2026Once()){ saveData(); }
+    if(removeHardcodedVeteranCalendarOnce()){ saveData(); }
     if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
     if(ensureLicensePendingGroupOnce()){ saveData(); }
     if(dedupeFederationMaterializedEvents()){ saveData(); }
@@ -5150,6 +5150,12 @@ function applyRoleUI(){
   if(archiveCard) archiveCard.style.display = isFullAdmin ? '' : 'none';
   const resetFooter = document.querySelector('.settings-foot');
   if(resetFooter) resetFooter.style.display = isFullAdmin ? '' : 'none';
+  // Rapport annuel (Assemblée générale) : retiré pour les comptes prof (demande de Thomas,
+  // 20/08/2026) — ce document de synthèse (effectifs, résultats, etc. sur toute la saison, tous
+  // cours confondus) n'a pas sa place dans l'interface d'un prof, qui ne gère que ses propres cours.
+  // Reste visible pour admin/secrétaire/comptable (rôles déjà plus larges).
+  const agReportBtn = document.getElementById('generateAGReportBtn');
+  if(agReportBtn) agReportBtn.style.display = (session && session.role==='prof') ? 'none' : '';
 }
 
 document.getElementById('clubName').addEventListener('input', e=>{
@@ -9856,17 +9862,10 @@ function renderImportedCompetitionsSettings(){
         const key = calendarFederationMigrationKey(entry.federationKey, entry.date, entry.details);
         if(!data.settings.deletedFederationEventKeys.includes(key)) data.settings.deletedFederationEventKeys.push(key);
       }
-      // Même mémorisation pour le calendrier Vétérans (voir seedVeteranCalendar2026Once) — bug réel
-      // remonté par Thomas : sans ça, markDeleted seul (par id) ne protège qu'une seule fois. Si un
-      // appareil démarre avec une copie locale périmée n'ayant pas encore le drapeau de seed (ex :
-      // nouvel appareil, cache vidé), seedVeteranCalendar2026Once ne trouvait aucune trace de cette
-      // compétition dans data.calendarEvents (puisqu'elle venait d'être supprimée) et la recréait
-      // avec un id TOUT NEUF — invisible pour le tombstone par id, qui ne connaît que l'ANCIEN id.
-      if(entry && entry.source==='veteran-france-judo'){
-        if(!data.settings.deletedVeteranEventKeys) data.settings.deletedVeteranEventKeys = [];
-        const veteranKey = entry.name+'|'+entry.date;
-        if(!data.settings.deletedVeteranEventKeys.includes(veteranKey)) data.settings.deletedVeteranEventKeys.push(veteranKey);
-      }
+      // La mémorisation par clé pour le calendrier Vétérans (deletedVeteranEventKeys) a été retirée le
+      // 20/08/2026 en même temps que l'auto-ajout lui-même (voir removeHardcodedVeteranCalendarOnce) :
+      // ce tombstone n'a plus aucune raison d'être posé puisque plus rien ne recrée automatiquement ces
+      // compétitions.
       markDeleted('calendarEvents', btn.dataset.id);
       data.calendarEvents = (data.calendarEvents||[]).filter(e=>e.id!==btn.dataset.id);
       saveData();
@@ -11496,8 +11495,15 @@ function renderPresencesTab(){
 // cours d'origine précisé entre parenthèses, et la séance compte bien dans ses propres statistiques
 // de présence (voir renderSuiviContent, qui additionne ses séances "invité" à celles de son cours).
 function sessionGuestMembers(session){
+  // Repli sur memberDirectory (compte prof, voir filterDataForRole côté Code.gs) : juste après
+  // l'ajout d'un invité d'un cours hors périmètre, data.members ne le contient pas ENCORE (il n'y
+  // sera qu'après le prochain aller-retour avec le classeur, une fois guestMemberIds synchronisé) —
+  // sans ce repli, il resterait invisible dans l'appel jusqu'au rechargement suivant. On ne l'ajoute
+  // JAMAIS à data.members lui-même : cet objet (id/nom/cours seulement) serait alors renvoyé tel
+  // quel au prochain saveData() et écraserait sa fiche complète (certificat médical, téléphone...)
+  // côté classeur — voir le commentaire de la recherche "invité" un peu plus haut.
   return (session.guestMemberIds||[])
-    .map(id=>data.members.find(m=>m.id===id))
+    .map(id=>data.members.find(m=>m.id===id) || (data.memberDirectory||[]).find(m=>m.id===id))
     .filter(Boolean)
     .sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
 }
@@ -11584,7 +11590,14 @@ function renderPresenceSheet(){
       const q = calStripAccents(guestInput.value).toLowerCase().trim();
       if(!q){ guestWrap.innerHTML=''; guestWrap.classList.remove('show'); return; }
       const alreadyIn = new Set([...members.map(m=>m.id), ...guestMembers.map(m=>m.id)]);
-      const matches = data.members.filter(m=> !m.archived && !!m.forNextSeason===isViewingNextSeason() && !alreadyIn.has(m.id) && calStripAccents(m.name).toLowerCase().includes(q)).slice(0,8);
+      // Un prof doit pouvoir inviter un élève d'un cours qui n'est pas le sien (demande de Thomas,
+      // 20/08/2026 — même principe que la recherche "Élève" des stages juste plus haut dans le
+      // fichier) : recherche sur data.memberDirectory (annuaire minimal de tout le club, voir
+      // filterDataForRole côté Code.gs) plutôt que data.members (limité à son propre périmètre pour
+      // un compte prof). Pour admin/secrétaire, memberDirectory n'existe pas et data.members
+      // contient déjà tout le monde.
+      const pool = data.memberDirectory || data.members;
+      const matches = pool.filter(m=> !m.archived && !!m.forNextSeason===isViewingNextSeason() && !alreadyIn.has(m.id) && calStripAccents(m.name).toLowerCase().includes(q)).slice(0,8);
       if(matches.length===0){
         guestWrap.innerHTML = '<div class="empty" style="padding:10px;">Aucun élève trouvé.</div>';
       } else {
@@ -14996,62 +15009,34 @@ function dedupeFederationMaterializedEvents(){
   return true;
 }
 
-/* ---------------- CALENDRIER VÉTÉRANS 2026-2027 (France Judo) ----------------
- * Transcrit une seule fois depuis l'affiche officielle du calendrier vétérans, puis ajouté
- * directement dans data.calendarEvents (comme n'importe quel événement ajouté manuellement,
- * pleinement modifiable/supprimable ensuite). Le "level" reprend le code couleur de la légende
- * (vert=Super Excellence, rouge=Excellence, bleu=Label A, crème=France, marron=International).
- * Le tournoi "TREMBLAY EN FRANCE" (date encore en attente sur l'affiche) n'a pas pu être ajouté
- * ici faute de date connue ; il est à ajouter à la main via "+ Ajouter une compétition ou un
- * stage" dès que la Ligue/le Comité communique la date. */
-const VETERAN_CALENDAR_2026_2027 = [
-  { name:"Championnat du Monde Vétérans", city:"Sarajevo (Bosnie-Herzégovine)", date:"2026-09-20", dateEnd:"2026-09-24", dayLabel:"du 20 au 24 septembre 2026", level:"International" },
-  { name:"Championnats d'Europe Vétérans", city:"Portimao (Portugal)", date:"2027-10-22", dateEnd:"2027-10-25", dayLabel:"du 22 au 25 octobre 2027", level:"International" },
-  { name:"Tournoi de Nantes", city:"Nantes", date:"2026-11-21", dayLabel:"21 novembre 2026", level:"Label A" },
-  { name:"Tournoi de Fontaine", city:"Fontaine", date:"2026-11-21", dayLabel:"21 novembre 2026", level:"Excellence" },
-  { name:"Tournoi d'Angers", city:"Angers", date:"2026-12-05", dayLabel:"5 décembre 2026", level:"Excellence" },
-  { name:"Tournoi de Mouvaux", city:"Mouvaux", date:"2027-01-23", dateEnd:"2027-01-24", dayLabel:"23 et 24 janvier 2027", level:"Super Excellence" },
-  { name:"Tournoi International Vétérans BFC", city:"Besançon", date:"2027-02-21", dayLabel:"21 février 2027", level:"Excellence" },
-  { name:"Tournoi Elven", city:"Elven", date:"2027-02-27", dayLabel:"27 février 2027", level:"Label A" },
-  { name:"Tournoi de France par équipe mixte (Tournoi Patrick Latour)", city:"Ozoir-la-Ferrière", date:"2027-03-13", dayLabel:"13 mars 2027", level:"France" },
-  { name:"International des Vignobles du Médoc et du Bordelais (Tournoi Jean Thébault)", city:"Lormont", date:"2027-03-28", dayLabel:"28 mars 2027", level:"Excellence" },
-  { name:"Tournoi de Savoie", city:"", date:"2027-04-04", dayLabel:"4 avril 2027", level:"Label A" },
-  { name:"Master de Tours", city:"Tours", date:"2027-04-17", dayLabel:"17 avril 2027", level:"Excellence" },
-  { name:"Tournoi de Gérardmer", city:"Gérardmer", date:"2027-05-01", dayLabel:"1er mai 2027", level:"Excellence" },
-  { name:"Master d'Artagnan", city:"Auch", date:"2027-05-08", dayLabel:"8 mai 2027", level:"Excellence" },
-  { name:"Tournoi de Provence", city:"", date:"2027-05-15", dayLabel:"15 mai 2027 (date à confirmer)", level:"Excellence" },
-  { name:"Tournoi des Vikings", city:"Gonfreville-l'Orcher", date:"2027-05-29", dayLabel:"29 mai 2027", level:"Label A" },
-  { name:"Championnats de France Vétérans", city:"Villebon-sur-Yvette", date:"2027-06-12", dateEnd:"2027-06-13", dayLabel:"12 et 13 juin 2027", level:"France" }
-];
-function seedVeteranCalendar2026Once(){
-  // IMPORTANT : pas de "if(hasOnceFlag(...)) return" en tout début de fonction — même piège que
-  // migrateFederationCalendarOnce (voir son commentaire) : un appareil démarrant avec une copie
-  // locale périmée (nouvel appareil, cache vidé, Phase 1 de loadData() avant que la lecture serveur
-  // n'ait corrigé le drapeau) ne verrait pas encore ce drapeau à true, relancerait la fonction, et
-  // — SANS la protection par clé ci-dessous — recréerait avec un id tout neuf une compétition
-  // pourtant déjà supprimée délibérément par l'admin (bug réel remonté par Thomas : des compétitions
-  // vétérans supprimées "reviennent"). La vraie protection anti-doublon/anti-résurrection est donc
-  // uniquement basée sur le CONTENU : présente déjà (existingKeys) ou supprimée délibérément
-  // (deletedVeteranEventKeys, voir data-action="delete-manual-event") — jamais sur un simple drapeau.
+/* ---------------- CALENDRIER VÉTÉRANS 2026-2027 (France Judo) — RETIRÉ le 20/08/2026 ----------------
+ * Cette liste codée en dur (VETERAN_CALENDAR_2026_2027) et sa fonction de "seed" automatique
+ * (seedVeteranCalendar2026Once) ont existé un temps pour importer une fois le calendrier officiel des
+ * tournois vétérans. Un mécanisme anti-résurrection par clé (deletedVeteranEventKeys) avait déjà été
+ * ajouté le 17/08/2026 suite à un premier signalement de Thomas ("les compétitions vétérans
+ * supprimées reviennent"), mais le problème a persisté pour la totalité des 17 tournois de la liste
+ * malgré ce correctif — plutôt que de continuer à chercher une nouvelle faille dans ce système de
+ * tombstone (fragile par nature : toute divergence, même minime, entre la clé posée à la suppression
+ * et la clé recalculée au prochain chargement suffit à faire échouer la protection), Thomas a demandé
+ * de supprimer purement et simplement cet auto-ajout. Les compétitions vétérans importées séparément
+ * via Excel (sans source==='veteran-france-judo') ne sont PAS concernées et restent intactes — voir
+ * removeHardcodedVeteranCalendarOnce() juste en dessous, qui nettoie une seule fois les entrées issues
+ * de l'ancien seed automatique. Pour un futur tournoi vétérans, il faut désormais l'ajouter à la main
+ * via "+ Ajouter une compétition ou un stage", comme n'importe quel autre événement. */
+// Nettoyage ponctuel (mais volontairement SANS hasOnceFlag, voir le commentaire d'applyDataInvariants
+// sur `trusted` juste au-dessus : un appareil resté sur une ancienne version d'index.html encore en
+// cache pourrait continuer à recréer des entrées source==='veteran-france-judo' pendant la période de
+// transition — ce nettoyage doit donc rester actif indéfiniment pour les rattraper, exactement comme
+// dedupeFederationMaterializedEvents un peu plus haut. Sans coût notable : ne fait rien dès qu'il n'y
+// a plus rien à retirer.
+function removeHardcodedVeteranCalendarOnce(){
   if(!data.calendarEvents) data.calendarEvents = [];
-  const existingKeys = new Set(data.calendarEvents.filter(e=>e.source==='veteran-france-judo').map(e=>e.name+'|'+e.date));
-  const deletedVeteranKeys = new Set(data.settings.deletedVeteranEventKeys || []);
-  let added = false;
-  VETERAN_CALENDAR_2026_2027.forEach(v=>{
-    const k = v.name+'|'+v.date;
-    if(existingKeys.has(k)) return;
-    if(deletedVeteranKeys.has(k)) return; // supprimée délibérément par l'admin : ne jamais la recréer
-    data.calendarEvents.push({
-      id: uid(), type:'competition', name: v.name, date: v.date, dateEnd: v.dateEnd||'', city: v.city||'', address:'',
-      ageCategories:['Vétérans'], validated:false, cancelled:false,
-      level: v.level, dayLabel: v.dayLabel, details:[], weighIn:[],
-      source:'veteran-france-judo'
-    });
-    existingKeys.add(k);
-    added = true;
-  });
-  setOnceFlag('veteranCalendar2026Seeded'); // conservé par cohérence/historique, plus utilisé comme garde-fou
-  return added;
+  const toRemove = data.calendarEvents.filter(e=>e.source==='veteran-france-judo').map(e=>e.id);
+  if(toRemove.length===0) return false;
+  toRemove.forEach(id=> markDeleted('calendarEvents', id));
+  const removeSet = new Set(toRemove);
+  data.calendarEvents = data.calendarEvents.filter(e=>!removeSet.has(e.id));
+  return true;
 }
 
 const CAL_MONTHS_FR = { SEPTEMBRE:9, OCTOBRE:10, NOVEMBRE:11, DECEMBRE:12, JANVIER:1, FEVRIER:2, MARS:3, AVRIL:4, MAI:5, JUIN:6, JUILLET:7, AOUT:8 };
@@ -16371,7 +16356,14 @@ function renderStageForm(){
   input.addEventListener('input', ()=>{
     const q = input.value.trim().toLowerCase();
     if(!q){ wrap.innerHTML=''; wrap.classList.remove('show'); return; }
-    const matches = data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,8);
+    // Un stage mélange souvent plusieurs cours (ex: un stage de judo accueille les cours 1, 2, 3,
+    // parfois 4) — la recherche porte donc sur data.memberDirectory quand il existe (compte prof,
+    // voir filterDataForRole côté Code.gs : annuaire minimal de TOUT le club, pas seulement les
+    // cours attribués à ce compte) plutôt que sur data.members (limité à son propre périmètre pour
+    // un prof). Pour admin/secrétaire, memberDirectory n'existe pas : on retombe sur data.members,
+    // qui contient déjà tout le monde.
+    const pool = data.memberDirectory || data.members;
+    const matches = pool.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,8);
     wrap.innerHTML = matches.map(m=>{
       const g = data.groups.find(x=>x.id===m.groupId);
       return `<div class="convoc-row" data-action="pick-stage-member" data-id="${m.id}" style="cursor:pointer;">
@@ -16421,7 +16413,10 @@ function addMemberToStage(memberId){
   if(!nameVal){ showToast('Renseigne d’abord le nom du stage'); return; }
   const dateStart = document.getElementById('stageDateStart').value;
   const dateEnd = document.getElementById('stageDateEnd').value;
-  const member = data.members.find(m=>m.id===memberId);
+  // Repli sur memberDirectory (compte prof, voir filterDataForRole côté Code.gs) : un élève d'un
+  // autre cours que ceux attribués à ce compte n'existe pas forcément dans data.members, seulement
+  // dans cet annuaire minimal — voir le commentaire de l'input de recherche juste au-dessus.
+  const member = data.members.find(m=>m.id===memberId) || (data.memberDirectory||[]).find(m=>m.id===memberId);
   if(!member) return;
   const stage = findOrCreateStage(nameVal, dateStart, dateEnd);
   ui.currentStageId = stage.id;
