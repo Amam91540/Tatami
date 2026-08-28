@@ -13028,6 +13028,17 @@ function shiftBordereauFoliosDownAfter(folioRemoved){
   data.settings.bordereauFolioCounters = data.settings.bordereauFolioCounters || {};
   if((data.settings.bordereauFolioCounters.global||0) > 0) data.settings.bordereauFolioCounters.global -= 1;
 }
+// Tombstone dédié (voir mergeJsonArraysUnion + filtre appliqué sur bordereauLog côté Code.gs) — bug
+// remonté par Thomas le 28/08/2026 : "les bordereaux reviennent quand je fais une actualisation
+// forcée". Cause : bordereauLog est fusionné de façon purement ADDITIVE par id (mergeJsonArrayById,
+// jamais écrasé — voulu pour ne jamais perdre un bordereau synchronisé depuis un autre appareil),
+// donc une suppression purement locale (splice) était systématiquement ressuscitée à la synchro
+// suivante. Utilisé aussi bien pour une suppression manuelle (deleteBordereauLog) que pour le
+// nettoyage automatique d'un folio devenu vide (dedupeBordereauPaymentAcrossLogs, plus bas).
+function markBordereauLogDeleted(logId){
+  if(!Array.isArray(data.settings.deletedBordereauLogIds)) data.settings.deletedBordereauLogIds = [];
+  if(!data.settings.deletedBordereauLogIds.includes(logId)) data.settings.deletedBordereauLogIds.push(logId);
+}
 // Supprime définitivement un bordereau déjà généré (ex: créé par erreur, doublon) — demande de Thomas
 // du 28/08/2026. Les paiements qui y étaient rattachés sont libérés (bordereauFolio/Section remis à
 // null) puis immédiatement réaffectés (autoAssignAllPendingPaymentsToBordereaux, définie plus bas
@@ -13044,6 +13055,7 @@ function deleteBordereauLog(logId){
     if(ids.has(p.id)){ p.bordereauFolio = null; p.bordereauSection = null; }
   });
   logs.splice(idx,1);
+  markBordereauLogDeleted(log.id);
   shiftBordereauFoliosDownAfter(log.folio);
   autoAssignAllPendingPaymentsToBordereaux();
   return true;
@@ -13076,6 +13088,7 @@ function dedupeBordereauPaymentAcrossLogs(){
   emptied.forEach(l=>{
     const i = (data.settings.bordereauLog||[]).findIndex(x=>x.id===l.id);
     if(i!==-1) data.settings.bordereauLog.splice(i,1);
+    markBordereauLogDeleted(l.id);
     shiftBordereauFoliosDownAfter(l.folio);
   });
   return true;
