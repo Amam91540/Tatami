@@ -4015,7 +4015,7 @@ function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
         <div style="font-weight:700; font-style:italic; font-size:12.5px; max-width:420px;">☑ Je reconnais avoir pris connaissance du règlement intérieur et en accepte les termes, affiché au club.</div>
         <div style="text-align:right;">
           <div style="font-style:italic; font-size:12.5px;">Signature.</div>
-          <div style="font-size:10.5px; color:#666; margin:2px 0 4px;">Signé électroniquement le ${dateLabel}</div>
+          ${sigDataUrl ? `<div style="font-size:10.5px; color:#666; margin:2px 0 4px;">Signé électroniquement le ${dateLabel}</div>` : ''}
           ${sigDataUrl ? `<img src="${sigDataUrl}" style="height:60px; max-width:220px; display:block; margin-left:auto;">` : ''}
         </div>
       </div>
