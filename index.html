@@ -1641,7 +1641,7 @@ function ensureSettings(){
   if(data.settings.seasonAutoFollow===undefined) data.settings.seasonAutoFollow = true;
   if(!data.settings.theme) data.settings.theme = 'light';
   if(!data.clubName) data.clubName = "Académie Menneçoise d'Arts Martiaux";
-  if(!data.clubContact) data.clubContact = "01.64.57.32.49 — amam91540@gmail.com\nThomas : 06.35.47.60.04";
+  if(!data.clubContact) data.clubContact = "01.64.57.32.49 — amam91540@gmail.com";
   if(!data.convocEvents) data.convocEvents = [];
   if(!data.stages) data.stages = [];
   if(!data.archivedSeasons) data.archivedSeasons = [];
@@ -12532,7 +12532,7 @@ function renderCotisationsCard(){
     </div>
     <div class="card">
       <h2 style="margin-top:0;">📋 Bordereau d'encaissement A.M.A.M</h2>
-      <p style="font-size:12px; color:var(--ink-dim); margin:4px 0 10px; line-height:1.5;">Un bordereau par section : chaque paiement espèces/chèque/ANCV (regroupé par famille) rejoint automatiquement le folio en cours dès son enregistrement — max 20 lignes par feuillet. "📄 Générer" ouvre l'aperçu du folio en cours pour le corriger puis produire le PDF avant le dépôt en banque (les chèques inclus passent alors "encaissé"). Le Chèque Sport garde son attestation dédiée.</p>
+      <p style="font-size:12px; color:var(--ink-dim); margin:4px 0 10px; line-height:1.5;">Un bordereau par section : chaque paiement (espèces, chèque, ANCV, virement, chèque sport, autre — regroupé par famille) rejoint automatiquement le folio en cours dès son enregistrement — max 20 lignes par feuillet. "📄 Générer" ouvre l'aperçu du folio en cours pour le corriger puis produire le PDF avant le dépôt en banque (les chèques inclus passent alors "encaissé"). Le Chèque Sport garde en plus son attestation dédiée.</p>
       ${bordereauSectionsHtml}
     </div>`;
   const dueRowsContainer = document.getElementById('cotisationsDueRows');
@@ -12990,16 +12990,18 @@ function ensureBordereauFolioCounterConsistency(){
 // Le bordereau papier A.M.A.M compte 20 lignes. Un feuillet ne doit donc jamais dépasser 20 lignes
 // (une ligne par adhérent, peu importe le nombre de paiements qui les concernent).
 const BORDEREAU_MAX_LINES = 20;
-// Rattache un paiement (espèces/chèque/ANCV, ni annulé ni rejeté) à un bordereau DÈS son
-// enregistrement — plus besoin de cliquer sur "Générer" pour qu'il rejoigne un folio. On le pose sur
-// le folio "ouvert" de sa section (le plus récent qui n'a pas encore été généré en PDF, voir
-// log.pdfGenerated) tant qu'il reste de la place (BORDEREAU_MAX_LINES) ; sinon, ou si aucun folio
-// ouvert n'existe, on en ouvre un nouveau. Un folio reste "ouvert" — donc continue à récupérer les
-// paiements suivants — tant qu'il n'a pas atteint la limite de lignes ET que son PDF n'a pas été
-// généré (le clic sur "📄 Générer le PDF" dans l'aperçu le referme ; "💾 Enregistrer sans générer" le
-// laisse ouvert).
+// Rattache un paiement (TOUTE méthode — espèces, chèque, ANCV, virement, chèque sport, autre —, ni
+// annulé ni rejeté) à un bordereau DÈS son enregistrement — plus besoin de cliquer sur "Générer" pour
+// qu'il rejoigne un folio. Demande de Thomas (28/08/2026) : le bordereau doit refléter TOUS les
+// paiements de la section, pas seulement ceux physiquement déposés en banque (le Chèque Sport garde
+// PAR AILLEURS son attestation dédiée, mais apparaît désormais aussi ici). On le pose sur le folio
+// "ouvert" de sa section (le plus récent qui n'a pas encore été généré en PDF, voir log.pdfGenerated)
+// tant qu'il reste de la place (BORDEREAU_MAX_LINES) ; sinon, ou si aucun folio ouvert n'existe, on en
+// ouvre un nouveau. Un folio reste "ouvert" — donc continue à récupérer les paiements suivants — tant
+// qu'il n'a pas atteint la limite de lignes ET que son PDF n'a pas été généré (le clic sur "📄 Générer
+// le PDF" dans l'aperçu le referme ; "💾 Enregistrer sans générer" le laisse ouvert).
 function autoAssignPaymentToBordereau(payment){
-  if(!['especes','cheque','ancv'].includes(payment.method)) return;
+  if(!Object.prototype.hasOwnProperty.call(PAYMENT_METHOD_LABELS, payment.method)) return;
   if(payment.status==='annule' || payment.status==='rejete') return;
   if(payment.bordereauFolio) return; // déjà rattaché (ex: correction d'un paiement déjà sur un bordereau)
   const section = paymentBordereauSection(payment);
@@ -13037,7 +13039,7 @@ function autoAssignPaymentToBordereau(payment){
 function autoAssignAllPendingPaymentsToBordereaux(){
   let changed = false;
   const pending = (data.payments||[])
-    .filter(p=> !p.bordereauFolio && ['especes','cheque','ancv'].includes(p.method) && p.status!=='annule' && p.status!=='rejete')
+    .filter(p=> !p.bordereauFolio && Object.prototype.hasOwnProperty.call(PAYMENT_METHOD_LABELS, p.method) && p.status!=='annule' && p.status!=='rejete')
     .sort((a,b)=> (a.createdAt||'').localeCompare(b.createdAt||''));
   pending.forEach(p=>{
     const before = p.bordereauFolio;
@@ -13131,11 +13133,11 @@ function computeBordereauData(section, paymentsForDoc){
     groups[key].payments.push(p);
   });
   groupOrder.sort((ka,kb)=> groups[ka].surname.localeCompare(groups[kb].surname, 'fr'));
-  let totInscription=0, totDivers=0, totAncv=0, totEspeces=0, totCheque=0;
+  let totInscription=0, totDivers=0, totAncv=0, totEspeces=0, totCheque=0, totVirement=0, totChequesport=0, totAutre=0;
   const totalDateSlotAmounts = new Array(dateSlotMonths.length).fill(0);
   const families = groupOrder.map(key=>{
     const g = groups[key];
-    let ancv=0, especes=0, cheque=0;
+    let ancv=0, especes=0, cheque=0, virement=0, chequesport=0, autre=0;
     const chequeOwners = new Set();
     const dateSlotAmounts = new Array(dateSlotMonths.length).fill(0);
     g.payments.forEach(p=>{
@@ -13155,10 +13157,16 @@ function computeBordereauData(section, paymentsForDoc){
           if(slotIdx!==-1) dateSlotAmounts[slotIdx] = Math.round((dateSlotAmounts[slotIdx]+methodAmount)*100)/100;
         }
       }
+      // Virement / Chèque Sport / Autre (demande de Thomas du 28/08/2026 : TOUS les paiements doivent
+      // apparaître dans le bordereau, pas seulement ce qui part physiquement en banque) — pas de date
+      // d'encaissement ni de "nom" à saisir pour ces méthodes, juste un montant par famille.
+      else if(p.method==='virement') virement += methodAmount;
+      else if(p.method==='chequesport') chequesport += methodAmount;
+      else if(p.method==='autre') autre += methodAmount;
     });
     const monthsSorted = dateSlotMonths.map((slot,i)=> (slot && dateSlotAmounts[i]>0) ? `${slot.label} ${fmtEuro(dateSlotAmounts[i])}` : null);
     dateSlotAmounts.forEach((amt,i)=>{ totalDateSlotAmounts[i] = Math.round((totalDateSlotAmounts[i]+amt)*100)/100; });
-    totAncv += ancv; totEspeces += especes; totCheque += cheque;
+    totAncv += ancv; totEspeces += especes; totCheque += cheque; totVirement += virement; totChequesport += chequesport; totAutre += autre;
     // Une ligne par adhérent distinct concerné par au moins un paiement de cette famille — Inscription =
     // somme de sa part (allocation.amount). Le "Divers" d'un paiement est rattaché à la ligne du 1er
     // adhérent de ce paiement (un divers ne concerne en pratique qu'une seule personne, ex: kimono).
@@ -13186,11 +13194,11 @@ function computeBordereauData(section, paymentsForDoc){
       });
     totInscription += memberRows.reduce((s,r)=>s+r.inscription,0);
     totDivers += memberRows.reduce((s,r)=>s+r.divers,0);
-    return { key, surname:g.surname, ancv, especes, cheque, chequeOwnersDefault: [...chequeOwners].join(', '), monthsSorted, memberRows };
+    return { key, surname:g.surname, ancv, especes, cheque, virement, chequesport, autre, chequeOwnersDefault: [...chequeOwners].join(', '), monthsSorted, memberRows };
   });
   return {
     dateSlotMonths, families,
-    totals: { totInscription, totDivers, totAncv, totEspeces, totCheque, totalDateSlotAmounts }
+    totals: { totInscription, totDivers, totAncv, totEspeces, totCheque, totVirement, totChequesport, totAutre, totalDateSlotAmounts }
   };
 }
 // Construit le <table> HTML du bordereau à partir des données calculées, en tenant compte des
@@ -13209,6 +13217,9 @@ function buildBordereauTableHtml(computed, overrides){
       <td rowspan="${rowspan}">${fam.ancv>0 ? fmtEuro(fam.ancv) : '—'}</td>
       <td rowspan="${rowspan}">${fam.especes>0 ? fmtEuro(fam.especes) : '—'}</td>
       <td rowspan="${rowspan}">${fam.cheque>0 ? fmtEuro(fam.cheque) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.virement>0 ? fmtEuro(fam.virement) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.chequesport>0 ? fmtEuro(fam.chequesport) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.autre>0 ? fmtEuro(fam.autre) : '—'}</td>
       <td rowspan="${rowspan}">${chequeNameValue ? `<strong>${escapeHtml(chequeNameValue)}</strong>` : '—'}</td>
       ${dateCellsHtml}`;
     if(fam.memberRows.length===0){
@@ -13231,13 +13242,13 @@ function buildBordereauTableHtml(computed, overrides){
   // confondus) — permet de vérifier en un coup d'œil le montant à déposer par mois.
   const totalDateCellsHtml = totals.totalDateSlotAmounts.map(amt=>`<td>${amt>0.009 ? fmtEuro(amt) : '—'}</td>`).join('');
   const totalRow = `<tr class="bord-total">
-    <td>TOTAL</td><td>${fmtEuro(totals.totInscription)}</td><td>${fmtEuro(totals.totDivers)}</td><td>${fmtEuro(totals.totAncv)}</td><td>${fmtEuro(totals.totEspeces)}</td><td>${fmtEuro(totals.totCheque)}</td>
+    <td>TOTAL</td><td>${fmtEuro(totals.totInscription)}</td><td>${fmtEuro(totals.totDivers)}</td><td>${fmtEuro(totals.totAncv)}</td><td>${fmtEuro(totals.totEspeces)}</td><td>${fmtEuro(totals.totCheque)}</td><td>${fmtEuro(totals.totVirement)}</td><td>${fmtEuro(totals.totChequesport)}</td><td>${fmtEuro(totals.totAutre)}</td>
     <td></td>${totalDateCellsHtml}<td></td>
   </tr>`;
   const dateColLabel = (i)=> `Date ${i+1}${dateSlotMonths[i] ? ' ('+escapeHtml(dateSlotMonths[i].label)+')' : ''}`;
   const dateHeadCellsHtml = dateSlotMonths.map((_,i)=>`<th>${dateColLabel(i)}</th>`).join('');
-  const totalCols = 8 + dateSlotMonths.length; // Nom, Inscription, Divers, ANCV, Espèces, Chèque, Nom du chèque, Dates..., Observations
-  const headRow = `<tr><th>Nom</th><th>Inscription</th><th>Divers</th><th>ANCV</th><th>Espèces</th><th>Chèque</th><th>Nom du chèque</th>${dateHeadCellsHtml}<th>Observations</th></tr>`;
+  const totalCols = 11 + dateSlotMonths.length; // Nom, Inscription, Divers, ANCV, Espèces, Chèque, Virement, Chèque Sport, Autre, Nom du chèque, Dates..., Observations
+  const headRow = `<tr><th>Nom</th><th>Inscription</th><th>Divers</th><th>ANCV</th><th>Espèces</th><th>Chèque</th><th>Virement</th><th>Chèque Sport</th><th>Autre</th><th>Nom du chèque</th>${dateHeadCellsHtml}<th>Observations</th></tr>`;
   return families.length
     ? `<table class="bordereau-table">${headRow}${rows}${totalRow}</table>`
     : `<table class="bordereau-table">${headRow}<tr><td colspan="${totalCols}" style="text-align:center; color:#888; padding:16px 10px;">Aucun paiement.</td></tr></table>`;
@@ -13292,6 +13303,9 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
       <td rowspan="${rowspan}">${fam.ancv>0 ? fmtEuro(fam.ancv) : '—'}</td>
       <td rowspan="${rowspan}">${fam.especes>0 ? fmtEuro(fam.especes) : '—'}</td>
       <td rowspan="${rowspan}">${fam.cheque>0 ? fmtEuro(fam.cheque) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.virement>0 ? fmtEuro(fam.virement) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.chequesport>0 ? fmtEuro(fam.chequesport) : '—'}</td>
+      <td rowspan="${rowspan}">${fam.autre>0 ? fmtEuro(fam.autre) : '—'}</td>
       <td rowspan="${rowspan}"><input type="text" class="bordereau-edit-input" data-family-key="${escapeHtml(fam.key)}" value="${escapeHtml(chequeNameValue)}" placeholder="—"></td>
       ${dateCellsHtml}`;
     if(fam.memberRows.length===0){
@@ -13310,13 +13324,13 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
   }).join('');
   const totalDateCellsHtml = computed.totals.totalDateSlotAmounts.map(amt=>`<td>${amt>0.009 ? fmtEuro(amt) : '—'}</td>`).join('');
   const totalRow = `<tr class="bord-total">
-    <td>TOTAL</td><td>${fmtEuro(computed.totals.totInscription)}</td><td>${fmtEuro(computed.totals.totDivers)}</td><td>${fmtEuro(computed.totals.totAncv)}</td><td>${fmtEuro(computed.totals.totEspeces)}</td><td>${fmtEuro(computed.totals.totCheque)}</td>
+    <td>TOTAL</td><td>${fmtEuro(computed.totals.totInscription)}</td><td>${fmtEuro(computed.totals.totDivers)}</td><td>${fmtEuro(computed.totals.totAncv)}</td><td>${fmtEuro(computed.totals.totEspeces)}</td><td>${fmtEuro(computed.totals.totCheque)}</td><td>${fmtEuro(computed.totals.totVirement)}</td><td>${fmtEuro(computed.totals.totChequesport)}</td><td>${fmtEuro(computed.totals.totAutre)}</td>
     <td></td>${totalDateCellsHtml}<td></td>
   </tr>`;
   const dateColLabel = (i)=> `Date ${i+1}${computed.dateSlotMonths[i] ? ' ('+escapeHtml(computed.dateSlotMonths[i].label)+')' : ''}`;
   const dateHeadCellsHtml = computed.dateSlotMonths.map((_,i)=>`<th>${dateColLabel(i)}</th>`).join('');
-  const totalCols = 8 + computed.dateSlotMonths.length;
-  const headRow = `<tr><th>Nom</th><th>Inscription</th><th>Divers</th><th>ANCV</th><th>Espèces</th><th>Chèque</th><th>Nom du chèque</th>${dateHeadCellsHtml}<th>Observations</th></tr>`;
+  const totalCols = 11 + computed.dateSlotMonths.length;
+  const headRow = `<tr><th>Nom</th><th>Inscription</th><th>Divers</th><th>ANCV</th><th>Espèces</th><th>Chèque</th><th>Virement</th><th>Chèque Sport</th><th>Autre</th><th>Nom du chèque</th>${dateHeadCellsHtml}<th>Observations</th></tr>`;
   const tableHtml = computed.families.length
     ? `<table class="bordereau-table bordereau-table-edit">${headRow}${rowsHtml}${totalRow}</table>`
     : `<table class="bordereau-table bordereau-table-edit">${headRow}<tr><td colspan="${totalCols}" style="text-align:center; color:#888; padding:16px 10px;">Aucun paiement.</td></tr></table>`;
