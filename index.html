@@ -4587,6 +4587,11 @@ function applyDataInvariants(trusted){
   if(renamePoussinetsToMiniPoussins()){ saveData(); }
   if(splitBabyJudoKarateAgeBandOnce()){ saveData(); }
   if(renumberBordereauFoliosIfDuplicated()){ saveData(); }
+  // Auto-guérison d'un paiement listé sur 2 bordereaux à la fois (bug remonté par Thomas le
+  // 28/08/2026) — AVANT ensureBordereauFolioCounterConsistency/autoAssignAllPendingPaymentsToBordereaux
+  // ci-dessous, pour que le paiement libéré par le nettoyage soit immédiatement repris par ce dernier
+  // dans la même passe, sans laisser de paiement orphelin le temps d'un rechargement.
+  if(dedupeBordereauPaymentAcrossLogs()){ saveData(); }
   if(ensureBordereauFolioCounterConsistency()){ saveData(); }
   if(autoAssignAllPendingPaymentsToBordereaux()){ saveData(); }
   // Mode sombre supprimé : plus de CSS ni d'attribut data-theme à gérer, l'app n'a plus qu'un
@@ -12444,7 +12449,10 @@ function renderCotisationsCard(){
       const paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
       const lineCount = computeBordereauData(section, paymentsForDoc).families.reduce((s,f)=>s+(f.memberRows.length||1),0);
       const icons = `${l.pdfGenerated ? '<span title="PDF déjà généré" style="color:#2E7D32; font-size:13px;">✅</span>' : ''}${lineCount>=BORDEREAU_MAX_LINES ? `<span title="Feuillet plein (${lineCount} lignes)" style="color:#B08A2E; font-size:13px;">⚠️</span>` : ''}`;
-      return `<div data-action="bordereau-history-item" data-id="${escapeHtml(l.id)}" style="cursor:pointer; padding:4px 4px; font-size:12px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px;"><span style="flex:1; text-decoration:underline dotted; text-decoration-color:var(--ink-dim);">Folio N°${l.folio} — ${escapeHtml(fmtDateShort(l.generatedAt)||l.generatedAt)} · ${n} paiement${n>1?'s':''}</span>${icons}</div>`;
+      // Bouton de suppression (demande de Thomas du 28/08/2026) — data-action distinct + stopPropagation
+      // dans le handler (voir plus bas) pour ne jamais déclencher aussi l'ouverture de l'aperçu
+      // (data-action="bordereau-history-item" sur le conteneur englobant).
+      return `<div data-action="bordereau-history-item" data-id="${escapeHtml(l.id)}" style="cursor:pointer; padding:4px 4px; font-size:12px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:6px;"><span style="flex:1; text-decoration:underline dotted; text-decoration-color:var(--ink-dim);">Folio N°${l.folio} — ${escapeHtml(fmtDateShort(l.generatedAt)||l.generatedAt)} · ${n} paiement${n>1?'s':''}</span>${icons}<button class="ghost icon-btn" data-action="delete-bordereau" data-id="${escapeHtml(l.id)}" title="Supprimer ce bordereau" style="padding:3px 7px; font-size:12px; flex-shrink:0;">🗑️</button></div>`;
     }).join('')}</div>`;
   }
   const bordereauSectionsHtml = BORDEREAU_SECTIONS.map(section=>{
@@ -12587,6 +12595,21 @@ function renderCotisationsCard(){
   });
   wrap.querySelectorAll('[data-action="bordereau-history-item"]').forEach(el=>{
     el.addEventListener('click', ()=> regenerateBordereauFromLog(el.dataset.id));
+  });
+  wrap.querySelectorAll('[data-action="delete-bordereau"]').forEach(btn=>{
+    btn.addEventListener('click', e=>{
+      e.stopPropagation();
+      const logId = btn.dataset.id;
+      const log = (data.settings.bordereauLog||[]).find(l=>l.id===logId);
+      if(!log) return;
+      const n = (log.paymentIds||[]).length;
+      const warn = log.pdfGenerated ? '\n\n⚠️ Le PDF de ce bordereau a déjà été généré (et probablement déposé en banque) — si c\'est le cas, le papier ne correspondra plus à l\'application après cette suppression.' : '';
+      if(!confirm(`Supprimer le Folio N°${log.folio} (${n} paiement${n>1?'s':''}) ?\n\nLes paiements concernés seront automatiquement réaffectés au prochain bordereau de cette section, et les folios suivants seront renumérotés.${warn}`)) return;
+      deleteBordereauLog(logId);
+      saveData();
+      showToast(`Folio N°${log.folio} supprimé`);
+      renderCotisationsCard();
+    });
   });
   wrap.querySelectorAll('[data-action="cheque-mark-encaisse"]').forEach(btn=>{
     btn.addEventListener('click', (e)=>{
@@ -12987,6 +13010,76 @@ function ensureBordereauFolioCounterConsistency(){
   }
   return false;
 }
+// Décale d'1 vers le bas tous les folios strictement supérieurs à folioRemoved — aussi bien sur
+// data.settings.bordereauLog que sur les paiements qui y sont rattachés (payment.bordereauFolio doit
+// TOUJOURS rester synchronisé avec le folio de son bordereau) — pour ne jamais laisser de trou dans
+// la numérotation après une suppression (demande de Thomas du 28/08/2026 : "les numéros des suivants
+// se mettent à jour automatiquement"). Utilisé par deleteBordereauLog ci-dessous, et par le nettoyage
+// automatique dedupeBordereauPaymentAcrossLogs quand un folio devenu vide est retiré.
+function shiftBordereauFoliosDownAfter(folioRemoved){
+  (data.settings.bordereauLog||[]).forEach(l=>{
+    if(l.folio > folioRemoved){
+      const newFolio = l.folio - 1;
+      const ids = new Set(l.paymentIds||[]);
+      (data.payments||[]).forEach(p=>{ if(ids.has(p.id)) p.bordereauFolio = newFolio; });
+      l.folio = newFolio;
+    }
+  });
+  data.settings.bordereauFolioCounters = data.settings.bordereauFolioCounters || {};
+  if((data.settings.bordereauFolioCounters.global||0) > 0) data.settings.bordereauFolioCounters.global -= 1;
+}
+// Supprime définitivement un bordereau déjà généré (ex: créé par erreur, doublon) — demande de Thomas
+// du 28/08/2026. Les paiements qui y étaient rattachés sont libérés (bordereauFolio/Section remis à
+// null) puis immédiatement réaffectés (autoAssignAllPendingPaymentsToBordereaux, définie plus bas
+// dans ce fichier) au folio actuellement ouvert de leur section — ou un nouveau si aucun n'est ouvert
+// — pour ne jamais laisser un paiement "orphelin" sans bordereau. Tous les folios suivants sont
+// ensuite décalés vers le bas pour ne jamais laisser de trou dans la numérotation.
+function deleteBordereauLog(logId){
+  const logs = data.settings.bordereauLog || [];
+  const idx = logs.findIndex(l=>l.id===logId);
+  if(idx===-1) return false;
+  const log = logs[idx];
+  const ids = new Set(log.paymentIds||[]);
+  (data.payments||[]).forEach(p=>{
+    if(ids.has(p.id)){ p.bordereauFolio = null; p.bordereauSection = null; }
+  });
+  logs.splice(idx,1);
+  shiftBordereauFoliosDownAfter(log.folio);
+  autoAssignAllPendingPaymentsToBordereaux();
+  return true;
+}
+// Auto-guérison (demande de Thomas du 28/08/2026, bug remonté : "j'ai un folio qui s'est créé en
+// doublon") : si un même paiement se retrouve listé dans PLUSIEURS bordereaux à la fois (paymentIds
+// de 2 logs différents), on ne le garde que dans le folio le plus ANCIEN (le plus petit numéro —
+// typiquement celui déjà physiquement déposé en banque, jamais touché ici) et on le retire des
+// autres. Un folio qui se retrouve ainsi complètement vide est alors supprimé et les folios suivants
+// décalés vers le bas (même mécanique que deleteBordereauLog), pour ne jamais laisser un bordereau
+// fantôme (0 paiement) traîner dans l'historique. Idempotent, sans drapeau — voir
+// renumberBordereauFoliosIfDuplicated juste au-dessus pour le même raisonnement.
+function dedupeBordereauPaymentAcrossLogs(){
+  const logs = data.settings.bordereauLog || [];
+  if(logs.length < 2) return false;
+  const ordered = logs.slice().sort((a,b)=> (a.folio||0)-(b.folio||0));
+  const claimedBy = {};
+  let changed = false;
+  ordered.forEach(l=>{
+    l.paymentIds = (l.paymentIds||[]).filter(pid=>{
+      if(claimedBy[pid]!==undefined){ changed = true; return false; }
+      claimedBy[pid] = l.id;
+      return true;
+    });
+  });
+  if(!changed) return false;
+  // Retire les folios devenus vides, du plus grand numéro au plus petit (pour que
+  // shiftBordereauFoliosDownAfter n'ait jamais à décaler un folio qu'on s'apprête aussi à retirer).
+  const emptied = ordered.filter(l=>(l.paymentIds||[]).length===0).sort((a,b)=> b.folio-a.folio);
+  emptied.forEach(l=>{
+    const i = (data.settings.bordereauLog||[]).findIndex(x=>x.id===l.id);
+    if(i!==-1) data.settings.bordereauLog.splice(i,1);
+    shiftBordereauFoliosDownAfter(l.folio);
+  });
+  return true;
+}
 // Le bordereau papier A.M.A.M compte 20 lignes. Un feuillet ne doit donc jamais dépasser 20 lignes
 // (une ligne par adhérent, peu importe le nombre de paiements qui les concernent).
 const BORDEREAU_MAX_LINES = 20;
@@ -13179,6 +13272,11 @@ function computeBordereauData(section, paymentsForDoc){
         g.payments.forEach(p=>{
           const alloc = (p.allocations||[]).find(a=>a.memberId===m.id);
           if(alloc) inscription += Number(alloc.amount)||0;
+          // Demande de Thomas (28/08/2026) : une note saisie sur l'encaissement (champ "note" du
+          // paiement) doit apparaître par défaut dans les Observations du bordereau, pas seulement la
+          // discipline hors section — sans ça, la note restait invisible tant que personne ne la
+          // ressaisissait à la main dans l'aperçu du bordereau.
+          if(alloc && p.note) motifs.push(p.note);
           const firstAllocId = (p.allocations||[])[0] && p.allocations[0].memberId;
           if(p.diversEnabled && firstAllocId===m.id){
             const amt = Number(p.diversAmount)||0;
@@ -13190,7 +13288,9 @@ function computeBordereauData(section, paymentsForDoc){
         // par défaut de la colonne Observations, modifiable dans l'aperçu).
         const memberDisc = memberBordereauSection(m);
         if(memberDisc && memberDisc!==section) motifs.push(memberDisc);
-        return { member:m, inscription, divers, motifsDefault: motifs };
+        // Dédoublonnage : une même note peut provenir de plusieurs paiements du même adhérent (ex:
+        // corrigé/recréé), ou coïncider avec le motif Divers — jamais affichée deux fois par défaut.
+        return { member:m, inscription, divers, motifsDefault: [...new Set(motifs)] };
       });
     totInscription += memberRows.reduce((s,r)=>s+r.inscription,0);
     totDivers += memberRows.reduce((s,r)=>s+r.divers,0);
