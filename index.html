@@ -1418,7 +1418,29 @@ function matchBeltRank(text){
 }
 
 let data = { clubName:'', groups:[], members:[], sessions:[], attendance:{}, settings:{} };
-let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, viewingSeasonId:null, committeeSearchOpen:{}, addOtherGroupOpen:{}, showOnlyPendingDocuments:false };
+// viewingSeasonId (saison en cours / saison à venir / archive) : persisté dans localStorage (bug
+// remonté par Thomas le 28/08/2026 — "j'ai plein de personne qui ont disparu de licence a prendre"
+// après "une actualisation forcée", ET des élèves qu'il venait d'affecter à un vrai cours "ont aussi
+// disparu"). Cause trouvée : ui.viewingSeasonId n'était qu'un état mémoire, jamais persisté — un
+// rechargement de page le remettait systématiquement à null ("saison en cours"), qui masque dans
+// TOUS les cours (voir renderGroupsTab, inSeasonView) toute fiche avec forNextSeason=true. Aucune
+// fiche n'était réellement perdue : elles existent bien (vérifié directement dans le classeur Google
+// Sheets, permanentDeletedIds.members vide) et réapparaissent en basculant sur la vue "saison
+// prochaine" — mais un rechargement en pleine préparation de saison "cachait" silencieusement la
+// moitié du travail en cours, donnant l'impression trompeuse d'une disparition. On lit maintenant la
+// valeur initiale depuis localStorage (voir loadViewingSeasonId/setViewingSeasonId ci-dessous) pour
+// qu'un rechargement de page ne change plus jamais la vue affichée.
+function loadViewingSeasonId(){
+  try{ const v = localStorage.getItem('dojo-viewingSeasonId'); return v ? v : null; }catch(e){ return null; }
+}
+function setViewingSeasonId(val){
+  ui.viewingSeasonId = val || null;
+  try{
+    if(val) localStorage.setItem('dojo-viewingSeasonId', val);
+    else localStorage.removeItem('dojo-viewingSeasonId');
+  }catch(e){}
+}
+let ui = { activeTab:'presences', presenceGroup:null, presenceSessionId:null, groupsMemberDraft:{}, convocCategory:'all', convocChecked:{}, groupsExpanded:{}, suiviExpanded:{}, convocSchedule:[], convocHistoryExpanded:{}, convocMembersExpanded:false, resultsEventId:null, resultsSelectedMemberId:null, recapCategoriesFilter:{}, scheduleWeightExpanded:{}, convocArchiveEventId:null, memberFicheExpanded:{}, memberFicheEditing:{}, suiviSort:'name', birthdaysCourseFilter:{}, birthdaysFilterExpanded:false, viewingSeasonId:loadViewingSeasonId(), committeeSearchOpen:{}, addOtherGroupOpen:{}, showOnlyPendingDocuments:false };
 let ready = false;
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -4574,6 +4596,7 @@ function applyDataInvariants(trusted){
     if(dedupeFederationMaterializedEvents()){ saveData(); }
     if(backfillLinkedMemberWeightCategoryOnce()){ saveData(); }
     if(uppercaseMemberLastNamesOnce()){ saveData(); }
+    if(backfillValidatedLicenseForNextSeason()){ saveData(); }
   }
   // refreshResultAgeCategories() n'est PAS réservé à l'admin (contrairement au bloc juste au-dessus) :
   // c'est un pur recalcul sans aucun risque de doublon, et la saisie des résultats au quotidien se
@@ -5419,7 +5442,7 @@ function archiveBannerHtml(archive){
 }
 function wireArchiveBanner(containerEl){
   const btn = containerEl.querySelector('[data-action="back-to-current-season"]');
-  if(btn) btn.addEventListener('click', ()=>{ ui.viewingSeasonId = null; renderActiveTab(); });
+  if(btn) btn.addEventListener('click', ()=>{ setViewingSeasonId(null); renderActiveTab(); });
 }
 function renderHeaderSeasonSwitch(){
   const el = document.getElementById('headerSeasonSwitch');
@@ -5434,8 +5457,8 @@ function renderHeaderSeasonSwitch(){
   el.innerHTML = `<option value="">Saison ${schoolYearLabel(seasonYear)} (en cours)</option>`
     + `<option value="next">Saison ${schoolYearLabel(nextYear)} (à venir)</option>`
     + archives.map(a=>`<option value="${a.id}">Saison ${escapeHtml(a.name)}</option>`).join('');
-  if([...el.options].some(o=>o.value===prevValue)){ el.value = prevValue; } else { el.value=''; ui.viewingSeasonId = null; }
-  el.onchange = ()=>{ ui.viewingSeasonId = el.value || null; renderActiveTab(); };
+  if([...el.options].some(o=>o.value===prevValue)){ el.value = prevValue; } else { el.value=''; setViewingSeasonId(null); }
+  el.onchange = ()=>{ setViewingSeasonId(el.value || null); renderActiveTab(); };
 }
 function renderAll(){
   if(!ready) return;
@@ -6362,7 +6385,7 @@ async function generateIncompleteFichesPdf(){
 document.getElementById('groups-list').addEventListener('click', async e=>{
   const backToCurrentBtn = e.target.closest('[data-action="back-to-current-season"]');
   if(backToCurrentBtn){
-    ui.viewingSeasonId = null;
+    setViewingSeasonId(null);
     renderActiveTab();
     return;
   }
@@ -6483,11 +6506,22 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
       // la supprimer, et on coupe le lien pour arrêter la synchronisation en direct des deux côtés.
       if(m.linkedMemberId){
         const old = data.members.find(x=>x.id===m.linkedMemberId);
-        if(old && old.linkedMemberId===m.id){ old.archived = true; old.linkedMemberId = null; }
+        if(old && old.linkedMemberId===m.id){ old.archived = true; old.archivedAt = new Date().toISOString(); old.linkedMemberId = null; }
       }
       m.groupId = targetGroup.id;
       m.pendingGroupId = null;
       m.linkedMemberId = null;
+      // Bug remonté par Thomas le 28/08/2026 : une fois "validée" dans son vrai cours, la fiche
+      // gardait forNextSeason=true jusqu'au VRAI roulement de saison (archiveCurrentSeason, une
+      // action bien plus lourde, en général faite bien plus tard) — or renderGroupsTab() n'affiche
+      // un élève dans un cours QUE si son forNextSeason correspond à la vue actuellement affichée
+      // (voir inSeasonView). Résultat : dès qu'on revenait sur la vue "saison en cours" (le mode par
+      // défaut, y compris après un simple rechargement de page), tout élève déjà "validé" devenait
+      // invisible dans son nouveau cours, donnant l'impression trompeuse qu'il avait disparu — alors
+      // que sa fiche existait bien. Une fois validée, la fiche EST la fiche de la saison en cours
+      // pour cette personne : on lève donc ce drapeau immédiatement, plutôt que d'attendre un
+      // roulement de saison complet qui peut arriver des mois plus tard.
+      m.forNextSeason = false;
       saveData(); renderActiveTab();
       showToast(`${m.name} inscrit(e) dans « ${targetGroup.name} »`);
     }
@@ -6675,6 +6709,7 @@ async function archiveMember(memberId){
   if(!m) return;
   if(!(await confirmDialog(`Archiver la fiche de ${m.name} ? Elle disparaîtra des listes de cours, présences et convocations, mais rien n'est supprimé : historique et résultats restent consultables, et tu pourras la retrouver par son nom (recherche « archivé ») si elle revient.`, { confirmLabel:'Archiver' }))) return;
   m.archived = true;
+  m.archivedAt = new Date().toISOString();
   saveData(); renderActiveTab();
   showToast(`${m.name} archivé(e)`);
 }
@@ -6683,6 +6718,7 @@ function reactivateArchivedMember(memberId, newGroupId){
   const newGroup = data.groups.find(x=>x.id===newGroupId);
   if(!m || !newGroup) return;
   m.archived = false;
+  m.archivedAt = null;
   m.groupId = newGroupId;
   saveData(); renderActiveTab();
   showToast(`${m.name} retrouvé(e) et rattaché(e) à « ${newGroup.name} » — historique conservé`);
@@ -10103,9 +10139,32 @@ function memberLastKnownActiveSeasonYear(m){
 }
 function memberInactiveSeasonsCount(m){
   const lastActive = memberLastKnownActiveSeasonYear(m);
-  if(lastActive==null) return null;
-  const currentYear = data.settings.seasonStartYear || autoSeasonStartYear();
-  return Math.max(0, currentYear - lastActive);
+  if(lastActive!=null){
+    const currentYear = data.settings.seasonStartYear || autoSeasonStartYear();
+    return Math.max(0, currentYear - lastActive);
+  }
+  // Repli sur archivedAt (bug remonté par Thomas le 28/08/2026, "j'ai plein de personnes qui ont
+  // disparu... ils apparaissent encore dans FICHES INACTIVES DEPUIS 5 SAISONS OU PLUS") : une fiche
+  // tout juste archivée (validation d'une licence, bouton "Archiver", import Excel...) n'a par
+  // construction jamais pu apparaître dans un instantané de data.archivedSeasons — celui-ci n'est
+  // créé qu'au moment d'"Archiver la saison", une action bien plus rare et plus tardive. Sans ce
+  // repli, elle atterrissait directement dans le seau "à vérifier" (inactiveSeasons===null),
+  // affiché sous le MÊME titre "5 saisons ou plus" que les fiches réellement anciennes — donnant
+  // l'impression trompeuse qu'une fiche qui vient tout juste d'être archivée (donc dont on est sûr
+  // à 100% qu'elle n'est pas perdue) est une vieille fiche oubliée bonne à supprimer. On utilise ici
+  // la date d'archivage réelle quand elle est connue — une estimation en années écoulées, moins
+  // précise qu'un vrai numéro de saison mais largement suffisante pour éviter ce faux positif
+  // immédiat. Seules les fiches archivées SANS date connue (archivées avant ce correctif, ou dont
+  // l'historique est réellement introuvable) retombent sur le repli "à vérifier" (null) — c'est le
+  // filet de sécurité voulu à l'origine, conservé pour ce cas précis.
+  if(m.archivedAt){
+    const archivedDate = new Date(m.archivedAt);
+    if(!isNaN(archivedDate.getTime())){
+      const yearsSince = (Date.now() - archivedDate.getTime()) / (365.25*24*3600*1000);
+      return Math.max(0, Math.floor(yearsSince));
+    }
+  }
+  return null;
 }
 function inactiveMembersForRgpdReview(){
   return (data.members||[])
@@ -10903,17 +10962,18 @@ function openImportArchivePreview(candidates, courseCandidates){
     const checkedCourseIds = new Set([...overlay.querySelectorAll('input[data-kind="course"]:checked')].map(cb=>cb.dataset.id));
     let archivedCount = 0, coursesDeletedCount = 0;
 
+    const archiveTs = new Date().toISOString();
     candidates.forEach(c=>{
       if(!checkedMemberIds.has(c.memberId)) return;
       const m = data.members.find(x=>x.id===c.memberId);
-      if(m && !m.archived){ m.archived = true; archivedCount++; }
+      if(m && !m.archived){ m.archived = true; m.archivedAt = archiveTs; archivedCount++; }
     });
 
     courseCandidates.forEach(c=>{
       if(!checkedCourseIds.has(c.groupId)) return;
       c.memberIds.forEach(mid=>{
         const m = data.members.find(x=>x.id===mid);
-        if(m && !m.archived){ m.archived = true; archivedCount++; }
+        if(m && !m.archived){ m.archived = true; m.archivedAt = archiveTs; archivedCount++; }
       });
       markDeleted('groups', c.groupId);
       data.groups = data.groups.filter(g=>g.id!==c.groupId);
@@ -11466,7 +11526,7 @@ function renderPresencesTab(){
     <button class="primary" id="openSessionBtn" style="margin-top:12px; width:100%;">Ouvrir la séance</button>
   `;
   const presenceBackBtn = setup.querySelector('[data-action="back-to-current-season"]');
-  if(presenceBackBtn) presenceBackBtn.addEventListener('click', ()=>{ ui.viewingSeasonId = null; renderActiveTab(); });
+  if(presenceBackBtn) presenceBackBtn.addEventListener('click', ()=>{ setViewingSeasonId(null); renderActiveTab(); });
   document.getElementById('presenceGroupSel').addEventListener('change', e=>{
     ui.presenceGroup = e.target.value; ui.presenceSessionId = null;
     document.getElementById('presence-sheet').style.display='none';
@@ -14502,7 +14562,7 @@ function renderConvocTab(){
     }, m=>m)) : ''}
   `;
   const convocBackBtn = membersWrap.querySelector('[data-action="back-to-current-season"]');
-  if(convocBackBtn) convocBackBtn.addEventListener('click', ()=>{ ui.viewingSeasonId = null; renderActiveTab(); });
+  if(convocBackBtn) convocBackBtn.addEventListener('click', ()=>{ setViewingSeasonId(null); renderActiveTab(); });
   const toggleMembersEl = membersWrap.querySelector('[data-action="toggle-convoc-members"]');
   if(toggleMembersEl){
     toggleMembersEl.addEventListener('click', ()=>{
@@ -16371,7 +16431,7 @@ function renderResultsTab(){
       bannerEl.style.display = '';
       bannerEl.innerHTML = nextSeasonBannerHtml();
       const backBtn = bannerEl.querySelector('[data-action="back-to-current-season"]');
-      if(backBtn) backBtn.addEventListener('click', ()=>{ ui.viewingSeasonId = null; renderActiveTab(); });
+      if(backBtn) backBtn.addEventListener('click', ()=>{ setViewingSeasonId(null); renderActiveTab(); });
     } else {
       bannerEl.style.display = 'none';
       bannerEl.innerHTML = '';
@@ -19341,6 +19401,7 @@ async function archiveCurrentSeason(){
       const other = data.members.find(x=>x.id===m.linkedMemberId);
       if(other && other.linkedMemberId===m.id){
         m.archived = true;
+        m.archivedAt = new Date().toISOString();
         m.linkedMemberId = null;
         other.linkedMemberId = null;
       }
@@ -19362,7 +19423,7 @@ async function archiveCurrentSeason(){
   ui.convocChecked = {};
   ui.resultsEventId = null;
   ui.resultsSelectedMemberId = null;
-  ui.viewingSeasonId = null;
+  setViewingSeasonId(null);
   renderAll();
   showToast(`Saison « ${snapshot.name} » archivée — saison ${schoolYearLabel(newSeasonYear)} maintenant en cours${rolledOverCount ? ` (${rolledOverCount} fiche${rolledOverCount===1?'':'s'} « à venir » basculée${rolledOverCount===1?'':'s'})` : ''}`);
 }
@@ -19847,6 +19908,28 @@ function uppercaseMemberLastNamesOnce(){
   });
   return changed;
 }
+// Rattrapage (bug remonté par Thomas le 28/08/2026, "j'avais attribué certaines personnes dans des
+// cours mais ils ont aussi disparu") : avant le correctif de validate-license ci-dessus, valider une
+// licence déplaçait bien la fiche vers son vrai cours mais oubliait de lever forNextSeason — elle
+// restait donc invisible en vue "saison en cours" (voir renderGroupsTab/inSeasonView) jusqu'au
+// roulement de saison complet. Les fiches déjà validées AVANT ce correctif sont donc restées dans cet
+// état : plus dans "Licence à prendre" (bon cours), mais toujours forNextSeason=true (donc filtrées).
+// On les rattrape ici, une bonne fois : une fiche non archivée, avec forNextSeason=true, mais dont le
+// cours n'est PLUS "Licence à prendre" (donc déjà validée) n'a plus aucune raison de rester masquée.
+// Idempotent et sans drapeau (comme backfillLinkedMemberWeightCategoryOnce juste au-dessus) : ne fait
+// plus rien une fois toutes les fiches déjà à jour, donc sans risque de le relancer à chaque chargement.
+function backfillValidatedLicenseForNextSeason(){
+  let changed = false;
+  data.members.forEach(m=>{
+    if(m.archived || !m.forNextSeason) return;
+    const g = data.groups.find(x=>x.id===m.groupId);
+    if(g && !isLicensePendingGroup(g)){
+      m.forNextSeason = false;
+      changed = true;
+    }
+  });
+  return changed;
+}
 async function prepareNextSeasonLicenses(){
   const licenseGroup = data.groups.find(g=>isLicensePendingGroup(g));
   if(!licenseGroup){ showToast('Groupe « Licence à prendre » introuvable'); return; }
@@ -19863,7 +19946,7 @@ async function prepareNextSeasonLicenses(){
   await backupNow();
   eligible.forEach(m=> createPendingLicenseRecord(m, licenseGroup.id));
   saveData();
-  ui.viewingSeasonId = 'next';
+  setViewingSeasonId('next');
   switchTab('groupes');
   showToast(`${eligible.length} fiche(s) liée(s) créée(s) dans « Licence à prendre »`);
 }
@@ -20156,7 +20239,7 @@ function goToMemberFiche(memberId, groupId){
   // actuellement affichée — on force quand même le sélecteur de saison ici en garde-fou, au cas où
   // il aurait changé entre la saisie et le clic sur un résultat.
   const targetMember = data.members.find(x=>x.id===memberId);
-  ui.viewingSeasonId = (targetMember && targetMember.forNextSeason) ? 'next' : null;
+  setViewingSeasonId((targetMember && targetMember.forNextSeason) ? 'next' : null);
   // La recherche est accessible depuis n'importe quel onglet — on bascule vers Cours pour
   // afficher la fiche trouvée, même si on cherchait depuis Présences, Convoc., etc.
   switchTab('groupes');
