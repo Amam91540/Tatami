@@ -592,6 +592,19 @@
   .archived-suggest-item span{ font-size:11.5px; color:var(--ink-dim); }
   .archived-suggest-empty{ padding:9px 12px; font-size:12.5px; color:var(--ink-dim); }
 
+  /* Autocomplete ville (domicile + naissance) — demande de Thomas du 29/08/2026. Boîte UNIQUE
+     positionnée en `fixed` par JS (voir positionCityAutocompleteBox) au-dessus du champ actif, quel
+     que soit l'endroit où ce champ est rendu (fiche élève, ajout rapide, espace famille) — même look
+     que .archived-suggest ci-dessus mais classes dédiées pour ne jamais interférer avec ses propres
+     écouteurs de clic (retrouver un élève archivé). */
+  #city-autocomplete-box{ display:none; background:var(--surface); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.18); z-index:200; max-height:260px; overflow:auto; }
+  #city-autocomplete-box.show{ display:block; }
+  .city-autocomplete-item{ padding:9px 12px; cursor:pointer; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:8px; }
+  .city-autocomplete-item:last-child{ border-bottom:none; }
+  .city-autocomplete-item:hover{ background:var(--surface-2); }
+  .city-autocomplete-item strong{ font-size:13.5px; }
+  .city-autocomplete-item span{ font-size:11.5px; color:var(--ink-dim); }
+
   .convoc-print-page{
     display:flex; gap:14px; max-width:1000px; margin:0 auto 22px;
     background:#e2e2e2; padding:14px; border-radius:10px;
@@ -1365,6 +1378,10 @@ function stripBeltForNoBeltCourses(){
   let changed = false;
   data.members.forEach(m=>{
     if(m.belt && memberInNoBeltCourse(m)){ m.belt = ''; changed = true; }
+    // Catégorie de poids : même raison que la ceinture ci-dessus (demande de Thomas du 29/08/2026)
+    // — un élève de Taiso ne concourt jamais par catégorie de poids, donc une valeur déjà enregistrée
+    // (typiquement héritée d'un changement de cours vers Taiso) n'a plus lieu d'être conservée.
+    if(m.weightCategory && memberInNoBeltCourse(m)){ m.weightCategory = ''; changed = true; }
   });
   if(changed) saveData();
 }
@@ -5665,8 +5682,9 @@ function renderGroupsTab(){
                 ${m.whatsappPhone1 ? `<div style="margin-top:8px;"><span class="field-label">Tel Groupe WhatsApp ${!memberIsMajor(m)?'n°1 ':''}</span><div>${escapeHtml(m.whatsappPhone1)}${m.whatsappPhone1Role?' — '+escapeHtml(m.whatsappPhone1Role):''}</div></div>` : ''}
                 ${m.whatsappPhone2 ? `<div style="margin-top:8px;"><span class="field-label">Tel Groupe WhatsApp n°2</span><div>${escapeHtml(m.whatsappPhone2)}${m.whatsappPhone2Role?' — '+escapeHtml(m.whatsappPhone2Role):''}</div></div>` : ''}
                 ${memberInscriptionPendingHtml(m)}
-                <div style="margin-top:8px;"><span class="field-label">Certificat médical</span><div>${m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—'}</div></div>
-                <div style="margin-top:8px;"><span class="field-label">Type de certificat médical</span><div>${m.questionnaireStatus ? escapeHtml(m.questionnaireStatus) : '—'}</div></div>
+                ${memberProfEditPendingHtml(m)}
+                ${isProfSession() ? '' : `<div style="margin-top:8px;"><span class="field-label">Certificat médical</span><div>${m.medicalCertDate ? fmtDate(m.medicalCertDate) : '—'}</div></div>
+                <div style="margin-top:8px;"><span class="field-label">Type de certificat médical</span><div>${m.questionnaireStatus ? escapeHtml(m.questionnaireStatus) : '—'}</div></div>`}
                 <div style="margin-top:8px;"><span class="field-label">N° de licence</span><div>${m.licenseNumber ? escapeHtml(m.licenseNumber) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Cours</span><div>${curGroup ? escapeHtml(curGroup.name) : '—'}</div></div>
                 ${isProfSession() ? '' : `<div style="margin-top:8px;"><span class="field-label">Cotisation</span><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">${memberDueBadgeHtml(m)}<button class="ghost" data-action="open-member-cotisation" data-id="${m.id}" style="padding:4px 10px; font-size:12px;">Détail &amp; paiements</button></div></div>`}
@@ -5804,6 +5822,7 @@ function renderGroupsTab(){
               </select>
             </div>
           </div>` : ''}
+          ${isProfSession() ? '' : `
           <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field">
               <span class="field-label">Certificat médical</span>
@@ -5816,7 +5835,7 @@ function renderGroupsTab(){
                 ${QUESTIONNAIRE_STATUSES.map(s=>`<option value="${escapeHtml(s)}" ${m.questionnaireStatus===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
               </select>
             </div>
-          </div>
+          </div>`}
           <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field">
               <span class="field-label">N° de licence</span>
@@ -5857,7 +5876,7 @@ function renderGroupsTab(){
         <div class="archived-suggest" id="suggest-${draftId}"></div>
       </div>
       <button class="ghost icon-btn" style="margin-top:8px; width:100%;" data-action="quick-add-member" data-id="${g.id}">📋 Ajout rapide (nouvel élève)</button>
-      <button class="ghost icon-btn" style="margin-top:8px; width:100%;" data-action="import" data-id="${g.id}">Importer une liste (Excel/CSV)</button>
+      ${isProfSession() ? '' : `<button class="ghost icon-btn" style="margin-top:8px; width:100%;" data-action="import" data-id="${g.id}">Importer une liste (Excel/CSV)</button>`}
       ` : ''}
     </div>`;
   }).join('');
@@ -6002,6 +6021,263 @@ document.addEventListener('click', e=>{
   const dismissBtn = e.target.closest('[data-action="dismiss-inscription-pending"]');
   if(dismissBtn){ dismissInscriptionPendingOnServer(dismissBtn.dataset.id); return; }
 });
+
+// ==================================================================================
+// MODIFICATIONS PROPOSÉES PAR UN COMPTE PROF (demande de Thomas du 29/08/2026)
+// ==================================================================================
+// Même principe que les modifications proposées par la famille ci-dessus (m.inscriptionPending),
+// mais déclenché depuis les champs normaux de la fiche qu'un prof modifie déjà dans son propre
+// espace (nom, date de naissance, ceinture, coordonnées...) — voir chaque écouteur
+// `#groups-list`.addEventListener('change', ...) plus bas, désormais bifurqué sur isProfSession()
+// AVANT toute mutation directe de `m`. Champ séparé (m.profEditPending) d'inscriptionPending afin
+// qu'une proposition famille et une proposition prof puissent coexister sur la même fiche sans
+// s'écraser (voir le commentaire équivalent côté Code.gs, PROF_EDITABLE_MEMBER_FIELDS).
+const PROF_EDIT_PENDING_FIELD_LABELS = {
+  name: 'Nom complet', birthDate: 'Date de naissance', gender: 'Genre', belt: 'Ceinture',
+  weightCategory: 'Catégorie de poids', email: 'Email', phone: 'Téléphone', address: 'Adresse',
+  postalCode: 'Code postal', city: 'Ville', birthPlace: 'Lieu de naissance', profession: 'Profession',
+  whatsappPhone1: 'Tel Groupe WhatsApp n°1', whatsappPhone1Role: 'Lien (tel n°1)',
+  whatsappPhone2: 'Tel Groupe WhatsApp n°2', whatsappPhone2Role: 'Lien (tel n°2)',
+  licenseNumber: 'N° de licence', note: 'Note', committeeRole: 'Fonction'
+};
+// memberProfEditPendingHtml : visible par TOUT compte qui voit la fiche (prof y compris, pour qu'il
+// sache que sa proposition est bien enregistrée), mais les boutons Accepter/Rejeter n'apparaissent
+// que pour admin/secrétaire — un prof ne doit jamais pouvoir valider sa propre proposition, ni celle
+// d'un collègue.
+function memberProfEditPendingHtml(m){
+  const pending = m && m.profEditPending;
+  if(!pending || typeof pending!=='object' || !Object.keys(pending).length) return '';
+  const rows = Object.keys(pending).map(field=>{
+    const label = PROF_EDIT_PENDING_FIELD_LABELS[field] || field;
+    const oldVal = m[field] || '—';
+    const newVal = pending[field] || '—';
+    return `<div style="margin-top:4px;"><strong>${escapeHtml(label)}</strong> : <span style="color:var(--ink-dim); text-decoration:line-through;">${escapeHtml(String(oldVal))}</span> → <span style="color:var(--tatami); font-weight:600;">${escapeHtml(String(newVal))}</span></div>`;
+  }).join('');
+  const canReview = isAdminSession() || isSecretaireSession();
+  return `<div style="margin-top:10px; padding:10px; border-radius:10px; background:#E8F1FF; border:1px solid #8FB8E8;">
+    <div style="font-size:12.5px; font-weight:700; color:#1a4a8a;">🧑‍🏫 Modification proposée par ${m.profEditPendingBy ? escapeHtml(m.profEditPendingBy) : 'un compte prof'}${m.profEditPendingAt?' — '+fmtDate(m.profEditPendingAt):''}</div>
+    <div style="font-size:13px; margin-top:4px;">${rows}</div>
+    ${canReview ? `<div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+      <button type="button" class="ghost icon-btn" data-action="apply-prof-edit-pending" data-id="${m.id}" style="padding:5px 10px; font-size:12px;">✓ Accepter ces modifications</button>
+      <button type="button" class="ghost icon-btn" data-action="dismiss-prof-edit-pending" data-id="${m.id}" style="padding:5px 10px; font-size:12px; color:var(--clay);">✕ Rejeter</button>
+    </div>` : `<div style="font-size:12px; margin-top:6px; color:var(--ink-dim);">En attente de validation par l'administration.</div>`}
+  </div>`;
+}
+async function applyProfEditPendingOnServer(memberId){
+  const s = getSession();
+  if(!s || !s.sessionToken){ showToast('Non connecté'); return; }
+  const m = (data.members||[]).find(x=>x.id===memberId);
+  if(!m || !m.profEditPending) return;
+  if(!(await confirmDialog('Appliquer cette modification sur la fiche ?', { confirmLabel:'Accepter' }))) return;
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'applyProfEditPending', sessionToken: s.sessionToken, memberId })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      // Cas particulier ceinture : même règle que l'édition directe (voir l'écouteur edit-belt) —
+      // appliquée ici côté client pour un rafraîchissement immédiat, déjà faite côté serveur pour la
+      // persistance réelle (voir applyProfEditPending dans Code.gs).
+      if(Object.prototype.hasOwnProperty.call(m.profEditPending, 'belt')){
+        const newBelt = m.profEditPending.belt;
+        if(newBelt && newBelt !== m.belt){
+          if(!m.beltHistory) m.beltHistory = [];
+          m.beltHistory.push({ belt: newBelt, date: todayStr() });
+        }
+      }
+      Object.keys(m.profEditPending).forEach(field=>{ m[field] = m.profEditPending[field]; });
+      m.profEditPending = null; m.profEditPendingAt = ''; m.profEditPendingBy = '';
+      showToast('Modification appliquée.');
+      renderActiveTab();
+    } else {
+      showToast((json && json.error) || 'Échec de la validation');
+    }
+  }catch(e){
+    showToast('Impossible de contacter le serveur (connexion ?)');
+  }
+}
+async function dismissProfEditPendingOnServer(memberId){
+  const s = getSession();
+  if(!s || !s.sessionToken){ showToast('Non connecté'); return; }
+  if(!(await confirmDialog('Rejeter cette modification ? La fiche gardera ses valeurs actuelles.', { danger:true, confirmLabel:'Rejeter' }))) return;
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'dismissProfEditPending', sessionToken: s.sessionToken, memberId })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      const m = (data.members||[]).find(x=>x.id===memberId);
+      if(m){ m.profEditPending = null; m.profEditPendingAt = ''; m.profEditPendingBy = ''; }
+      showToast('Modification rejetée.');
+      renderActiveTab();
+    } else {
+      showToast((json && json.error) || 'Échec du rejet');
+    }
+  }catch(e){
+    showToast('Impossible de contacter le serveur (connexion ?)');
+  }
+}
+// submitProfFieldEdit : appelé par les écouteurs edit-* ci-dessous à la place d'une mutation directe
+// de `m` quand isProfSession() — envoie UNIQUEMENT ce champ au serveur (qui fusionne avec une
+// éventuelle proposition déjà en attente sur d'autres champs, voir profSubmitMemberEdit côté
+// Code.gs) et met à jour m.profEditPending localement pour un affichage immédiat, sans jamais
+// modifier le champ réel avant validation par l'administration.
+async function submitProfFieldEdit(memberId, field, value){
+  const s = getSession();
+  if(!s || !s.sessionToken){ showToast('Non connecté'); return; }
+  try{
+    const res = await fetch(BACKEND_URL, {
+      method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'profSubmitMemberEdit', sessionToken: s.sessionToken, memberId, fields:{ [field]: value } })
+    });
+    const json = await res.json();
+    const m = (data.members||[]).find(x=>x.id===memberId);
+    if(json && json.ok){
+      if(m){
+        m.profEditPending = Object.assign({}, m.profEditPending, { [field]: value });
+        m.profEditPendingAt = json.pendingAt || new Date().toISOString();
+        m.profEditPendingBy = s.name || s.username || '';
+      }
+      showToast('Modification proposée, en attente de validation.');
+      renderGroupsTab();
+    } else if(json && json.error === 'Aucune modification détectée.'){
+      // Valeur redevenue identique à la fiche réelle : rien à signaler, pas une erreur.
+    } else {
+      showToast((json && json.error) || "Échec de l'envoi de la modification");
+    }
+  }catch(e){
+    showToast('Impossible de contacter le serveur (connexion ?)');
+  }
+}
+document.addEventListener('click', e=>{
+  const applyBtn = e.target.closest('[data-action="apply-prof-edit-pending"]');
+  if(applyBtn){ applyProfEditPendingOnServer(applyBtn.dataset.id); return; }
+  const dismissBtn = e.target.closest('[data-action="dismiss-prof-edit-pending"]');
+  if(dismissBtn){ dismissProfEditPendingOnServer(dismissBtn.dataset.id); return; }
+});
+
+// ==================================================================================
+// AUTOCOMPLETE VILLE (domicile + naissance) — demande de Thomas du 29/08/2026
+// ==================================================================================
+// "Est-ce que tu crois que tu peux recuperer sans trop charger l'appli toutes les noms de villes ?"
+// Plutôt que d'embarquer une base des ~35 000 communes françaises dans l'appli (plusieurs Mo
+// chargés à CHAQUE visite, même pour les 99% du temps où personne ne modifie une fiche), on
+// interroge à la demande l'API officielle et gratuite du gouvernement (geo.api.gouv.fr — sans clé,
+// CORS ouvert, faite pour cet usage). Ne se déclenche qu'à partir de 3 lettres tapées (demande
+// explicite : "si je veux ecrire PARIS, ca me proposera des villes dés que j'ai tapé 'PAR'"), avec
+// un léger anti-rebond pour ne pas lancer un appel réseau à chaque frappe, et reste entièrement
+// silencieux en cas de coupure réseau — l'élève reste libre de taper la ville à la main, comme avant.
+// S'applique aux 3 endroits où une ville se saisit en texte libre : fiche élève (domicile ET lieu de
+// naissance), ajout rapide, et l'auto-édition de la fiche depuis l'espace famille (ville du domicile
+// uniquement, seul champ ville que la famille peut proposer — voir INSCRIPTION_EDITABLE_FIELDS).
+const CITY_AUTOCOMPLETE_MIN_CHARS = 3;
+const CITY_AUTOCOMPLETE_DEBOUNCE_MS = 300;
+const CITY_AUTOCOMPLETE_API_URL = 'https://geo.api.gouv.fr/communes';
+let cityAutocompleteTimer = null;
+let cityAutocompleteToken = 0;
+let cityAutocompleteActiveInput = null;
+
+function isCityAutocompleteInput(el){
+  if(!el || !el.dataset) return false;
+  const ds = el.dataset;
+  // Volontairement PAS de correspondance générique sur data-field="city" : ce même attribut est
+  // réutilisé ailleurs dans l'appli pour la ville d'une compétition/d'un événement (lieu libre, pas
+  // forcément une commune française — ex: "Gymnase Municipal, Evry"), qui ne doit pas déclencher cet
+  // autocomplete. data-city-autocomplete="1" marque explicitement le SEUL champ ville hors fiche
+  // (ajout rapide) concerné par cette fonctionnalité.
+  return ds.action === 'edit-city' || ds.action === 'edit-birthplace' || ds.fpFicheField === 'city' || ds.cityAutocomplete === '1';
+}
+function ensureCityAutocompleteBox(){
+  let box = document.getElementById('city-autocomplete-box');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'city-autocomplete-box';
+    document.body.appendChild(box);
+  }
+  return box;
+}
+function hideCityAutocompleteBox(){
+  const box = document.getElementById('city-autocomplete-box');
+  if(box){ box.classList.remove('show'); box.innerHTML = ''; }
+  cityAutocompleteActiveInput = null;
+}
+// Positionnement en `fixed` calculé depuis getBoundingClientRect() du champ actif : fonctionne
+// identiquement quel que soit le conteneur (fiche en ligne dans la liste des cours, overlay d'ajout
+// rapide, carte espace famille...) sans avoir à rendre chaque conteneur `position:relative` — la
+// boîte est fermée au moindre scroll (voir l'écouteur 'scroll' plus bas) plutôt que repositionnée en
+// continu, ce qui suffit largement pour une liste de suggestions à durée de vie aussi courte.
+function positionCityAutocompleteBox(box, input){
+  const r = input.getBoundingClientRect();
+  box.style.position = 'fixed';
+  box.style.left = r.left + 'px';
+  box.style.top = (r.bottom + 4) + 'px';
+  box.style.width = r.width + 'px';
+}
+async function fetchCitySuggestions(query){
+  const url = CITY_AUTOCOMPLETE_API_URL + '?nom=' + encodeURIComponent(query) + '&fields=nom,codesPostaux&boost=population&limit=8';
+  try{
+    const res = await fetch(url);
+    if(!res.ok) return [];
+    const list = await res.json();
+    return Array.isArray(list) ? list : [];
+  }catch(e){
+    // Coupure réseau, geo.api.gouv.fr indisponible... : jamais bloquant, la saisie manuelle reste
+    // toujours possible (voir commentaire de section ci-dessus).
+    return [];
+  }
+}
+function renderCityAutocompleteBox(input, cities){
+  const box = ensureCityAutocompleteBox();
+  if(!cities.length){ hideCityAutocompleteBox(); return; }
+  cityAutocompleteActiveInput = input;
+  box.innerHTML = cities.map(c=>{
+    const cp = (c.codesPostaux && c.codesPostaux[0]) ? c.codesPostaux[0] : '';
+    return `<div class="city-autocomplete-item" data-city="${escapeHtml(c.nom||'')}"><strong>${escapeHtml(c.nom||'')}</strong>${cp?`<span>${escapeHtml(cp)}</span>`:''}</div>`;
+  }).join('');
+  positionCityAutocompleteBox(box, input);
+  box.classList.add('show');
+}
+// handleCityAutocompleteInput : anti-rebond + jeton de course (cityAutocompleteToken) — si l'élève
+// tape plusieurs lettres avant qu'une réponse réseau ne revienne, seule la toute dernière frappe doit
+// pouvoir afficher ses résultats (sinon une réponse en retard pour "PA" pourrait s'afficher APRÈS
+// celle, plus récente, pour "PAR").
+function handleCityAutocompleteInput(input){
+  if(!isCityAutocompleteInput(input)) return;
+  const query = (input.value||'').trim();
+  if(cityAutocompleteTimer) clearTimeout(cityAutocompleteTimer);
+  if(query.length < CITY_AUTOCOMPLETE_MIN_CHARS){ hideCityAutocompleteBox(); return; }
+  const myToken = ++cityAutocompleteToken;
+  cityAutocompleteTimer = setTimeout(async ()=>{
+    const cities = await fetchCitySuggestions(query);
+    if(myToken !== cityAutocompleteToken) return;
+    renderCityAutocompleteBox(input, cities);
+  }, CITY_AUTOCOMPLETE_DEBOUNCE_MS);
+}
+// selectCityAutocompleteSuggestion : pose la valeur choisie, puis déclenche un événement 'change' —
+// c'est cet événement, pas une mutation directe, que les écouteurs edit-city/edit-birthplace (ou la
+// simple lecture de .value au clic sur "Enregistrer" pour l'ajout rapide / l'espace famille)
+// attendent déjà pour persister la fiche, sans dupliquer cette logique ici.
+function selectCityAutocompleteSuggestion(input, cityName){
+  input.value = cityName;
+  if(typeof Event === 'function'){
+    input.dispatchEvent(new Event('change', { bubbles:true }));
+  } else if(typeof input.dispatchEvent === 'function'){
+    input.dispatchEvent({ type:'change' });
+  }
+  hideCityAutocompleteBox();
+}
+document.addEventListener('input', e=>{ handleCityAutocompleteInput(e.target); });
+document.addEventListener('click', e=>{
+  const item = e.target.closest && e.target.closest('.city-autocomplete-item');
+  if(item && cityAutocompleteActiveInput){ selectCityAutocompleteSuggestion(cityAutocompleteActiveInput, item.dataset.city); return; }
+  if(cityAutocompleteActiveInput && e.target !== cityAutocompleteActiveInput && !(e.target.closest && e.target.closest('#city-autocomplete-box'))){
+    hideCityAutocompleteBox();
+  }
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') hideCityAutocompleteBox(); });
+document.addEventListener('scroll', ()=>{ hideCityAutocompleteBox(); }, true);
 
 // Demande de Thomas : la famille indique une date en même temps que le dépôt du certificat médical
 // (docMedicalCertDate) mais celle-ci ne devient la date OFFICIELLE (medicalCertDate, utilisée partout
@@ -6482,6 +6758,11 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
   } else if(action==='quick-add-member'){
     openQuickAddMemberOverlay(btn.dataset.id);
   } else if(action==='import'){
+    // Garde-fou même si le bouton était présent par un autre biais (ex: rendu déjà en mémoire avant
+    // une reconnexion sous un autre rôle) — demande de Thomas du 29/08/2026 : un prof ne doit plus
+    // pouvoir importer une liste Excel/CSV sur son cours (voir le bouton masqué juste au-dessus dans
+    // renderGroupsTab, même raisonnement que del-member/archive-member).
+    if(isProfSession()) return;
     ui.importMode = 'single';
     ui.importTargetGroup = btn.dataset.id;
     document.getElementById('importFileInput').click();
@@ -6733,6 +7014,12 @@ function reactivateArchivedMember(memberId, newGroupId){
 }
 
 document.getElementById('groups-list').addEventListener('change', e=>{
+  // Un compte prof modifiant une fiche ne doit jamais écrire directement dessus (demande de Thomas
+  // du 29/08/2026) : chaque champ ci-dessous propose sa valeur via submitProfFieldEdit (revue
+  // admin/secrétaire, voir memberProfEditPendingHtml) au lieu de la mutation directe + saveData()
+  // utilisée par admin/secrétaire. Seuls change-group, edit-medicalcert et edit-questionnaire restent
+  // hors de ce mécanisme : ils sont déjà entièrement bloqués pour un prof (voir leurs gardes-fous
+  // dédiés ci-dessous, antérieurs à cette fonctionnalité).
   const firstInput = e.target.closest('[data-action="edit-firstname"]');
   const lastInput = e.target.closest('[data-action="edit-lastname"]');
   if(firstInput || lastInput){
@@ -6743,14 +7030,20 @@ document.getElementById('groups-list').addEventListener('change', e=>{
       const prenom = row.querySelector('[data-action="edit-firstname"]').value.trim();
       const nom = row.querySelector('[data-action="edit-lastname"]').value.trim();
       const full = formatMemberFullName(prenom, nom);
-      if(full){ m.name = full; syncLinkedMember(m); saveData(); }
+      if(full){
+        if(isProfSession()){ submitProfFieldEdit(m.id, 'name', full); return; }
+        m.name = full; syncLinkedMember(m); saveData();
+      }
     }
     return;
   }
   const bdInput = e.target.closest('[data-action="edit-birthdate"]');
   if(bdInput){
     const m = data.members.find(x=>x.id===bdInput.dataset.id);
-    if(m){ m.birthDate = bdInput.value || null; syncLinkedMember(m); saveData(); renderGroupsTab(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'birthDate', bdInput.value || ''); return; }
+      m.birthDate = bdInput.value || null; syncLinkedMember(m); saveData(); renderGroupsTab();
+    }
     return;
   }
   const beltSel = e.target.closest('[data-action="edit-belt"]');
@@ -6758,6 +7051,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===beltSel.dataset.id);
     if(m){
       const newBelt = beltSel.value || undefined;
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'belt', newBelt || ''); return; }
       if(newBelt && newBelt !== m.belt){
         if(!m.beltHistory) m.beltHistory = [];
         m.beltHistory.push({ belt: newBelt, date: todayStr() });
@@ -6771,13 +7065,19 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   const weightCatSel = e.target.closest('[data-action="edit-weight-category"]');
   if(weightCatSel){
     const m = data.members.find(x=>x.id===weightCatSel.dataset.id);
-    if(m){ m.weightCategory = weightCatSel.value || undefined; syncLinkedMember(m); saveData(); renderGroupsTab(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'weightCategory', weightCatSel.value || ''); return; }
+      m.weightCategory = weightCatSel.value || undefined; syncLinkedMember(m); saveData(); renderGroupsTab();
+    }
     return;
   }
   const genderSel = e.target.closest('[data-action="edit-gender"]');
   if(genderSel){
     const m = data.members.find(x=>x.id===genderSel.dataset.id);
-    if(m){ m.gender = genderSel.value || undefined; syncLinkedMember(m); saveData(); renderGroupsTab(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'gender', genderSel.value || ''); return; }
+      m.gender = genderSel.value || undefined; syncLinkedMember(m); saveData(); renderGroupsTab();
+    }
     return;
   }
   const groupSel = e.target.closest('[data-action="change-group"]');
@@ -6808,71 +7108,108 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   const phoneInput = e.target.closest('[data-action="edit-phone"]');
   if(phoneInput){
     const m = data.members.find(x=>x.id===phoneInput.dataset.id);
-    if(m){ m.phone = phoneInput.value.trim(); syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'phone', phoneInput.value.trim()); return; }
+      m.phone = phoneInput.value.trim(); syncLinkedMember(m); saveData();
+    }
     return;
   }
   const addressInput = e.target.closest('[data-action="edit-address"]');
   if(addressInput){
     const m = data.members.find(x=>x.id===addressInput.dataset.id);
-    if(m){ m.address = addressInput.value.trim(); syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'address', addressInput.value.trim()); return; }
+      m.address = addressInput.value.trim(); syncLinkedMember(m); saveData();
+    }
     return;
   }
   const postalInput = e.target.closest('[data-action="edit-postalcode"]');
   if(postalInput){
     const m = data.members.find(x=>x.id===postalInput.dataset.id);
-    if(m){ m.postalCode = postalInput.value.trim(); syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'postalCode', postalInput.value.trim()); return; }
+      m.postalCode = postalInput.value.trim(); syncLinkedMember(m); saveData();
+    }
     return;
   }
   const cityInput = e.target.closest('[data-action="edit-city"]');
   if(cityInput){
     const m = data.members.find(x=>x.id===cityInput.dataset.id);
-    if(m){ m.city = cityInput.value.trim(); syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'city', cityInput.value.trim()); return; }
+      m.city = cityInput.value.trim(); syncLinkedMember(m); saveData();
+    }
     return;
   }
   const birthPlaceInput = e.target.closest('[data-action="edit-birthplace"]');
   if(birthPlaceInput){
     const m = data.members.find(x=>x.id===birthPlaceInput.dataset.id);
-    if(m){ m.birthPlace = birthPlaceInput.value.trim(); syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'birthPlace', birthPlaceInput.value.trim()); return; }
+      m.birthPlace = birthPlaceInput.value.trim(); syncLinkedMember(m); saveData();
+    }
     return;
   }
   const professionInput = e.target.closest('[data-action="edit-profession"]');
   if(professionInput){
     const m = data.members.find(x=>x.id===professionInput.dataset.id);
-    if(m){ m.profession = professionInput.value.trim(); syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'profession', professionInput.value.trim()); return; }
+      m.profession = professionInput.value.trim(); syncLinkedMember(m); saveData();
+    }
     return;
   }
   const whatsapp1Input = e.target.closest('[data-action="edit-whatsapp1"]');
   if(whatsapp1Input){
     const m = data.members.find(x=>x.id===whatsapp1Input.dataset.id);
-    if(m){ m.whatsappPhone1 = whatsapp1Input.value.trim(); syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'whatsappPhone1', whatsapp1Input.value.trim()); return; }
+      m.whatsappPhone1 = whatsapp1Input.value.trim(); syncLinkedMember(m); saveData();
+    }
     return;
   }
   const whatsapp2Input = e.target.closest('[data-action="edit-whatsapp2"]');
   if(whatsapp2Input){
     const m = data.members.find(x=>x.id===whatsapp2Input.dataset.id);
-    if(m){ m.whatsappPhone2 = whatsapp2Input.value.trim(); syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'whatsappPhone2', whatsapp2Input.value.trim()); return; }
+      m.whatsappPhone2 = whatsapp2Input.value.trim(); syncLinkedMember(m); saveData();
+    }
     return;
   }
   const whatsapp1RoleSel = e.target.closest('[data-action="edit-whatsapp1role"]');
   if(whatsapp1RoleSel){
     const m = data.members.find(x=>x.id===whatsapp1RoleSel.dataset.id);
-    if(m){ m.whatsappPhone1Role = whatsapp1RoleSel.value || ''; syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'whatsappPhone1Role', whatsapp1RoleSel.value || ''); return; }
+      m.whatsappPhone1Role = whatsapp1RoleSel.value || ''; syncLinkedMember(m); saveData();
+    }
     return;
   }
   const whatsapp2RoleSel = e.target.closest('[data-action="edit-whatsapp2role"]');
   if(whatsapp2RoleSel){
     const m = data.members.find(x=>x.id===whatsapp2RoleSel.dataset.id);
-    if(m){ m.whatsappPhone2Role = whatsapp2RoleSel.value || ''; syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'whatsappPhone2Role', whatsapp2RoleSel.value || ''); return; }
+      m.whatsappPhone2Role = whatsapp2RoleSel.value || ''; syncLinkedMember(m); saveData();
+    }
     return;
   }
   const certInput = e.target.closest('[data-action="edit-medicalcert"]');
   if(certInput){
+    // Garde-fou (demande de Thomas du 29/08/2026 : un prof ne doit ni voir ni modifier la date/le type
+    // de certificat médical) même si le champ était présent par un autre biais — voir aussi le champ
+    // masqué juste au-dessus dans le rendu de la fiche. Volontairement PAS de submitProfFieldEdit ici :
+    // ce champ est hors du périmètre PROF_EDITABLE_MEMBER_FIELDS, un prof ne doit même pas pouvoir le
+    // proposer en attente de validation.
+    if(isProfSession()) return;
     const m = data.members.find(x=>x.id===certInput.dataset.id);
     if(m){ m.medicalCertDate = certInput.value || null; syncLinkedMember(m); saveData(); }
     return;
   }
   const questionnaireSel = e.target.closest('[data-action="edit-questionnaire"]');
   if(questionnaireSel){
+    if(isProfSession()) return;
     const m = data.members.find(x=>x.id===questionnaireSel.dataset.id);
     if(m){ m.questionnaireStatus = questionnaireSel.value || ''; syncLinkedMember(m); saveData(); }
     return;
@@ -6880,13 +7217,19 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   const licenseInput = e.target.closest('[data-action="edit-license"]');
   if(licenseInput){
     const m = data.members.find(x=>x.id===licenseInput.dataset.id);
-    if(m){ m.licenseNumber = licenseInput.value.trim(); syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'licenseNumber', licenseInput.value.trim()); return; }
+      m.licenseNumber = licenseInput.value.trim(); syncLinkedMember(m); saveData();
+    }
     return;
   }
   const noteInput = e.target.closest('[data-action="edit-note"]');
   if(noteInput){
     const m = data.members.find(x=>x.id===noteInput.dataset.id);
-    if(m){ m.note = noteInput.value; syncLinkedMember(m); saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'note', noteInput.value); return; }
+      m.note = noteInput.value; syncLinkedMember(m); saveData();
+    }
     return;
   }
   // Fonction (Comité directeur uniquement) : pas de syncLinkedMember, ce champ n'a de sens que sur
@@ -6894,13 +7237,17 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   const roleSelect = e.target.closest('[data-action="edit-committee-role"]');
   if(roleSelect){
     const m = data.members.find(x=>x.id===roleSelect.dataset.id);
-    if(m){ m.committeeRole = roleSelect.value || ''; saveData(); }
+    if(m){
+      if(isProfSession()){ submitProfFieldEdit(m.id, 'committeeRole', roleSelect.value || ''); return; }
+      m.committeeRole = roleSelect.value || ''; saveData();
+    }
     return;
   }
   const input = e.target.closest('[data-action="edit-email"]');
   if(!input) return;
   const m = data.members.find(x=>x.id===input.dataset.id);
   if(!m) return;
+  if(isProfSession()){ submitProfFieldEdit(m.id, 'email', input.value.trim()); return; }
   m.email = input.value.trim();
   syncLinkedMember(m);
   saveData();
@@ -11442,7 +11789,7 @@ function openQuickAddMemberOverlay(defaultGroupId){
           <input data-field="phone" placeholder="06 12 34 56 78">
         </label>
         <label>Ville
-          <input data-field="city" placeholder="Mennecy">
+          <input data-field="city" data-city-autocomplete="1" placeholder="Mennecy">
         </label>
         <label class="full">Adresse
           <input data-field="address" placeholder="8 rue du Vieux Moulin">
@@ -15881,6 +16228,13 @@ function weightDisplayValue(birthDate, weight, forceMorphological){
 // Thomas, plutôt qu'un seuil arbitraire indépendant.
 function memberWeightCategoryEligible(m){
   if(!m || !m.birthDate) return false;
+  // Un élève de Taiso ne concourt jamais par catégorie de poids (même raison que
+  // groupHasNoBelt/memberInNoBeltCourse ci-dessus pour la ceinture — demande de Thomas du
+  // 29/08/2026 : "des qu'un eleve est affecté à 'Taiso' tu peux supprimer le champ ... categorie de
+  // poids car cela ne les concerne pas"). Sans ce garde-fou, le champ pouvait apparaître dès que
+  // l'âge de l'élève correspondait par coïncidence à une tranche pondérée définie pour une autre
+  // discipline (WEIGHT_CATEGORIES_BY_BAND est indexé par tranche d'âge, pas par cours).
+  if(memberInNoBeltCourse(m)) return false;
   return !!weightOptionsForBandLabel(groupedCategoryLabel(m.birthDate, m));
 }
 function buildMemberWeightCategorySelectHtml(m){
