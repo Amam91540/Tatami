@@ -3423,7 +3423,7 @@ function wireFamilyPortalInscription(body){
       const fields = {};
       FAMILY_FICHE_EDITABLE_FIELDS.forEach(key=>{
         const input = body.querySelector(`[data-fp-fiche-field="${key}"][data-member="${memberId}"]`);
-        if(input) fields[key] = input.value;
+        if(input) fields[key] = key==='email' ? normalizeEmail(input.value) : input.value;
       });
       const originalLabel = btn.textContent;
       btn.disabled = true; btn.textContent = '⏳ Envoi…';
@@ -3923,7 +3923,7 @@ function wireInscriptionOverlay(m, isMajor){
     const val = id => (overlay.querySelector(id) ? overlay.querySelector(id).value.trim() : '');
     const fields = {
       address: val('#insAddress'), postalCode: val('#insPostalCode'), city: val('#insCity'),
-      phone: val('#insPhone'), email: val('#insEmail'), birthPlace: val('#insBirthPlace'),
+      phone: val('#insPhone'), email: normalizeEmail(val('#insEmail')), birthPlace: val('#insBirthPlace'),
       whatsappPhone1: val('#insWhatsapp1'), whatsappPhone1Role: val('#insWhatsapp1Role')
     };
     if(isMajor) fields.profession = val('#insProfession');
@@ -5876,7 +5876,7 @@ function renderGroupsTab(){
         <div class="archived-suggest" id="suggest-${draftId}"></div>
       </div>
       <button class="ghost icon-btn" style="margin-top:8px; width:100%;" data-action="quick-add-member" data-id="${g.id}">📋 Ajout rapide (nouvel élève)</button>
-      ${isProfSession() ? '' : `<button class="ghost icon-btn" style="margin-top:8px; width:100%;" data-action="import" data-id="${g.id}">Importer une liste (Excel/CSV)</button>`}
+      ${(isProfSession() || isSecretaireSession()) ? '' : `<button class="ghost icon-btn" style="margin-top:8px; width:100%;" data-action="import" data-id="${g.id}">Importer une liste (Excel/CSV)</button>`}
       ` : ''}
     </div>`;
   }).join('');
@@ -6578,7 +6578,7 @@ function openIncompleteFichesOverlay(){
           }
           return;
         }
-        const val = input.value.trim();
+        const val = field==='email' ? normalizeEmail(input.value) : input.value.trim();
         if(val && m[field] !== val){ m[field] = val; changed = true; }
       });
       if(changed) count++;
@@ -6761,8 +6761,9 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
     // Garde-fou même si le bouton était présent par un autre biais (ex: rendu déjà en mémoire avant
     // une reconnexion sous un autre rôle) — demande de Thomas du 29/08/2026 : un prof ne doit plus
     // pouvoir importer une liste Excel/CSV sur son cours (voir le bouton masqué juste au-dessus dans
-    // renderGroupsTab, même raisonnement que del-member/archive-member).
-    if(isProfSession()) return;
+    // renderGroupsTab, même raisonnement que del-member/archive-member). Élargi à secrétaire le
+    // 30/08/2026 (nouvelle demande de Thomas), même bouton masqué désormais pour les deux rôles.
+    if(isProfSession() || isSecretaireSession()) return;
     ui.importMode = 'single';
     ui.importTargetGroup = btn.dataset.id;
     document.getElementById('importFileInput').click();
@@ -7247,8 +7248,12 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   if(!input) return;
   const m = data.members.find(x=>x.id===input.dataset.id);
   if(!m) return;
-  if(isProfSession()){ submitProfFieldEdit(m.id, 'email', input.value.trim()); return; }
-  m.email = input.value.trim();
+  // Demande de Thomas du 30/08/2026 : un email saisi (en partie) en majuscules doit être remis en
+  // minuscules automatiquement, comme le nom de famille l'est en majuscules — même correction
+  // appliquée à chaque site d'écriture de m.email (voir aussi normalizeEmail plus haut).
+  const emailVal = normalizeEmail(input.value);
+  if(isProfSession()){ submitProfFieldEdit(m.id, 'email', emailVal); return; }
+  m.email = emailVal;
   syncLinkedMember(m);
   saveData();
 });
@@ -8083,6 +8088,15 @@ function uppercaseLastNameInFullName(fullName){
   const prenom = parts[0];
   const nom = parts.slice(1).join(' ').toUpperCase();
   return `${prenom} ${nom}`;
+}
+// Demande de Thomas du 30/08/2026 : "mets tout le texte en minuscule automatiquement si jamais des
+// majuscules sont ecrites" pour les emails (fiche élève, ajout rapide, import Excel, espace
+// famille, fiches incomplètes...) — même principe que uppercaseLastNameInFullName ci-dessus mais
+// dans l'autre sens : une adresse email n'a jamais de sens sémantique porté par la casse (elle est
+// insensible à la casse), contrairement à un nom de famille. Centralisé ici pour être appelé à
+// chaque site qui écrit m.email, plutôt que de dupliquer .trim().toLowerCase() partout.
+function normalizeEmail(raw){
+  return String(raw||'').trim().toLowerCase();
 }
 function memberAddressKey(m){
   const addr = normalizeForMatch(m.address);
@@ -10969,7 +10983,12 @@ function importWorkbookMultiSheet(wb){
       if(seen.has(key)){ totalSkipped++; continue; }
       seen.add(key);
       const birthDate = colDate>-1 ? parseBirthCell(row[colDate]) : '';
-      const mail = colMail>-1 && row[colMail] ? String(row[colMail]).trim() : '';
+      // Demande de Thomas du 30/08/2026 : les emails saisis en majuscules (par la famille sur la
+      // feuille papier, par exemple) doivent être automatiquement remis en minuscules, comme
+      // uppercaseMemberLastNamesOnce le fait pour les noms de famille — appliqué ici à la SOURCE
+      // (avant toute affectation à existingMember.email/member.email/rowData.email plus bas) pour ne
+      // couvrir qu'un seul endroit plutôt que chaque site d'écriture.
+      const mail = colMail>-1 && row[colMail] ? normalizeEmail(row[colMail]) : '';
       const belt = colBelt>-1 && row[colBelt] ? matchBeltRank(row[colBelt]) : undefined;
       if(colBelt>-1 && row[colBelt]){ if(belt) beltsMatched++; else beltsUnmatched++; }
       const gender = colSexe>-1 ? parseGenderCell(row[colSexe]) : '';
@@ -11406,7 +11425,7 @@ function openImportMissingInfoOverlay(candidates, onDone){
       let changed = false;
       row.querySelectorAll('[data-field]').forEach(input=>{
         const field = input.dataset.field;
-        const val = input.value.trim();
+        const val = field==='email' ? normalizeEmail(input.value) : input.value.trim();
         if(val && m[field] !== val){ m[field] = val; changed = true; }
       });
       if(changed) count++;
@@ -11755,99 +11774,204 @@ document.getElementById('importFileInput').addEventListener('change', async (e)=
 });
 
 /* ---------------- AJOUT RAPIDE (FICHE COMPLÈTE) ---------------- */
+// Demande de Thomas du 30/08/2026 : "mets TOUS les champs a remplir directement sur la page qui
+// ouvre... sinon c'est vraiment pas pratique de devoir retourner sur la feuille pour completer les
+// autres infos". Le formulaire propose désormais TOUS les champs présents sur une fiche complète,
+// avec exactement les mêmes règles d'affichage conditionnel que celle-ci (memberIsMajor,
+// groupHasNoBelt, isCommitteeGroup, memberWeightCategoryEligible — réutilisées telles quelles,
+// jamais dupliquées) : Profession/WhatsApp n°2 selon la majorité, Ceinture/Catégorie de poids
+// masquées pour Taiso, Fonction réservée au Comité directeur. Comme ces règles dépendent de champs
+// qui peuvent changer PENDANT la saisie (date de naissance, cours), le formulaire se reconstruit à
+// chaque changement de l'un de ces trois champs (voir readQuickAddValues/render ci-dessous), en
+// conservant tout ce qui a déjà été saisi ailleurs.
+function quickAddIsMajor(birthDate){
+  return memberIsMajor({ birthDate: birthDate || '' });
+}
+function readQuickAddValues(overlay){
+  const val = field => { const el = overlay.querySelector(`[data-field="${field}"]`); return el ? el.value : ''; };
+  // Catégorie de poids : rendue par buildMemberWeightCategorySelectHtml (réutilisée telle quelle,
+  // voir quickAddFieldsHtml) qui pose data-action="edit-weight-category", pas data-field — même
+  // sélecteur que la fiche complète, pour ne jamais dupliquer/désynchroniser ce rendu.
+  const weightEl = overlay.querySelector('[data-action="edit-weight-category"]');
+  return {
+    nom: val('nom'), prenom: val('prenom'), birthDate: val('birthDate'), gender: val('gender'),
+    email: val('email'), phone: val('phone'), birthPlace: val('birthPlace'), profession: val('profession'),
+    city: val('city'), address: val('address'), postalCode: val('postalCode'),
+    whatsapp1: val('whatsapp1'), whatsapp1role: val('whatsapp1role'), whatsapp2: val('whatsapp2'), whatsapp2role: val('whatsapp2role'),
+    groupId: val('groupId'), belt: val('belt'), weightCategory: weightEl ? weightEl.value : '',
+    committeeRole: val('committeeRole'), medicalCertDate: val('medicalCertDate'), questionnaireStatus: val('questionnaireStatus'),
+    licenseNumber: val('licenseNumber'), note: val('note')
+  };
+}
+function quickAddFieldsHtml(v){
+  const selectedGroup = data.groups.find(g=>g.id===v.groupId);
+  const noBelt = groupHasNoBelt(selectedGroup);
+  const committee = isCommitteeGroup(selectedGroup);
+  const isMajor = quickAddIsMajor(v.birthDate);
+  const draftMember = { birthDate: v.birthDate, gender: v.gender, weightCategory: v.weightCategory, groupId: v.groupId };
+  const weightEligible = v.birthDate ? memberWeightCategoryEligible(draftMember) : false;
+  return `
+    <label>Nom
+      <input data-field="nom" placeholder="Nom" value="${escapeHtml(v.nom)}">
+    </label>
+    <label>Prénom
+      <input data-field="prenom" placeholder="Prénom" value="${escapeHtml(v.prenom)}">
+    </label>
+    <label>Date de naissance
+      <input type="date" data-field="birthDate" value="${v.birthDate||''}">
+    </label>
+    <label>Sexe
+      <select data-field="gender">
+        <option value="" ${!v.gender?'selected':''}>Non renseigné</option>
+        <option value="F" ${v.gender==='F'?'selected':''}>Fille</option>
+        <option value="M" ${v.gender==='M'?'selected':''}>Garçon</option>
+      </select>
+    </label>
+    <label>Email
+      <input type="email" data-field="email" placeholder="parent@exemple.fr" value="${escapeHtml(v.email)}">
+    </label>
+    <label>Téléphone
+      <input data-field="phone" placeholder="06 12 34 56 78" value="${escapeHtml(v.phone)}">
+    </label>
+    <label>Lieu de naissance
+      <input data-field="birthPlace" data-city-autocomplete="1" placeholder="Évry" value="${escapeHtml(v.birthPlace)}">
+    </label>
+    ${isMajor ? `<label>Profession
+      <input data-field="profession" placeholder="(licenciés adultes)" value="${escapeHtml(v.profession)}">
+    </label>` : '<label>&nbsp;</label>'}
+    <label class="full">Adresse
+      <input data-field="address" placeholder="8 rue du Vieux Moulin" value="${escapeHtml(v.address)}">
+    </label>
+    <label>Code postal
+      <input data-field="postalCode" placeholder="91540" value="${escapeHtml(v.postalCode)}">
+    </label>
+    <label>Ville
+      <input data-field="city" data-city-autocomplete="1" placeholder="Mennecy" value="${escapeHtml(v.city)}">
+    </label>
+    <label>Tel Groupe WhatsApp ${!isMajor?'n°1':''}
+      <input data-field="whatsapp1" placeholder="06 12 34 56 78" value="${escapeHtml(v.whatsapp1)}">
+    </label>
+    <label>Lien${!isMajor?' (n°1)':''}
+      <select data-field="whatsapp1role">
+        <option value="" ${!v.whatsapp1role?'selected':''}>—</option>
+        ${WHATSAPP_ROLE_OPTIONS.map(r=>`<option value="${escapeHtml(r)}" ${v.whatsapp1role===r?'selected':''}>${escapeHtml(r)}</option>`).join('')}
+      </select>
+    </label>
+    ${!isMajor ? `<label>Tel Groupe WhatsApp n°2
+      <input data-field="whatsapp2" placeholder="06 98 76 54 32" value="${escapeHtml(v.whatsapp2)}">
+    </label>
+    <label>Lien (n°2)
+      <select data-field="whatsapp2role">
+        <option value="" ${!v.whatsapp2role?'selected':''}>—</option>
+        ${WHATSAPP_ROLE_OPTIONS.map(r=>`<option value="${escapeHtml(r)}" ${v.whatsapp2role===r?'selected':''}>${escapeHtml(r)}</option>`).join('')}
+      </select>
+    </label>` : ''}
+    <label>Cours *
+      <select data-field="groupId">
+        <option value="">— À choisir —</option>
+        ${data.groups.map(g=>`<option value="${g.id}" ${g.id===v.groupId?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}
+      </select>
+    </label>
+    ${noBelt ? '' : `<label>Ceinture
+      <select data-field="belt">
+        <option value="">Non renseignée</option>
+        ${BELT_RANKS.map(r=>`<option value="${r.key}" ${v.belt===r.key?'selected':''}>${escapeHtml(r.label)}</option>`).join('')}
+      </select>
+    </label>`}
+    ${(!noBelt && weightEligible) ? `<label>Catégorie de poids
+      ${buildMemberWeightCategorySelectHtml(draftMember)}
+    </label>` : ''}
+    ${committee ? `<label>Fonction
+      <select data-field="committeeRole">
+        <option value="" ${!v.committeeRole?'selected':''}>Non renseignée</option>
+        ${COMMITTEE_ROLES.map(r=>`<option value="${escapeHtml(r)}" ${v.committeeRole===r?'selected':''}>${escapeHtml(r)}</option>`).join('')}
+      </select>
+    </label>` : ''}
+    ${isProfSession() ? '' : `<label>Certificat médical
+      <input type="date" data-field="medicalCertDate" value="${v.medicalCertDate||''}">
+    </label>
+    <label>Type de certificat médical
+      <select data-field="questionnaireStatus">
+        <option value="" ${!v.questionnaireStatus?'selected':''}>Non renseigné</option>
+        ${QUESTIONNAIRE_STATUSES.map(s=>`<option value="${escapeHtml(s)}" ${v.questionnaireStatus===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}
+      </select>
+    </label>`}
+    <label>N° de licence
+      <input data-field="licenseNumber" placeholder="M08102009ACHAR01" value="${escapeHtml(v.licenseNumber)}">
+    </label>
+    <label class="full">Note
+      <textarea data-field="note" placeholder="Informations diverses...">${escapeHtml(v.note)}</textarea>
+    </label>
+  `;
+}
 function openQuickAddMemberOverlay(defaultGroupId){
   const overlay = document.getElementById('quick-add-overlay');
   const anyGroups = data.groups.length > 0;
-
-  overlay.innerHTML = `
-    <div class="qam-card">
-      <h2 style="margin-top:0;">Nouvelle fiche élève</h2>
-      <p style="font-size:13px; color:var(--ink-dim); line-height:1.5; margin:-6px 0 0;">
-        Renseigne les informations disponibles — seuls le nom (ou prénom) et le cours sont obligatoires, le reste peut être complété plus tard depuis la fiche.
-      </p>
-      <div class="qam-fields">
-        <label>Nom
-          <input data-field="nom" placeholder="Nom">
-        </label>
-        <label>Prénom
-          <input data-field="prenom" placeholder="Prénom">
-        </label>
-        <label>Date de naissance
-          <input type="date" data-field="birthDate">
-        </label>
-        <label>Sexe
-          <select data-field="gender">
-            <option value="">Non renseigné</option>
-            <option value="F">Fille</option>
-            <option value="M">Garçon</option>
-          </select>
-        </label>
-        <label>Email
-          <input type="email" data-field="email" placeholder="parent@exemple.fr">
-        </label>
-        <label>Téléphone
-          <input data-field="phone" placeholder="06 12 34 56 78">
-        </label>
-        <label>Ville
-          <input data-field="city" data-city-autocomplete="1" placeholder="Mennecy">
-        </label>
-        <label class="full">Adresse
-          <input data-field="address" placeholder="8 rue du Vieux Moulin">
-        </label>
-        <label>Code postal
-          <input data-field="postalCode" placeholder="91540">
-        </label>
-        <label>&nbsp;</label>
-        <label>Cours *
-          <select data-field="groupId">
-            <option value="">— À choisir —</option>
-            ${data.groups.map(g=>`<option value="${g.id}" ${g.id===defaultGroupId?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}
-          </select>
-        </label>
-        <label>Ceinture
-          <select data-field="belt">
-            <option value="">Non renseignée</option>
-            ${BELT_RANKS.map(r=>`<option value="${r.key}">${escapeHtml(r.label)}</option>`).join('')}
-          </select>
-        </label>
-      </div>
-      ${anyGroups ? '' : '<p class="qam-warn">Créez d\'abord un cours dans l\'onglet « Cours » avant de pouvoir enregistrer cette fiche.</p>'}
-      <button class="primary" id="confirmQuickAddBtn" style="width:100%;">Créer la fiche élève</button>
-      <button class="ghost" id="cancelQuickAddBtn" style="width:100%; margin-top:8px;">Annuler</button>
-    </div>`;
-  overlay.classList.add('show');
+  let values = Object.assign(readQuickAddValues({ querySelector: ()=>null }), { groupId: defaultGroupId || '' });
 
   const close = ()=>{ overlay.classList.remove('show'); overlay.innerHTML=''; };
-  document.getElementById('cancelQuickAddBtn').onclick = close;
-  document.getElementById('confirmQuickAddBtn').onclick = ()=>{
-    const val = field => overlay.querySelector(`[data-field="${field}"]`).value.trim();
-    const groupId = val('groupId');
-    if(!groupId){
-      showToast('Choisis un cours avant de créer la fiche');
-      return;
-    }
-    const prenom = val('prenom');
-    const nom = val('nom');
+  const onConfirm = ()=>{
+    values = readQuickAddValues(overlay);
+    const groupId = values.groupId;
+    if(!groupId){ showToast('Choisis un cours avant de créer la fiche'); return; }
+    const prenom = values.prenom.trim();
+    const nom = values.nom.trim();
     const name = formatMemberFullName(prenom, nom);
-    if(!name){
-      showToast('Nom ou prénom manquant');
-      return;
-    }
+    if(!name){ showToast('Nom ou prénom manquant'); return; }
     const member = { id: uid(), groupId, name };
-    const bd = val('birthDate'); if(bd) member.birthDate = bd;
-    const gender = val('gender'); if(gender) member.gender = gender;
-    const email = val('email'); if(email) member.email = email;
-    const phone = val('phone'); if(phone) member.phone = phone;
-    const address = val('address'); if(address) member.address = address;
-    const postalCode = val('postalCode'); if(postalCode) member.postalCode = postalCode;
-    const city = val('city'); if(city) member.city = city;
-    const belt = val('belt'); if(belt){ member.belt = belt; member.beltHistory = [{ belt, date: todayStr() }]; }
+    if(values.birthDate) member.birthDate = values.birthDate;
+    if(values.gender) member.gender = values.gender;
+    const email = normalizeEmail(values.email); if(email) member.email = email;
+    if(values.phone.trim()) member.phone = values.phone.trim();
+    if(values.birthPlace.trim()) member.birthPlace = values.birthPlace.trim();
+    if(values.profession.trim()) member.profession = values.profession.trim();
+    if(values.address.trim()) member.address = values.address.trim();
+    if(values.postalCode.trim()) member.postalCode = values.postalCode.trim();
+    if(values.city.trim()) member.city = values.city.trim();
+    if(values.whatsapp1.trim()) member.whatsappPhone1 = values.whatsapp1.trim();
+    if(values.whatsapp1role) member.whatsappPhone1Role = values.whatsapp1role;
+    if(values.whatsapp2.trim()) member.whatsappPhone2 = values.whatsapp2.trim();
+    if(values.whatsapp2role) member.whatsappPhone2Role = values.whatsapp2role;
+    if(values.belt){ member.belt = values.belt; member.beltHistory = [{ belt: values.belt, date: todayStr() }]; }
+    if(values.weightCategory) member.weightCategory = values.weightCategory;
+    if(values.committeeRole) member.committeeRole = values.committeeRole;
+    // medicalCertDate/questionnaireStatus : jamais lus pour un prof (le champ n'existe même pas dans
+    // le HTML dans ce cas, voir quickAddFieldsHtml — isProfSession()), values.xxx vaut alors '' de
+    // toute façon.
+    if(values.medicalCertDate) member.medicalCertDate = values.medicalCertDate;
+    if(values.questionnaireStatus) member.questionnaireStatus = values.questionnaireStatus;
+    if(values.licenseNumber.trim()) member.licenseNumber = values.licenseNumber.trim();
+    if(values.note.trim()) member.note = values.note.trim();
 
     data.members.push(member);
     saveData(); renderActiveTab();
     showToast(`Fiche créée pour ${name}`);
     close();
   };
+  const render = ()=>{
+    overlay.innerHTML = `
+      <div class="qam-card">
+        <h2 style="margin-top:0;">Nouvelle fiche élève</h2>
+        <p style="font-size:13px; color:var(--ink-dim); line-height:1.5; margin:-6px 0 0;">
+          Renseigne toutes les informations disponibles dès maintenant — seuls le nom (ou prénom) et le cours sont obligatoires.
+        </p>
+        <div class="qam-fields">${quickAddFieldsHtml(values)}</div>
+        ${anyGroups ? '' : '<p class="qam-warn">Créez d\'abord un cours dans l\'onglet « Cours » avant de pouvoir enregistrer cette fiche.</p>'}
+        <button class="primary" id="confirmQuickAddBtn" style="width:100%;">Créer la fiche élève</button>
+        <button class="ghost" id="cancelQuickAddBtn" style="width:100%; margin-top:8px;">Annuler</button>
+      </div>`;
+    overlay.classList.add('show');
+    document.getElementById('cancelQuickAddBtn').onclick = close;
+    document.getElementById('confirmQuickAddBtn').onclick = onConfirm;
+    // Reconstruction complète du formulaire à chaque changement d'un champ dont dépend une règle
+    // d'affichage conditionnelle (voir le commentaire au-dessus de quickAddFieldsHtml) — jamais sur
+    // la saisie des champs texte, uniquement sur le changement des 3 champs structurants.
+    ['birthDate', 'gender', 'groupId'].forEach(field=>{
+      const el = overlay.querySelector(`[data-field="${field}"]`);
+      if(el) el.addEventListener('change', ()=>{ values = readQuickAddValues(overlay); render(); });
+    });
+  };
+  render();
 }
 
 /* ---------------- PRÉSENCES ---------------- */
