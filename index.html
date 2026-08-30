@@ -5805,41 +5805,41 @@ function renderGroupsTab(){
           </div>` : ''}
           <div>
             <span class="field-label">Email (pour convocations)</span>
-            <input type="text" data-action="edit-email" data-id="${m.id}" value="${escapeHtml(m.email||'')}" placeholder="parent@exemple.fr">
+            <input type="text" data-action="edit-email" data-id="${m.id}" value="${escapeHtml(m.email||'')}">
           </div>
           <div>
             <span class="field-label">Téléphone</span>
-            <input type="text" data-action="edit-phone" data-id="${m.id}" value="${escapeHtml(m.phone||'')}" placeholder="06 12 34 56 78">
+            <input type="text" data-action="edit-phone" data-id="${m.id}" value="${escapeHtml(m.phone||'')}">
           </div>
           <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field" style="flex:2;">
               <span class="field-label">Adresse</span>
-              <input type="text" data-action="edit-address" data-id="${m.id}" value="${escapeHtml(m.address||'')}" placeholder="8 rue du Vieux Moulin">
+              <input type="text" data-action="edit-address" data-id="${m.id}" value="${escapeHtml(m.address||'')}">
             </div>
             <div class="fiche-field" style="flex:1;">
               <span class="field-label">Code postal</span>
-              <input type="text" data-action="edit-postalcode" data-id="${m.id}" value="${escapeHtml(m.postalCode||'')}" placeholder="91540">
+              <input type="text" data-action="edit-postalcode" data-id="${m.id}" value="${escapeHtml(m.postalCode||'')}">
             </div>
             <div class="fiche-field" style="flex:1;">
               <span class="field-label">Ville</span>
-              <input type="text" data-action="edit-city" data-id="${m.id}" value="${escapeHtml(m.city||'')}" placeholder="Mennecy">
+              <input type="text" data-action="edit-city" data-id="${m.id}" value="${escapeHtml(m.city||'')}">
             </div>
           </div>
           <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field">
               <span class="field-label">Lieu de naissance</span>
-              <input type="text" data-action="edit-birthplace" data-id="${m.id}" value="${escapeHtml(m.birthPlace||'')}" placeholder="Évry">
+              <input type="text" data-action="edit-birthplace" data-id="${m.id}" value="${escapeHtml(m.birthPlace||'')}">
             </div>
             ${memberIsMajor(m) ? `
             <div class="fiche-field">
               <span class="field-label">Profession</span>
-              <input type="text" data-action="edit-profession" data-id="${m.id}" value="${escapeHtml(m.profession||'')}" placeholder="(licenciés adultes)">
+              <input type="text" data-action="edit-profession" data-id="${m.id}" value="${escapeHtml(m.profession||'')}">
             </div>` : ''}
           </div>
           <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field" style="flex:2;">
               <span class="field-label">Tel Groupe WhatsApp ${!memberIsMajor(m)?'n°1':''}</span>
-              <input type="text" data-action="edit-whatsapp1" data-id="${m.id}" value="${escapeHtml(m.whatsappPhone1||'')}" placeholder="06 12 34 56 78">
+              <input type="text" data-action="edit-whatsapp1" data-id="${m.id}" value="${escapeHtml(m.whatsappPhone1||'')}">
             </div>
             <div class="fiche-field" style="flex:1;">
               <span class="field-label">Lien</span>
@@ -5853,7 +5853,7 @@ function renderGroupsTab(){
           <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field" style="flex:2;">
               <span class="field-label">Tel Groupe WhatsApp n°2</span>
-              <input type="text" data-action="edit-whatsapp2" data-id="${m.id}" value="${escapeHtml(m.whatsappPhone2||'')}" placeholder="06 98 76 54 32">
+              <input type="text" data-action="edit-whatsapp2" data-id="${m.id}" value="${escapeHtml(m.whatsappPhone2||'')}">
             </div>
             <div class="fiche-field" style="flex:1;">
               <span class="field-label">Lien</span>
@@ -5880,7 +5880,7 @@ function renderGroupsTab(){
           <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field">
               <span class="field-label">N° de licence</span>
-              <input type="text" data-action="edit-license" data-id="${m.id}" value="${escapeHtml(m.licenseNumber||'')}" placeholder="M08102009ACHAR01">
+              <input type="text" data-action="edit-license" data-id="${m.id}" value="${escapeHtml(m.licenseNumber||'')}">
             </div>
           </div>
           <div>
@@ -5901,7 +5901,7 @@ function renderGroupsTab(){
           </div>` : ''}
           <div>
             <span class="field-label">Note</span>
-            <textarea data-action="edit-note" data-id="${m.id}" placeholder="Informations diverses..." style="width:100%; min-height:50px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:11px 12px; color:var(--ink); font-family:'Inter',sans-serif; font-size:14px; resize:vertical;">${escapeHtml(m.note||'')}</textarea>
+            <textarea data-action="edit-note" data-id="${m.id}" style="width:100%; min-height:50px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:11px 12px; color:var(--ink); font-family:'Inter',sans-serif; font-size:14px; resize:vertical;">${escapeHtml(m.note||'')}</textarea>
           </div>
           <div style="display:flex; justify-content:flex-end; gap:8px;">
             <button class="ghost icon-btn" data-action="done-member-fiche" data-id="${m.id}" title="Terminer la modification" style="padding:7px 10px;">✓ Terminé</button>
@@ -6536,8 +6536,8 @@ function incompleteFieldInputHtml(m, key){
       <option value="" ${!val?'selected':''}>—</option>
       ${BELT_RANKS.map(b=>`<option value="${b.key}" ${val===b.key?'selected':''}>${escapeHtml(b.label)}</option>`).join('')}
     </select>`;
-  if(key==='email') return `<input type="email" data-field="email" value="${escapeHtml(val)}" placeholder="email@exemple.fr">`;
-  if(key==='phone') return `<input type="tel" data-field="phone" value="${escapeHtml(val)}" placeholder="06 12 34 56 78">`;
+  if(key==='email') return `<input type="email" data-field="email" value="${escapeHtml(val)}">`;
+  if(key==='phone') return `<input type="tel" data-field="phone" value="${escapeHtml(val)}">`;
   if(MEMBER_DOCUMENT_ITEMS.some(it=>it.key===key)){
     const label = (MEMBER_DOCUMENT_ITEMS.find(it=>it.key===key)||{}).label || key;
     // memberDocOwner : la case doit refléter l'état de la fiche qui porte RÉELLEMENT le document
@@ -11426,7 +11426,7 @@ function openImportMissingInfoOverlay(candidates, onDone){
           <input type="date" data-field="birthDate" value="${m.birthDate||''}">
         </label>
         <label>Email
-          <input type="email" data-field="email" value="${escapeHtml(m.email||'')}" placeholder="email@exemple.fr">
+          <input type="email" data-field="email" value="${escapeHtml(m.email||'')}">
         </label>
         <label>Genre
           <select data-field="gender">
@@ -11853,10 +11853,10 @@ function quickAddFieldsHtml(v){
   const weightEligible = v.birthDate ? memberWeightCategoryEligible(draftMember) : false;
   return `
     <label>Nom
-      <input data-field="nom" placeholder="Nom" value="${escapeHtml(v.nom)}">
+      <input data-field="nom" value="${escapeHtml(v.nom)}">
     </label>
     <label>Prénom
-      <input data-field="prenom" placeholder="Prénom" value="${escapeHtml(v.prenom)}">
+      <input data-field="prenom" value="${escapeHtml(v.prenom)}">
     </label>
     <label>Date de naissance
       <input type="date" data-field="birthDate" value="${v.birthDate||''}">
@@ -11869,28 +11869,28 @@ function quickAddFieldsHtml(v){
       </select>
     </label>
     <label>Email
-      <input type="email" data-field="email" placeholder="parent@exemple.fr" value="${escapeHtml(v.email)}">
+      <input type="email" data-field="email" value="${escapeHtml(v.email)}">
     </label>
     <label>Téléphone
-      <input data-field="phone" placeholder="06 12 34 56 78" value="${escapeHtml(v.phone)}">
+      <input data-field="phone" value="${escapeHtml(v.phone)}">
     </label>
     <label>Lieu de naissance
-      <input data-field="birthPlace" data-city-autocomplete="1" placeholder="Évry" value="${escapeHtml(v.birthPlace)}">
+      <input data-field="birthPlace" data-city-autocomplete="1" value="${escapeHtml(v.birthPlace)}">
     </label>
     ${isMajor ? `<label>Profession
-      <input data-field="profession" placeholder="(licenciés adultes)" value="${escapeHtml(v.profession)}">
+      <input data-field="profession" value="${escapeHtml(v.profession)}">
     </label>` : '<label>&nbsp;</label>'}
     <label class="full">Adresse
-      <input data-field="address" placeholder="8 rue du Vieux Moulin" value="${escapeHtml(v.address)}">
+      <input data-field="address" value="${escapeHtml(v.address)}">
     </label>
     <label>Code postal
-      <input data-field="postalCode" placeholder="91540" value="${escapeHtml(v.postalCode)}">
+      <input data-field="postalCode" value="${escapeHtml(v.postalCode)}">
     </label>
     <label>Ville
-      <input data-field="city" data-city-autocomplete="1" placeholder="Mennecy" value="${escapeHtml(v.city)}">
+      <input data-field="city" data-city-autocomplete="1" value="${escapeHtml(v.city)}">
     </label>
     <label>Tel Groupe WhatsApp ${!isMajor?'n°1':''}
-      <input data-field="whatsapp1" placeholder="06 12 34 56 78" value="${escapeHtml(v.whatsapp1)}">
+      <input data-field="whatsapp1" value="${escapeHtml(v.whatsapp1)}">
     </label>
     <label>Lien${!isMajor?' (n°1)':''}
       <select data-field="whatsapp1role">
@@ -11899,7 +11899,7 @@ function quickAddFieldsHtml(v){
       </select>
     </label>
     ${!isMajor ? `<label>Tel Groupe WhatsApp n°2
-      <input data-field="whatsapp2" placeholder="06 98 76 54 32" value="${escapeHtml(v.whatsapp2)}">
+      <input data-field="whatsapp2" value="${escapeHtml(v.whatsapp2)}">
     </label>
     <label>Lien (n°2)
       <select data-field="whatsapp2role">
@@ -11938,10 +11938,10 @@ function quickAddFieldsHtml(v){
       </select>
     </label>`}
     <label>N° de licence
-      <input data-field="licenseNumber" placeholder="M08102009ACHAR01" value="${escapeHtml(v.licenseNumber)}">
+      <input data-field="licenseNumber" value="${escapeHtml(v.licenseNumber)}">
     </label>
     <label class="full">Note
-      <textarea data-field="note" placeholder="Informations diverses...">${escapeHtml(v.note)}</textarea>
+      <textarea data-field="note">${escapeHtml(v.note)}</textarea>
     </label>
   `;
 }
