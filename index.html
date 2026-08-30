@@ -4480,6 +4480,14 @@ function isAdminSession(){
   const session = getSession();
   return !!(session && session.role === 'admin');
 }
+// Demande de Thomas le 29/08/2026 : le compte secrétaire doit avoir le même accès à l'espace famille
+// (bouton "🔗 Espace famille" sur une fiche) que l'admin — voir requireAdminOrSecretaire côté Code.gs
+// pour le même élargissement server-side (sinon le bouton apparaîtrait sans que l'action derrière
+// fonctionne).
+function isSecretaireSession(){
+  const session = getSession();
+  return !!(session && session.role === 'secretaire');
+}
 // Journal d'activité des comptes non-admin (voir data.settings.activityLog, renderActivityLogCard) :
 // un compte prof ou comptable ne voit jamais ce journal (réservé à l'admin), mais chacune de ses
 // actions notables (présences, calendrier, convocations...) y ajoute une entrée pour que l'admin
@@ -5695,7 +5703,7 @@ function renderGroupsTab(){
               <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px; flex-wrap:wrap;">
                 <button class="ghost icon-btn" data-action="member-history-pdf" data-id="${m.id}" title="Générer l'historique complet (résultats, passages de grade, stages) en PDF" style="padding:7px 10px;">📄 Historique PDF</button>
                 ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="generate-inscription-pdf" data-id="${m.id}" title="Génère la feuille d'inscription pré-remplie avec les infos de la fiche (comme sur l'espace famille), sans signature — à imprimer" style="padding:7px 10px;">🖨 Feuille d'inscription</button>`}
-                ${isAdminSession() ? `<button class="ghost icon-btn" data-action="family-portal-link" data-id="${m.id}" title="Envoyer l'accès à l'espace personnel famille" style="padding:7px 10px;">🔗 Espace famille</button>` : ''}
+                ${(isAdminSession() || isSecretaireSession()) ? `<button class="ghost icon-btn" data-action="family-portal-link" data-id="${m.id}" title="Envoyer l'accès à l'espace personnel famille" style="padding:7px 10px;">🔗 Espace famille</button>` : ''}
                 <button class="ghost icon-btn" data-action="edit-member-fiche" data-id="${m.id}" title="Modifier les informations" style="padding:7px 10px;">✏️</button>
                 ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="archive-member" data-id="${m.id}" title="Ne participe plus (licence non renouvelée...) sans rien supprimer" style="font-size:12px; padding:7px 10px;">Archiver</button>`}
                 ${isProfSession() ? '' : `<button class="ghost icon-btn" data-action="del-member" data-id="${m.id}" style="font-size:12px; padding:7px 10px;">Retirer</button>`}
