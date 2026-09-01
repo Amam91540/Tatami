@@ -4011,23 +4011,23 @@ function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
   const courseSuffix = curGroup ? courseLevelSuffix(curGroup.name) : '';
   const box = (on, label) => `${on?'☑':'☐'} ${escapeHtml(label)}${on && courseSuffix ? ` <strong>— ${escapeHtml(courseSuffix)}</strong>` : ''}`;
   const dotLine = on => on ? `<strong>✓${courseSuffix ? ' '+escapeHtml(courseSuffix) : ''}</strong>` : '.........................';
-  const field = (label, value) => `<div style="margin-top:10px;"><span style="font-style:italic; text-decoration:underline;">${escapeHtml(label)} :</span> ${escapeHtml(value||'')}</div>`;
+  const field = (label, value) => `<div style="margin-top:12px;"><span style="font-style:italic; text-decoration:underline;">${escapeHtml(label)} :</span> ${escapeHtml(value||'')}</div>`;
   // Ligne à compléter à la main (partie club) : un pointillé qui s'étire (border-bottom, flex) plutôt
   // qu'une longue suite de caractères "." — demande Thomas du 18/08/2026 : "trop de petits points"
   // pour "Inscription faite par" et "Nom du chèque", qui retombaient sur une 2e ligne au lieu de
   // rester sur la même ligne que leur libellé. flexGrow règle la longueur relative du pointillé.
-  const blankLine = (flexGrow) => `<span style="display:inline-block; flex:${flexGrow||1}; min-width:16px; height:12px; border-bottom:1px dotted #333; margin:0 4px;"></span>`;
+  const blankLine = (flexGrow) => `<span style="display:inline-block; flex:${flexGrow||1}; min-width:16px; height:14px; border-bottom:1px dotted #333; margin:0 4px;"></span>`;
   const dateLabel = fmtDateLong(todayStr());
   return `
-    <div style="width:700px; padding:26px 40px 34px; background:#fff; box-sizing:border-box; font-family:'Inter',sans-serif; color:#1a1a1a; font-size:13px; line-height:1.55;">
+    <div style="width:700px; padding:30px 44px 38px; background:#fff; box-sizing:border-box; font-family:'Inter',sans-serif; color:#1a1a1a; font-size:14.5px; line-height:1.6;">
       <div style="display:flex; align-items:center; gap:16px;">
-        ${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="height:60px;">` : ''}
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="height:66px;">` : ''}
         <div style="flex:1; text-align:center;">
-          <div style="font-size:16px; font-weight:700;">ACADEMIE MENNECOISE D’ARTS MARTIAUX</div>
-          <div style="font-size:13.5px; font-weight:700; margin-top:2px;">INSCRIPTION Saison <span style="font-size:15px;">${escapeHtml(seasonLabel)}</span></div>
+          <div style="font-size:17.5px; font-weight:700;">ACADEMIE MENNECOISE D’ARTS MARTIAUX</div>
+          <div style="font-size:15px; font-weight:700; margin-top:2px;">INSCRIPTION Saison <span style="font-size:16.5px;">${escapeHtml(seasonLabel)}</span></div>
         </div>
       </div>
-      <div style="display:flex; gap:30px; margin-top:18px; font-size:13px;">
+      <div style="display:flex; gap:30px; margin-top:18px;">
         <div style="flex:1;">
           <div>BABY-JUDO ${dotLine(checks.babyJudo)}</div>
           <div style="margin-top:4px;">JUDO ${dotLine(checks.judo)}</div>
@@ -4042,7 +4042,7 @@ function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
           <div style="margin-top:4px;">${box(checks.aikibudoEnfants, 'AIKIBUDO ENFANTS')}</div>
         </div>
       </div>
-      <div style="margin-top:16px; height:6px; background:#1a1a1a;"></div>
+      <div style="margin-top:18px; height:6px; background:#1a1a1a;"></div>
       ${field('NOM', nom)}
       ${field('Prénom', prenom)}
       ${field('Adresse', fields.address)}
@@ -4062,9 +4062,9 @@ function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
         : field('Tel N°1 pour Groupe WhatsApp', `${fields.whatsappPhone1||''}${fields.whatsappPhone1Role?' — lien de parenté : '+fields.whatsappPhone1Role:''}`)
       }
       ${!isMajor ? field('Tel N°2 pour Groupe WhatsApp', `${fields.whatsappPhone2||''}${fields.whatsappPhone2Role?' — lien de parenté : '+fields.whatsappPhone2Role:''}`) : ''}
-      <div style="margin:16px 0; text-align:center; letter-spacing:2px; color:#999; font-size:11px;">☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺</div>
-      <div style="background:#c9c9c9; text-align:center; font-weight:700; font-style:italic; padding:4px 0; border:1px solid #999;">PARTIE RESERVEE AU CLUB</div>
-      <div style="border:1px solid #999; padding:10px 14px; margin-top:0;">
+      <div style="margin:18px 0; text-align:center; letter-spacing:2px; color:#999; font-size:12px;">☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺☺</div>
+      <div style="background:#c9c9c9; text-align:center; font-weight:700; font-style:italic; padding:6px 0; border:1px solid #999;">PARTIE RESERVEE AU CLUB</div>
+      <div style="border:1px solid #999; padding:12px 16px; margin-top:0;">
         <div style="display:flex; align-items:flex-end; white-space:nowrap;">
           <strong style="font-style:italic; flex-shrink:0;">INSCRIPTION</strong>
           <span style="font-style:italic; flex-shrink:0; margin-left:4px;">faite par :</span>
@@ -4094,10 +4094,10 @@ function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
         </div>
         <div style="margin-top:6px; font-size:12px;">TOTAL : ………………………………………………….</div>
       </div>
-      <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:16px;">
-        <div style="font-weight:700; font-style:italic; font-size:12.5px; max-width:420px;">☑ Je reconnais avoir pris connaissance du règlement intérieur et en accepte les termes, affiché au club.</div>
+      <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:18px;">
+        <div style="font-weight:700; font-style:italic; font-size:13.5px; max-width:420px;">☑ Je reconnais avoir pris connaissance du règlement intérieur et en accepte les termes, affiché au club.</div>
         <div style="text-align:right;">
-          <div style="font-style:italic; font-size:12.5px;">Signature.</div>
+          <div style="font-style:italic; font-size:13.5px;">Signature.</div>
           ${sigDataUrl ? `<div style="font-size:10.5px; color:#666; margin:2px 0 4px;">Signé électroniquement le ${dateLabel}</div>` : ''}
           ${sigDataUrl ? `<img src="${sigDataUrl}" style="height:60px; max-width:220px; display:block; margin-left:auto;">` : ''}
         </div>
@@ -6864,6 +6864,13 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
       m.groupId = targetGroup.id;
       m.pendingGroupId = null;
       m.linkedMemberId = null;
+      // Stat "Renouvellement" du rapport annuel AG (demande de Thomas du 01/09/2026) : marque cette
+      // fiche comme un renouvellement de licence pour LA saison en cours, exactement au moment où
+      // elle passe de « Licence à prendre » à un vrai cours — voir computeAGReportData(). Comme une
+      // nouvelle fiche (nouvel id) est créée à chaque saison pour un renouvellement (voir
+      // createPendingLicenseRecord), ce drapeau ne peut jamais devenir périmé : la fiche de la saison
+      // précédente est archivée juste au-dessus et ne compte donc plus dans l'effectif actif.
+      m.renewedThisSeason = true;
       // Bug remonté par Thomas le 28/08/2026 : une fois "validée" dans son vrai cours, la fiche
       // gardait forNextSeason=true jusqu'au VRAI roulement de saison (archiveCurrentSeason, une
       // action bien plus lourde, en général faite bien plus tard) — or renderGroupsTab() n'affiche
@@ -10949,7 +10956,7 @@ function importSingleList(wb, groupId){
       else skipped++;
       return;
     }
-    data.members.push({ id: uid(), groupId, name: uppercaseLastNameInFullName(name) });
+    data.members.push({ id: uid(), groupId, name: uppercaseLastNameInFullName(name), createdAt: new Date().toISOString() });
     added++;
   });
   saveData(); renderAll();
@@ -11138,7 +11145,7 @@ function importWorkbookMultiSheet(wb){
         continue;
       }
 
-      const member = { id: uid(), groupId: group.id, name: fullName, birthDate };
+      const member = { id: uid(), groupId: group.id, name: fullName, birthDate, createdAt: new Date().toISOString() };
       if(mail) member.email = mail;
       if(belt) member.belt = belt;
       if(gender) member.gender = gender;
@@ -11329,7 +11336,7 @@ function openImportConflictOverlay(fieldConflicts, groupChangeConflicts, onDone)
         }
       } else if(action==='add'){
         const rd = c.rowData;
-        const newMember = { id: uid(), groupId: c.toGroupId, name: rd.name, birthDate: rd.birthDate };
+        const newMember = { id: uid(), groupId: c.toGroupId, name: rd.name, birthDate: rd.birthDate, createdAt: new Date().toISOString() };
         if(rd.email) newMember.email = rd.email;
         if(rd.belt) newMember.belt = rd.belt;
         if(rd.gender) newMember.gender = rd.gender;
@@ -11981,7 +11988,7 @@ function openQuickAddMemberOverlay(defaultGroupId){
     const nom = values.nom.trim();
     const name = formatMemberFullName(prenom, nom);
     if(!name){ showToast('Nom ou prénom manquant'); return; }
-    const member = { id: uid(), groupId, name };
+    const member = { id: uid(), groupId, name, createdAt: new Date().toISOString() };
     if(values.birthDate) member.birthDate = values.birthDate;
     if(values.gender) member.gender = values.gender;
     const email = normalizeEmail(values.email); if(email) member.email = email;
@@ -19452,12 +19459,33 @@ function computeAGReportData(){
   const stagesCount = seasonStages.length;
   const stagesParticipations = seasonStages.reduce((a,s)=>a+((s.participants||[]).length),0);
 
+  // Renouvellement / nouveaux adhérents (demande de Thomas du 01/09/2026) : deux mouvements bien
+  // distincts, marqués chacun à leur propre point de vérité plutôt que déduits après coup —
+  // - renewedThisSeason est posé une seule fois, exactement quand une fiche « Licence à prendre »
+  //   est validée dans un vrai cours (voir data-action="validate-license"). Comme un renouvellement
+  //   crée toujours une fiche neuve (nouvel id, voir createPendingLicenseRecord), ce drapeau ne peut
+  //   jamais dater d'une saison antérieure : la fiche de la saison précédente a été archivée au même
+  //   moment et ne fait plus partie d'activeMembers.
+  // - createdAt est posé à chaque création d'une fiche VRAIMENT nouvelle (ajout rapide, import Excel/
+  //   liste simple, résolution de conflit d'import) — jamais sur une fiche jumelle de renouvellement
+  //   (createPendingLicenseRecord) ni sur une fiche liée à une personne déjà existante
+  //   (createLinkedMemberRecord, ex: Comité). Un nouvel adhérent est donc une fiche créée DURANT la
+  //   saison en cours et qui n'est pas elle-même un renouvellement.
+  // Limite assumée : les élèves qui restent sur la même fiche d'une saison à l'autre SANS jamais
+  // passer par « Préparer la saison » ne sont ni comptés en renouvellement ni en nouvel adhérent
+  // (aucun mouvement détectable pour eux) — cas rare vu que ce parcours est le circuit normal du
+  // club. Ces deux compteurs ne peuvent aussi refléter que les mouvements survenus APRÈS la mise en
+  // place de ce suivi (pas de rattrapage rétroactif possible, faute d'historique).
+  const renewalsCount = activeMembers.filter(m=>m.renewedThisSeason).length;
+  const newAdherentsCount = activeMembers.filter(m=>!m.renewedThisSeason && m.createdAt && inSchoolYear(m.createdAt.slice(0,10), seasonYear)).length;
+
   return {
     seasonYear, totalMembers, byGroup, genderF, genderM, genderNR, byCategory, byBelt,
     mennecyMajeurs, mennecyMineurs, exterieurMajeurs, exterieurMineurs,
     byGroupAttendance, avgAttendancePct, totalSessions,
     competitionsCount, totalParticipations, gold, silver, bronze,
-    stagesCount, stagesParticipations
+    stagesCount, stagesParticipations,
+    renewalsCount, newAdherentsCount
   };
 }
 // Découpe le rapport annuel en blocs indivisibles (titre de section + chiffres ensemble, chaque
@@ -19484,6 +19512,10 @@ function buildAGReportBlocks(r, logoSrc){
       <div class="box"><div class="n">${r.totalMembers}</div><div class="l">Licenciés</div></div>
       <div class="box"><div class="n">${data.groups.length}</div><div class="l">Cours</div></div>
       <div class="box"><div class="n">${r.genderF}F / ${r.genderM}G</div><div class="l">Répartition</div></div>
+    </div>
+    <div class="recap-summary" style="margin-top:8px;">
+      <div class="box"><div class="n">${r.renewalsCount}</div><div class="l">Renouvellements</div></div>
+      <div class="box"><div class="n">${r.newAdherentsCount}</div><div class="l">Nouveaux adhérents</div></div>
     </div>`);
 
   blocks.push(`
