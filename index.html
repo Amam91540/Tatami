@@ -1419,10 +1419,13 @@ function stripBeltForNoBeltCourses(){
   let changed = false;
   data.members.forEach(m=>{
     if(m.belt && memberInNoBeltCourse(m)){ m.belt = ''; changed = true; }
-    // Catégorie de poids : même raison que la ceinture ci-dessus (demande de Thomas du 29/08/2026)
-    // — un élève de Taiso ne concourt jamais par catégorie de poids, donc une valeur déjà enregistrée
-    // (typiquement héritée d'un changement de cours vers Taiso) n'a plus lieu d'être conservée.
-    if(m.weightCategory && memberInNoBeltCourse(m)){ m.weightCategory = ''; changed = true; }
+    // Catégorie de poids : même raison que la ceinture ci-dessus (demande de Thomas du 29/08/2026),
+    // étendue le 01/09/2026 pour couvrir TOUTE inéligibilité (pas seulement Taiso) — Thomas a demandé
+    // explicitement de retirer ce champ pour tous les enfants nés en 2017 et après (Poussins et
+    // tranches plus jeunes, sans grille de poids officielle, voir WEIGHT_CATEGORIES_BY_BAND). Une
+    // valeur déjà enregistrée (import, changement de cours, saisie avant ce garde-fou...) n'a alors
+    // plus lieu d'être conservée. memberWeightCategoryEligible() couvre déjà Taiso ET l'âge.
+    if(m.weightCategory && !memberWeightCategoryEligible(m)){ m.weightCategory = ''; changed = true; }
   });
   if(changed) saveData();
 }
@@ -14462,7 +14465,7 @@ function renderExportCard(){
       const parts = String(m.name||'').trim().split(/\s+/);
       const prenom = parts[0]||'';
       const nom = parts.slice(1).join(' ');
-      return [nom, prenom, m.email||'', m.phone||'', m.gender==='F'?'F':(m.gender==='M'?'M':''), m.birthDate||'', m.address||'', m.postalCode||'', m.city||'', m.belt?beltRankLabel(m.belt):'', m.weightCategory ? `${m.weightCategory} kg` : '', m.medicalCertDate||'', m.licenseNumber||'', m.committeeRole||'', m.note||''];
+      return [nom, prenom, m.email||'', m.phone||'', m.gender==='F'?'F':(m.gender==='M'?'M':''), m.birthDate||'', m.address||'', m.postalCode||'', m.city||'', m.belt?beltRankLabel(m.belt):'', (memberWeightCategoryEligible(m) && m.weightCategory) ? `${m.weightCategory} kg` : '', m.medicalCertDate||'', m.licenseNumber||'', m.committeeRole||'', m.note||''];
     };
     const usedSheetNames = new Set(['Général']);
     const safeSheetName = (name)=>{
@@ -15108,7 +15111,7 @@ function renderConvocTab(){
       <div class="convoc-row"${alreadyInvited?' style="opacity:.6;"':''}>
         <input type="checkbox" data-member="${m.id}" ${checked?'checked':''} ${alreadyInvited?'disabled':''}>
         <div class="info">
-<div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender, m))}</span>` : ''}${m.weightCategory ? `<span class="tag">${escapeHtml(m.weightCategory)} kg</span>` : ''}${alreadyInvited ? `<span class="tag">✓ Déjà convoqué(e)</span>` : ''}</div>          <div class="e">${m.email ? escapeHtml(m.email) : 'Pas d’email renseigné'}</div>
+<div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender, m))}</span>` : ''}${(memberWeightCategoryEligible(m) && m.weightCategory) ? `<span class="tag">${escapeHtml(m.weightCategory)} kg</span>` : ''}${alreadyInvited ? `<span class="tag">✓ Déjà convoqué(e)</span>` : ''}</div>          <div class="e">${m.email ? escapeHtml(m.email) : 'Pas d’email renseigné'}</div>
         </div>
       </div>`;
     }, m=>m)) : ''}
