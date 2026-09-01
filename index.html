@@ -6558,7 +6558,7 @@ function incompleteFieldInputHtml(m, key){
     // niché dans un second <label> (l'appelant, openIncompleteFichesOverlay, enveloppe normalement
     // chaque champ dans <label>${label}...</label> — voir plus bas où ce cas est court-circuité pour
     // les documents, cette fonction fournissant ici son PROPRE <label> complet).
-    return `<label style="display:flex; align-items:center; gap:8px; font-weight:400; grid-column:1 / -1;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${checked?'checked':''}> ${escapeHtml(label)}</label>${memberDocMedicalCertDateHintHtml(m, key)}${memberDocumentViewButtonHtml(m, key, label)}`;
+    return `<label style="display:flex; flex-direction:row; align-items:center; gap:8px; font-weight:400; grid-column:1 / -1;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${checked?'checked':''}> ${escapeHtml(label)}</label>${memberDocMedicalCertDateHintHtml(m, key)}${memberDocumentViewButtonHtml(m, key, label)}`;
   }
   return `<input type="text" data-field="${key}" value="${escapeHtml(val)}">`;
 }
