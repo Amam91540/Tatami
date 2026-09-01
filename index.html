@@ -2362,6 +2362,50 @@ async function uploadFamilyDocumentToServer(memberId, docKey, file, certDate){
     showToast('Impossible d’envoyer le document (connexion ?)');
   }
 }
+// Dépôt d'un document par le club lui-même (admin/secrétaire), directement depuis la fiche élève —
+// demande de Thomas du 01/09/2026 : "ajoute la possibilité d'ajouter une piece jointe ... pour le
+// certificat medical". Voir adminUploadMemberDocument côté Code.gs : contrairement au dépôt famille
+// (bloqué pour ce document précis, raison RGPD), ce chemin vaut validation immédiate — pas d'attente
+// de vérification, puisque c'est déjà le club qui a le document en main. Authentifié par sessionToken
+// (comme viewMemberDocument/rejectMemberDocumentOnServer), jamais un jeton famille.
+async function sendAdminDocumentBase64(memberId, docKey, base64, mimeType){
+  const s = getSession();
+  if(!s || !s.sessionToken) return { error: 'unauthorized' };
+  const res = await fetch(BACKEND_URL, {
+    method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action:'adminUploadMemberDocument', sessionToken: s.sessionToken, memberId, docKey, base64, mimeType })
+  });
+  const json = await res.json();
+  if(json && json.ok){
+    const m = data.members.find(x=>x.id===memberId);
+    if(m){
+      m[docKey+'FileId'] = json.fileId; m[docKey+'UploadedAt'] = json.uploadedAt;
+      // Contrairement à un dépôt famille (toujours en attente), un dépôt admin vaut validation
+      // immédiate côté serveur (voir adminUploadMemberDocument) — on reflète ça tout de suite ici
+      // plutôt que d'attendre une relecture complète.
+      m[docKey] = true; m[docKey+'Rejected'] = false;
+    }
+  }
+  return json;
+}
+async function uploadAdminDocumentToServer(memberId, docKey, file){
+  try{
+    const { base64, mimeType } = await prepareDocumentFileForUpload(file);
+    const json = await sendAdminDocumentBase64(memberId, docKey, base64, mimeType);
+    if(json && json.ok){
+      showToast('Document joint et enregistré sur la fiche.');
+      saveData();
+      // Rafraîchit tout de suite l'overlay ouvert (case cochée + boutons "Voir"/"Refuser" désormais
+      // disponibles) — la case seule ne suffit pas à faire apparaître ces boutons générés côté HTML,
+      // contrairement à toggle-member-document qui coche une case déjà présente à l'écran.
+      renderMemberCotisationOverlay(memberId); renderActiveTab();
+    } else {
+      showToast('Échec de l’envoi : ' + (json && json.error || 'connexion ?'));
+    }
+  }catch(e){
+    showToast('Impossible d’envoyer le document (connexion ?)');
+  }
+}
 
 // Retrait de l'autorisation "Droit à l'image" depuis l'espace famille (voir audit du 09/08/2026) :
 // même circuit d'authentification par requête que les autres actions famille (token + date de
@@ -6406,6 +6450,22 @@ function memberDocumentViewButtonHtml(m, key, label){
   return ` <button type="button" class="ghost" data-action="view-member-document" data-file="${fileId}" data-filename="doc-${escapeHtml(key)}-${escapeHtml(safeName)}" style="padding:2px 8px; font-size:11px;" title="${escapeHtml(label||'')}">📎 Voir${uploadedAt?' — '+fmtDate(uploadedAt):''}</button>
     <button type="button" class="ghost" data-action="reject-member-document" data-member="${t.id}" data-key="${key}" style="padding:2px 8px; font-size:11px; color:var(--clay);" title="Refuser ce document — la famille devra en déposer un nouveau">❌ Refuser</button>`;
 }
+// Bouton "Joindre un fichier" pour le certificat médical, réservé admin/secrétaire (demande de
+// Thomas du 01/09/2026) : le dépôt en ligne par la famille reste désactivé pour ce document
+// précisément (RGPD, voir familyPortalUploadDocument) — le cas normal est que la famille apporte le
+// certificat papier au club, qui le numérise lui-même et l'attache ici, dans "Détail et paiement" à
+// côté de la ligne "Certificat médical / Questionnaire". Visible même une fois déjà "Rendu(e)"
+// (contrairement au dépôt famille) : le club doit pouvoir remplacer le scan à tout moment, par
+// exemple pour un certificat renouvelé en cours de saison. Le garde-fou de rôle ici (isAdminSession/
+// isSecretaireSession) n'est qu'un confort d'affichage — le vrai rempart est côté serveur
+// (adminUploadMemberDocument/requireAdminOrSecretaire), qui refuserait de toute façon un prof.
+function memberDocumentAdminUploadButtonHtml(m, key){
+  if(key!=='docMedicalCert' || !(isAdminSession() || isSecretaireSession())) return '';
+  const t = memberDocOwner(m, key);
+  const hasFile = !!t[key+'FileId'];
+  return ` <button type="button" class="ghost" data-action="admin-upload-member-document" data-member="${t.id}" data-key="${key}" style="padding:2px 8px; font-size:11px;" title="Joindre un scan ou une photo du certificat médical">📎 ${hasFile?'Remplacer le fichier':'Joindre un fichier'}</button>
+    <input type="file" accept="image/*,.pdf" data-admin-doc-input="${key}" data-member="${t.id}" style="display:none;">`;
+}
 // Construit un lien "mailto:" pré-rempli à destination de la famille suite au refus d'un document
 // (demande de Thomas, 19/08/2026) : indique que le fichier a été supprimé, et laisse une ligne VIDE
 // après "Motif du refus :" pour que l'admin tape le motif à la main avant d'envoyer. On utilise
@@ -6469,6 +6529,23 @@ document.addEventListener('click', e=>{
   if(btn){ viewMemberDocument(btn.dataset.file, btn.dataset.filename); return; }
   const rejectBtn = e.target.closest('[data-action="reject-member-document"]');
   if(rejectBtn){ rejectMemberDocumentOnServer(rejectBtn.dataset.member, rejectBtn.dataset.key); return; }
+  // "📎 Joindre un fichier" (voir memberDocumentAdminUploadButtonHtml) : le bouton se contente de
+  // déclencher le sélecteur de fichier natif de l'<input type="file"> caché juste à côté — l'envoi
+  // réel se fait au 'change' de cet input, ci-dessous.
+  const uploadBtn = e.target.closest('[data-action="admin-upload-member-document"]');
+  if(uploadBtn){
+    const input = [...document.querySelectorAll('[data-admin-doc-input]')].find(i=> i.dataset.adminDocInput===uploadBtn.dataset.key && i.dataset.member===uploadBtn.dataset.member);
+    if(input) input.click();
+    return;
+  }
+});
+document.addEventListener('change', e=>{
+  const input = e.target.closest('[data-admin-doc-input]');
+  if(!input) return;
+  const file = input.files && input.files[0];
+  if(!file) return;
+  uploadAdminDocumentToServer(input.dataset.member, input.dataset.adminDocInput, file);
+  input.value = '';
 });
 /* ---------------- FICHES INCOMPLÈTES (PDF récap) ---------------- */
 const INCOMPLETE_FICHE_FIELDS = [
@@ -9102,7 +9179,7 @@ function renderMemberCotisationOverlay(memberId){
           <label style="display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; cursor:pointer;">
             <input type="checkbox" data-action="toggle-member-document" data-key="${it.key}" ${checked?'checked':''}>
             ${escapeHtml(it.label)}
-          </label>${memberDocMedicalCertDateHintHtml(m, it.key)}${memberDocumentViewButtonHtml(m, it.key, it.label)}`;
+          </label>${memberDocMedicalCertDateHintHtml(m, it.key)}${memberDocumentViewButtonHtml(m, it.key, it.label)}${memberDocumentAdminUploadButtonHtml(m, it.key)}`;
         }).join('')}
       </div>
       ${fam.length>1 ? `<p style="font-size:12px; color:var(--ink-dim); margin:-6px 0 10px;">Famille : ${[...fam].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).map(fm=>escapeHtml(fm.name)).join(', ')}${famRemainingTotal>0.01 ? ` · reste dû famille : <strong style="color:var(--clay);">${fmtEuro(famRemainingTotal)}</strong>` : ' · famille soldée'}</p>` : ''}
