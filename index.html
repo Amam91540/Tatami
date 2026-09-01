@@ -6538,12 +6538,27 @@ function incompleteFieldInputHtml(m, key){
     </select>`;
   if(key==='email') return `<input type="email" data-field="email" value="${escapeHtml(val)}">`;
   if(key==='phone') return `<input type="tel" data-field="phone" value="${escapeHtml(val)}">`;
+  // Demande de Thomas du 30/08/2026 : "actuellement c'est un champ libre" — la catégorie de poids
+  // suit désormais la même liste déroulante (dépendant de la catégorie d'âge/sexe) que la fiche
+  // complète et l'ajout rapide, au lieu d'un texte libre où n'importe quoi pouvait être tapé.
+  // extraAttrs="data-field=..." : nécessaire pour que saveInputs() (boucle générique sur
+  // `[data-field]`, voir plus bas) retrouve ce select — buildMemberWeightCategorySelectHtml pose par
+  // défaut seulement data-action="edit-weight-category" (utilisé par la fiche/l'ajout rapide, câblés
+  // différemment, voir leurs écouteurs dédiés).
+  if(key==='weightCategory') return buildMemberWeightCategorySelectHtml(m, 'data-field="weightCategory"');
   if(MEMBER_DOCUMENT_ITEMS.some(it=>it.key===key)){
     const label = (MEMBER_DOCUMENT_ITEMS.find(it=>it.key===key)||{}).label || key;
     // memberDocOwner : la case doit refléter l'état de la fiche qui porte RÉELLEMENT le document
     // (voir resolveDocumentTargetMember) — jamais celui de `m` si c'est en fait sa jumelle qui l'a reçu.
     const checked = !!memberDocOwner(m, key)[key];
-    return `<label style="display:flex; align-items:center; gap:6px; font-weight:400;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${checked?'checked':''}> Rendu(e)</label>${memberDocMedicalCertDateHintHtml(m, key)}${memberDocumentViewButtonHtml(m, key, label)}`;
+    // Demande de Thomas du 30/08/2026 : "enleve 'Rendu' sur les documents car ca prend vraiment trop
+    // de place, liste juste les documents a rendre... avec une croix a cocher si c'est ok" — un seul
+    // <label> compact (coche + nom du document, comme le fait déjà le bloc "Documents à rendre" de la
+    // fiche cotisation, voir renderMemberCotisationOverlay) au lieu du texte "Rendu(e)" redondant
+    // niché dans un second <label> (l'appelant, openIncompleteFichesOverlay, enveloppe normalement
+    // chaque champ dans <label>${label}...</label> — voir plus bas où ce cas est court-circuité pour
+    // les documents, cette fonction fournissant ici son PROPRE <label> complet).
+    return `<label style="display:flex; align-items:center; gap:8px; font-weight:400; grid-column:1 / -1;"><input type="checkbox" data-field="${key}" data-boolfield="1" ${checked?'checked':''}> ${escapeHtml(label)}</label>${memberDocMedicalCertDateHintHtml(m, key)}${memberDocumentViewButtonHtml(m, key, label)}`;
   }
   return `<input type="text" data-field="${key}" value="${escapeHtml(val)}">`;
 }
@@ -6573,6 +6588,10 @@ function openIncompleteFichesOverlay(){
       <div class="ifo-fields">
         ${missing.map(key=>{
           const label = INCOMPLETE_FICHE_FIELDS.find(f=>f.key===key).label;
+          // Les documents à rendre fournissent leur propre <label> compact (coche + nom du document,
+          // voir incompleteFieldInputHtml) — les envelopper une seconde fois ici imbriquerait un
+          // <label> dans un <label> et réafficherait le nom du document en double.
+          if(MEMBER_DOCUMENT_ITEMS.some(it=>it.key===key)) return incompleteFieldInputHtml(m, key);
           return `<label>${escapeHtml(label)}${incompleteFieldInputHtml(m, key)}</label>`;
         }).join('')}
       </div>
@@ -16402,11 +16421,11 @@ function memberWeightCategoryEligible(m){
   if(memberInNoBeltCourse(m)) return false;
   return !!weightOptionsForBandLabel(groupedCategoryLabel(m.birthDate, m));
 }
-function buildMemberWeightCategorySelectHtml(m){
+function buildMemberWeightCategorySelectHtml(m, extraAttrs){
   const cats = weightOptionsForBandLabel(groupedCategoryLabel(m.birthDate, m));
   if(!cats) return '';
   const currentValue = m.weightCategory||'';
-  return `<select data-action="edit-weight-category" data-id="${m.id}" style="flex:1;">
+  return `<select data-action="edit-weight-category" data-id="${m.id}" ${extraAttrs||''} style="flex:1;">
     <option value="">Non renseignée</option>
     <optgroup label="Garçons">${cats.g.map(w=>`<option value="${w}" ${currentValue===w?'selected':''}>${w} kg</option>`).join('')}</optgroup>
     <optgroup label="Filles">${cats.f.map(w=>`<option value="${w}" ${currentValue===w?'selected':''}>${w} kg</option>`).join('')}</optgroup>
