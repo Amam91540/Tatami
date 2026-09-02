@@ -5762,7 +5762,7 @@ function renderGroupsTab(){
                 <div style="margin-top:8px;"><span class="field-label">Sexe</span><div>${m.gender ? (m.gender==='F'?'Fille':'Garçon') : '—'}</div></div>
                 ${groupHasNoBelt(curGroup) ? '' : `<div style="margin-top:8px;"><span class="field-label">Ceinture</span><div style="display:flex; align-items:center; gap:8px;">${m.belt ? beltSwatchHtml(m.belt, true) : ''}<span>${m.belt ? escapeHtml(beltLabelFor(m.belt)) : 'Non renseignée'}</span></div></div>`}
                 ${memberWeightCategoryEligible(m) ? `<div style="margin-top:8px;"><span class="field-label">Catégorie de poids</span><div>${m.weightCategory ? escapeHtml(m.weightCategory)+' kg' : 'Non renseignée'}</div></div>` : ''}
-                <div style="margin-top:8px;"><span class="field-label">Email (pour convocations)</span><div>${m.email ? escapeHtml(m.email) : '—'}</div></div>
+                <div style="margin-top:8px;"><span class="field-label">Email (pour convocations)</span><div>${m.email ? `<a href="mailto:${escapeHtml(m.email)}" onclick="event.stopPropagation();" style="color:inherit; text-decoration:underline dotted; text-decoration-color:var(--ink-dim);" title="Écrire un email à ${escapeHtml(m.email)}">✉️ ${escapeHtml(m.email)}</a>` : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Téléphone</span><div>${m.phone ? escapeHtml(m.phone) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Adresse</span><div>${(m.address || m.postalCode || m.city) ? escapeHtml([m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Lieu de naissance</span><div>${m.birthPlace ? escapeHtml(m.birthPlace) : '—'}</div></div>
@@ -13606,8 +13606,19 @@ const BORDEREAU_SECTIONS = ['Judo', 'Karate', 'Aikibudo', 'Kobudo', 'Taiso'];
 function memberBordereauSection(m){
   if(!m) return null;
   const group = data.groups.find(g=>g.id===m.groupId);
-  if(!group) return null;
-  const disc = courseToDiscipline(group.name);
+  let disc = group ? courseToDiscipline(group.name) : null;
+  // Fiche encore dans « Licence à prendre » (groupe d'attente en début de saison, voir
+  // createPendingLicenseRecord) : son groupId ne correspond à aucune discipline le temps que la
+  // licence soit validée, mais le vrai cours (donc la vraie section bordereau) est déjà connu via
+  // pendingGroupId. Bug remonté par Thomas le 01/09/2026 : un paiement (chèque kimono, uniquement
+  // "Divers") saisi sur une élève encore en « Licence à prendre » ne rejoignait alors AUCUN
+  // bordereau — ni "en attente", ni dans l'historique — puisque memberBordereauSection renvoyait
+  // null. Ce repli sur pendingGroupId corrige aussi bien les nouveaux paiements que les paiements
+  // déjà orphelins (voir autoAssignAllPendingPaymentsToBordereaux, appelée à chaque chargement).
+  if(!disc && m.pendingGroupId){
+    const pendingGroup = data.groups.find(g=>g.id===m.pendingGroupId);
+    disc = pendingGroup ? courseToDiscipline(pendingGroup.name) : null;
+  }
   if(!disc) return null;
   if(disc==='Baby Judo') return 'Judo';
   if(disc==='Baby Karate') return 'Karate';
