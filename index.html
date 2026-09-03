@@ -7248,8 +7248,20 @@ document.getElementById('groups-list').addEventListener('change', e=>{
         }
       }
       saveData();
+      // Demande de Thomas (03/09/2026) : changer un élève de cours (avant même de cliquer sur
+      // "Terminé") ne doit plus le faire disparaître de l'écran — la fiche restait bien dépliée en
+      // mémoire (ui.memberFicheExpanded/memberFicheEditing sont indexées par élève, pas par cours),
+      // mais le NOUVEAU cours pouvait très bien être replié (ui.groupsExpanded), ce qui la rendait
+      // invisible tant qu'on n'allait pas la rouvrir à la main. On force donc l'ouverture du cours de
+      // destination avant de re-rendre, puis on scrolle jusqu'à la fiche pour rester dessus.
+      ui.groupsExpanded[groupSel.value] = true;
       renderGroupsTab();
       showToast(newGroup ? `Déplacé(e) vers « ${newGroup.name} »` : 'Cours mis à jour');
+      setTimeout(()=>{
+        const toggleEl = document.querySelector(`[data-action="toggle-member-fiche"][data-id="${m.id}"]`);
+        const chip = toggleEl ? toggleEl.closest('.member-chip') : null;
+        if(chip) chip.scrollIntoView({ behavior:'smooth', block:'center' });
+      }, 60);
     }
     return;
   }
