@@ -19621,11 +19621,12 @@ function buildAGReportBlocks(r, logoSrc){
       <div class="box"><div class="n">${r.totalMembers}</div><div class="l">Licenciés</div></div>
       <div class="box"><div class="n">${data.groups.length}</div><div class="l">Cours</div></div>
       <div class="box"><div class="n">${r.genderF}F / ${r.genderM}G</div><div class="l">Répartition</div></div>
-    </div>
-    <div class="recap-summary" style="margin-top:8px;">
-      <div class="box"><div class="n">${r.renewalsCount}</div><div class="l">Renouvellements</div></div>
-      <div class="box"><div class="n">${r.newAdherentsCount}</div><div class="l">Nouveaux adhérents</div></div>
     </div>`);
+  // Bloc Renouvellements / Nouveaux adhérents retiré du PDF à la demande de Thomas (03/09/2026) :
+  // trop de fiches validées en une fois cette saison faussent le compte (voir bug de persistance
+  // createdAt/renewedThisSeason corrigé le même jour) — il ne s'en sert pas cette année. Le calcul
+  // (r.renewalsCount / r.newAdherentsCount, voir computeAGReportData ci-dessus) reste en place et
+  // fiable pour les saisons suivantes ; il suffit de réinsérer ce bloc pour le faire réapparaître.
 
   blocks.push(`
     <table class="recap-table">
