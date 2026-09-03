@@ -9543,7 +9543,7 @@ function buildAttestationHtml(m, fee, logoSrc, refDate){
         <div>Fait à MENNECY, le ${fmtDateLong(refDate)}</div>
         <div style="margin-top:6px;">Trésorière de « l'AMAM »</div>
         <div style="margin-top:20px;">Christel BARREZ</div>
-        <img src="${AMAM_STAMP_B64}" alt="Tampon AMAM" style="width:140px; height:auto; display:inline-block; margin-top:10px;">
+        <img src="${AMAM_STAMP_B64}" alt="Tampon AMAM" style="width:190px; height:auto; display:inline-block; margin-top:10px;">
       </div>
     </div>`;
 }
@@ -9679,7 +9679,7 @@ function buildChequeSportHtml(m, feeAmount, caf, passSport, inscriptionDate, sea
       ${field("Date d'inscription", fmtDateLong(inscriptionDate) || '—', 200, 14)}
 
       <div style="margin-top:40px;">Signature et cachet de l'association</div>
-      <img src="${AMAM_STAMP_B64}" alt="Tampon AMAM" style="width:140px; height:auto; display:block; margin-top:10px;">
+      <img src="${AMAM_STAMP_B64}" alt="Tampon AMAM" style="width:190px; height:auto; display:block; margin-top:10px;">
     </div>`;
 }
 async function generateChequeSportAttestationPdf(){
