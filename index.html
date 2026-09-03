@@ -16538,6 +16538,15 @@ function memberWeightCategoryEligible(m){
   // l'âge de l'élève correspondait par coïncidence à une tranche pondérée définie pour une autre
   // discipline (WEIGHT_CATEGORIES_BY_BAND est indexé par tranche d'âge, pas par cours).
   if(memberInNoBeltCourse(m)) return false;
+  // Aikibudo/Kobudo : demande de Thomas du 03/09/2026, "enleves les categories de poids pour les
+  // cours aikibudo/kobudo" — contrairement à Taiso ci-dessus, la ceinture reste affichée pour ces
+  // deux disciplines (elles ont bien un système de grades), donc on ne peut pas réutiliser
+  // memberInNoBeltCourse/groupHasNoBelt (qui masquerait aussi la ceinture) : on exclut ici
+  // uniquement la catégorie de poids, via courseToDiscipline (même regroupement que pour les
+  // bordereaux/le calendrier fédéral).
+  const group = data.groups.find(g=>g.id===m.groupId);
+  const disc = group ? courseToDiscipline(group.name) : null;
+  if(disc==='Aikibudo' || disc==='Kobudo') return false;
   return !!weightOptionsForBandLabel(groupedCategoryLabel(m.birthDate, m));
 }
 function buildMemberWeightCategorySelectHtml(m, extraAttrs){
