@@ -6754,7 +6754,7 @@ function buildIncompleteFichesPdfRows(groupFilter){
     incomplete.forEach(({m, missing})=>{
       rows.push({
         html: `
-          <td>${escapeHtml(m.name)}</td>
+          <td>${escapeHtml(displayNameOrder(m.name))}</td>
           <td>${escapeHtml(missing.join(', '))}</td>`,
         isDivider:false
       });
@@ -7734,7 +7734,7 @@ function diplomaFontSize(text, base, maxLen){
 // Génère le HTML d'une page de diplôme (image officielle FFJDA + nom / ceinture / date en surimpression,
 // dans une écriture cursive façon "calligraphie" pour un rendu plus élégant qu'une saisie machine).
 function buildDiplomaPageHtml(p){
-  const name = escapeHtml(p.memberName || '');
+  const name = escapeHtml(displayNameOrder(p.memberName || ''));
   const belt = escapeHtml(beltLabelFor(p.belt));
   const date = escapeHtml(fmtDate(p.date));
   const diplomaFont = "'Dancing Script', cursive";
@@ -8855,8 +8855,8 @@ function openPaymentFormOverlay(opts){
         </div>
         ${isCheque ? `
         <div class="row">
-          <div style="flex:1;"><span class="field-label">N° chèque</span><input type="text" id="pf-chequenumber" value="${escapeHtml(draft.chequeNumber||'')}"></div>
           <div style="flex:1;"><span class="field-label">Banque</span><input type="text" id="pf-chequebank" value="${escapeHtml(draft.chequeBank||'')}"></div>
+          <div style="flex:1;"><span class="field-label">N° chèque</span><input type="text" id="pf-chequenumber" value="${escapeHtml(draft.chequeNumber||'')}"></div>
         </div>
         ${editing ? (()=>{
           const st = editing.status;
@@ -9528,7 +9528,7 @@ function buildAttestationHtml(m, fee, logoSrc, refDate){
         </tbody></table>
       </div>
 
-      <div style="margin-top:26px;">${namePrefix} <strong>${escapeHtml(prenom)} ${escapeHtml(nom)}</strong> né le <strong>${fmtDateLong(m.birthDate)}</strong> fait partie de l'Académie Menneçoise d'Arts Martiaux et pratique régulièrement le <strong>${escapeHtml(fee.disciplineLabel)}</strong>.</div>
+      <div style="margin-top:26px;">${namePrefix} <strong>${escapeHtml(nom)} ${escapeHtml(prenom)}</strong> né le <strong>${fmtDateLong(m.birthDate)}</strong> fait partie de l'Académie Menneçoise d'Arts Martiaux et pratique régulièrement le <strong>${escapeHtml(fee.disciplineLabel)}</strong>.</div>
 
       <div style="margin-top:20px;">Un règlement de <strong>${F(fee.total)} €</strong> a été effectué pour la saison ${escapeHtml(seasonLabel)}</div>
 
@@ -9667,7 +9667,7 @@ function buildChequeSportHtml(m, feeAmount, caf, passSport, inscriptionDate, sea
         <div style="margin-top:10px;">Mail : <strong>amam91540@gmail.com</strong> &nbsp;&nbsp;&nbsp;&nbsp; Téléphone : <strong>01.64.57.32.49</strong></div>
       </div>
 
-      ${field("Nom et prénom de l'enfant", escapeHtml(m.name||''), 380)}
+      ${field("Nom et prénom de l'enfant", escapeHtml(displayNameOrder(m.name||'')), 380)}
       <div style="margin-top:20px;">Date de naissance : ${dotted(fmtDateSlash(m.birthDate) || '—', 150)} &nbsp;&nbsp;&nbsp; Age : ${dotted(age!==null?age:'—', 50)} &nbsp;&nbsp;&nbsp; Sexe : ${dotted(genderLabel, 90)}</div>
       ${field("Sport / activité pratiqué(e)", escapeHtml(disciplineLabel), 300)}
       ${field('Catégorie', escapeHtml(categoryLabel), 220)}
@@ -13477,7 +13477,10 @@ async function generateChequesToCashPdf(){
     const headRow = `<tr><th>Nom du chèque</th><th>Adhérent(s)</th><th>Cours</th><th>N° chèque</th><th>Banque</th><th>Période</th><th>Montant</th></tr>`;
     const rowHtml = p=>{
       const chequeOwnerName = paymentChequeFamilyLabel(p);
-      const memberNames = (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?om.name:'?'; }).join(', ');
+      // Nom de famille en premier (demande de Thomas du 04/09/2026, "dans les pdf generés, mets tout
+      // le temps le nom de famille en premiere avant le prenom") — displayNameOrder inverse chaque nom
+      // individuellement avant de les rejoindre (une allocation peut couvrir plusieurs adhérents).
+      const memberNames = (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?displayNameOrder(om.name):'?'; }).join(', ');
       const groupNames = [...new Set((p.allocations||[]).map(a=>{
         const om = data.members.find(x=>x.id===a.memberId);
         const g = om ? data.groups.find(x=>x.id===om.groupId) : null;
@@ -14074,7 +14077,7 @@ function buildBordereauTableHtml(computed, overrides){
     return fam.memberRows.map((r,idx)=>{
       const obsValue = ovObservations[r.member.id]!==undefined ? ovObservations[r.member.id] : r.motifsDefault.join(', ');
       return `<tr>
-        <td>${escapeHtml(r.member.name)}</td>
+        <td>${escapeHtml(displayNameOrder(r.member.name))}</td>
         <td>${fmtEuro(r.inscription)}</td>
         <td>${r.divers>0 ? fmtEuro(r.divers) : '—'}</td>
         ${idx===0 ? mergedCellsHtml : ''}
@@ -14158,7 +14161,7 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
     return fam.memberRows.map((r,idx)=>{
       const obsValue = overrides.observations[r.member.id]!==undefined ? overrides.observations[r.member.id] : r.motifsDefault.join(', ');
       return `<tr>
-        <td>${escapeHtml(r.member.name)}</td>
+        <td>${escapeHtml(displayNameOrder(r.member.name))}</td>
         <td>${fmtEuro(r.inscription)}</td>
         <td>${r.divers>0 ? fmtEuro(r.divers) : '—'}</td>
         ${idx===0 ? mergedCellsHtml : ''}
