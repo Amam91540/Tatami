@@ -2406,20 +2406,9 @@ async function sendFamilyDocumentBase64(memberId, docKey, base64, mimeType, cert
   }
   return json;
 }
-async function uploadFamilyDocumentToServer(memberId, docKey, file, certDate){
-  try{
-    const { base64, mimeType } = await prepareDocumentFileForUpload(file);
-    const json = await sendFamilyDocumentBase64(memberId, docKey, base64, mimeType, certDate);
-    if(json && json.ok){
-      showToast('Document envoyé — en attente de vérification par le club.');
-      renderFamilyPortalTabContent();
-    } else {
-      showToast(familyPortalErrorLabel(json && json.error));
-    }
-  }catch(e){
-    showToast('Impossible d’envoyer le document (connexion ?)');
-  }
-}
+// uploadFamilyDocumentToServer (dépôt manuel d'un scan par la famille) a été retiré le 09/09/2026 —
+// voir le commentaire au-dessus de wireFamilyPortalInscription. sendFamilyDocumentBase64 ci-dessus
+// reste utilisé par la signature électronique (generateAndUploadSignedDocument).
 // Dépôt d'un document par le club lui-même (admin/secrétaire), directement depuis la fiche élève —
 // demande de Thomas du 01/09/2026 : "ajoute la possibilité d'ajouter une piece jointe ... pour le
 // certificat medical". Voir adminUploadMemberDocument côté Code.gs : contrairement au dépôt famille
@@ -3304,12 +3293,15 @@ function familyPortalDocumentStatus(m){
   const missing = MEMBER_DOCUMENT_ITEMS.filter(item=>memberDocumentItemApplies(m, item) && !m[item.key]).map(item=>item.label);
   return { complete: missing.length===0, missing };
 }
-// Dépôt de documents (certificat médical, charte, droit à l'image, feuille d'inscription) — voir
-// demande de Thomas. La cotisation est un paiement, pas un document : jamais de dépôt de fichier
-// pour elle ici. États possibles par document : déjà validé (case cochée par le club — mais toujours
-// téléchargeable et redéposable, voir plus bas), refusé par le club (fileId effacé, drapeau
-// docXxxRejected), envoyé mais pas encore vérifié (fileId présent, case non cochée — VALIDATION
-// MANUELLE, on ne coche jamais tout seul), ou pas encore déposé.
+// Documents à rendre (certificat médical, charte, droit à l'image, feuille d'inscription) — voir
+// demande de Thomas. La cotisation est un paiement, pas un document : jamais de dépôt ici. Depuis le
+// 09/09/2026 (demande de Thomas : "enleve la possibilité de deposer un scan ou un fichier"), le dépôt
+// d'un scan/fichier depuis l'espace famille n'existe plus DU TOUT — seule la signature électronique
+// en ligne (voir SIGNABLE_DOC_KEYS/signControl plus bas) reste proposée, pour la Feuille
+// d'inscription, le Droit à l'image et la Charte. États possibles par document : déjà validé (case
+// cochée par le club — mais toujours téléchargeable, voir plus bas), refusé par le club (fileId
+// effacé, drapeau docXxxRejected), envoyé mais pas encore vérifié (fileId présent, case non cochée —
+// VALIDATION MANUELLE, on ne coche jamais tout seul), ou pas encore déposé.
 function familyPortalDocumentUploadHtml(m){
   // Demande de Thomas (RGPD) : le certificat médical (donnée de santé) ne se dépose plus depuis
   // l'espace famille pour le moment — retiré ici en plus du blocage serveur (familyPortalUploadDocument),
@@ -3367,15 +3359,15 @@ function familyPortalDocumentUploadHtml(m){
         <label style="font-size:12px; color:var(--ink-dim); display:block; margin-bottom:2px;">Date du certificat médical</label>
         <input type="date" data-fp-doc-date="${item.key}" data-member="${m.id}" value="${m.docMedicalCertDate||''}" style="font-size:12px;">
       </div>` : '';
-    // Le dépôt/la signature ne sont proposés que TANT QUE le document n'est pas encore validé côté
-    // club (revirement de Thomas le 07/08/2026 : auparavant toujours proposé même validé, mais ça
+    // La signature n'est proposée que TANT QUE le document n'est pas encore validé côté club
+    // (revirement de Thomas le 07/08/2026 : auparavant toujours proposé même validé, mais ça
     // permettait à une famille de remplacer discrètement un document déjà vérifié sans repasser par
     // le club). Une fois validé, seul le téléchargement (downloadControl ci-dessus) reste possible —
     // toute modification doit désormais passer par une demande directe à Nathalie. Un document
-    // REFUSÉ n'est PAS validé : la famille doit bien pouvoir en redéposer un nouveau dans ce cas.
-    // Signature électronique (voir openSignatureOverlay) : proposée EN PLUS du dépôt de scan classique
-    // (pas en remplacement) pour la Charte et le Droit à l'image — une famille qui préfère toujours
-    // imprimer/signer/scanner sur papier garde cette option.
+    // REFUSÉ n'est PAS validé : la famille doit bien pouvoir signer à nouveau dans ce cas.
+    // Signature électronique (voir openSignatureOverlay) : demande de Thomas du 09/09/2026 — plus
+    // aucun dépôt de scan/fichier depuis l'espace famille, la signature en ligne est désormais le SEUL
+    // moyen de fournir la Charte, le Droit à l'image et la Feuille d'inscription.
     const signControl = SIGNABLE_DOC_KEYS.includes(item.key) ? `
       <div style="margin-top:6px;">
         <button type="button" class="ghost" data-fp-doc-sign="${item.key}" data-member="${m.id}" style="padding:4px 10px; font-size:12px;">✍️ Remplir et signer en ligne</button>
@@ -3385,11 +3377,7 @@ function familyPortalDocumentUploadHtml(m){
         Si vous souhaitez apporter une modification à votre document, merci de vous rapprocher de Nathalie.
       </div>` : `
       ${dateControl}
-      ${signControl}
-      <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
-        <input type="file" accept="image/*,.pdf" data-fp-doc-input="${item.key}" data-member="${m.id}" style="font-size:12px; max-width:100%;">
-        <button class="ghost" data-fp-doc-upload="${item.key}" data-member="${m.id}" style="padding:4px 10px; font-size:12px;">📎 ${fileId?'Redéposer un scan':'Ou déposer un scan'}</button>
-      </div>`;
+      ${signControl}`;
     return `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--surface-2);">
       <div style="font-size:13.5px; font-weight:600;">${escapeHtml(item.label)}</div>
       <div style="font-size:12.5px; margin-top:2px;">${statusHtml}</div>
@@ -3504,41 +3492,13 @@ function familyPortalInscriptionHtml(){
   }).join('');
   return `<div class="fp-card" style="background:var(--surface-2); border-style:dashed;"><div class="fp-empty" style="font-size:13px;">📋 Merci de vérifier ces informations. Utilise le bouton ✏️ Modifier mes informations pour proposer une correction (à valider par le club) — ou contacte Nathalie directement.</div></div>${cards}`;
 }
+// Demande de Thomas du 09/09/2026 : "enleve la possibilité de deposer un scan ou un fichier" — le
+// dépôt de fichier depuis l'espace famille (data-fp-doc-upload/data-fp-doc-input, ex-uploadFamilyDocumentToServer)
+// a été entièrement retiré ici (plus de bouton "Ou déposer un scan" dans familyPortalDocumentUploadHtml).
+// Seule reste la signature électronique en ligne (data-fp-doc-sign, ci-dessous), pour la Feuille
+// d'inscription, le Droit à l'image et la Charte — sendFamilyDocumentBase64 reste utilisé par ce
+// canal (voir generateAndUploadSignedDocument), c'est uniquement le dépôt MANUEL d'un scan qui disparaît.
 function wireFamilyPortalInscription(body){
-  body.querySelectorAll('[data-fp-doc-upload]').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      if(btn.disabled) return; // déjà en cours d'envoi — voir désactivation ci-dessous
-      const key = btn.dataset.fpDocUpload;
-      const memberId = btn.dataset.member;
-      const input = body.querySelector(`[data-fp-doc-input="${key}"][data-member="${memberId}"]`);
-      const file = input && input.files && input.files[0];
-      if(!file){ showToast('Choisis d’abord un fichier.'); return; }
-      let certDate;
-      if(key==='docMedicalCert'){
-        const dateInput = body.querySelector(`[data-fp-doc-date="${key}"][data-member="${memberId}"]`);
-        certDate = dateInput ? dateInput.value : '';
-        if(!certDate){ showToast('Indique la date du certificat médical avant de le déposer.'); return; }
-      }
-      // Demande de Thomas : plusieurs mails de notif partaient pour un seul dépôt (double-clic, ou
-      // clic pendant que la photo est encore en train de se compresser côté navigateur — voir
-      // prepareDocumentFileForUpload, ça peut prendre plusieurs secondes sur un téléphone). On
-      // désactive le bouton + le champ fichier immédiatement, et on affiche un message d'attente le
-      // temps de l'envoi.
-      const originalLabel = btn.textContent;
-      btn.disabled = true; input.disabled = true;
-      btn.textContent = '⏳ Téléchargement du document en cours…';
-      try{
-        await uploadFamilyDocumentToServer(memberId, key, file, certDate);
-      } finally {
-        // En cas de succès, uploadFamilyDocumentToServer a déjà appelé renderFamilyPortalTabContent()
-        // qui remplace ce bouton par un tout nouveau — cette réactivation ne s'applique donc en
-        // pratique qu'en cas d'échec (connexion coupée, document refusé...), pour pouvoir réessayer
-        // sans recharger toute la page. Repasser ces propriétés sur l'ancien bouton (déjà retiré du
-        // DOM après un succès) ne pose pas de souci : il n'est simplement plus affiché.
-        btn.disabled = false; input.disabled = false; btn.textContent = originalLabel;
-      }
-    });
-  });
   body.querySelectorAll('[data-fp-doc-download]').forEach(btn=>{
     btn.addEventListener('click', ()=> downloadFamilyDocument(btn.dataset.member, btn.dataset.fpDocDownload));
   });
@@ -6036,7 +5996,7 @@ function renderGroupsTab(){
 // façon (String(false||'').trim() est vide -> considéré manquant, String(true||'') ne l'est pas).
 const MEMBER_DOCUMENT_ITEMS = [
   { key:'docMedicalCert', label:'Certificat médical / Questionnaire' },
-  { key:'docCharte', label:'Charte (majeurs uniquement)', majorOnly:true },
+  { key:'docCharte', label:'Charte (majeurs et mineurs du cours Judo 4)', majorOnly:true },
   { key:'docDroitImage', label:'Droit à l\'image' },
   { key:'docFeuilleInscription', label:'Feuille d\'inscription' },
   { key:'docCotisation', label:'Cotisation' }
@@ -6077,7 +6037,18 @@ function memberIsMajor(m){
   const age = ageAtDate(m.birthDate, todayStr());
   return age !== null && age >= 18;
 }
+// Demande de Thomas du 09/09/2026 : la Charte, jusqu'ici réservée aux majeurs, concerne désormais
+// aussi les mineurs inscrits au cours "Judo 4" (comparaison insensible aux accents/casse via
+// normalizeCategoryKey, comme courseToDiscipline plus bas — tolère "Judo4"/"Judo  4" etc., mais pas
+// "Judo 40" grâce au \b). Les autres documents (Droit à l'image, Feuille d'inscription) restent
+// ouverts à tous, tous âges/cours confondus — rien ne change pour eux.
+function memberEligibleForCharte(m){
+  if(memberIsMajor(m)) return true;
+  const group = (data.groups||[]).find(g=>g.id===m.groupId);
+  return !!group && /judo\s*4\b/.test(normalizeCategoryKey(group.name));
+}
 function memberDocumentItemApplies(m, item){
+  if(item.key==='docCharte') return memberEligibleForCharte(m);
   return item.majorOnly ? memberIsMajor(m) : true;
 }
 
@@ -6746,13 +6717,14 @@ const INCOMPLETE_FICHE_FIELDS = [
 // doit jamais être comptée comme manquante pour les élèves de ce cours. De même, la catégorie de
 // poids n'existe pas avant Benjamins (voir memberWeightCategoryEligible/WEIGHT_CATEGORIES_BY_BAND) :
 // elle ne doit jamais être comptée comme manquante pour les plus jeunes. Et la Charte ne concerne
-// que les licenciés majeurs (voir memberDocumentItemApplies).
+// que les licenciés majeurs + les mineurs du cours Judo 4 (voir memberDocumentItemApplies, réutilisé
+// ici plutôt que dupliqué pour rester la seule source de vérité).
 function memberMissingFieldKeys(m){
   const noBelt = memberInNoBeltCourse(m);
   return INCOMPLETE_FICHE_FIELDS
     .filter(f=> f.key!=='belt' || !noBelt)
     .filter(f=> f.key!=='weightCategory' || memberWeightCategoryEligible(m))
-    .filter(f=> !f.majorOnly || memberIsMajor(m))
+    .filter(f=> memberDocumentItemApplies(m, f))
     // memberDocOwner : pour les 4 documents déposables (jamais docCotisation, ni les autres champs),
     // on regarde toujours la fiche qui porte RÉELLEMENT le document — voir resolveDocumentTargetMember.
     .filter(f=>!String(memberDocOwner(m, f.key)[f.key]||'').trim())
