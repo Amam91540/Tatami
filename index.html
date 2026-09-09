@@ -4746,6 +4746,13 @@ function applyDataInvariants(trusted){
   // ci-dessous, pour que le paiement libéré par le nettoyage soit immédiatement repris par ce dernier
   // dans la même passe, sans laisser de paiement orphelin le temps d'un rechargement.
   if(dedupeBordereauPaymentAcrossLogs()){ saveData(); }
+  // Voir healOrphanedBordereauPaymentPointers ci-dessous : réaligne payment.bordereauFolio sur la
+  // réalité de bordereauLog[].paymentIds (bug remonté par Thomas le 09/09/2026 : "des fois j'ai des
+  // paiements qui n'apparaissent pas sur le folio"). Placé ici, juste après dedupeBordereauPaymentAcrossLogs
+  // et avant autoAssignAllPendingPaymentsToBordereaux, pour que tout paiement libéré (bordereauFolio remis
+  // à null car introuvable dans AUCUN bordereau) soit immédiatement repris dans la même passe, sans
+  // laisser de paiement orphelin le temps d'un rechargement — même raisonnement que dedupeBordereauPaymentAcrossLogs.
+  if(healOrphanedBordereauPaymentPointers()){ saveData(); }
   if(ensureBordereauFolioCounterConsistency()){ saveData(); }
   if(autoAssignAllPendingPaymentsToBordereaux()){ saveData(); }
   // Mode sombre supprimé : plus de CSS ni d'attribut data-theme à gérer, l'app n'a plus qu'un
@@ -14056,6 +14063,45 @@ function dedupeBordereauPaymentAcrossLogs(){
     shiftBordereauFoliosDownAfter(l.folio);
   });
   return true;
+}
+// Bug remonté par Thomas le 09/09/2026 : "des fois j'ai des paiements qui n'apparaissent pas sur le
+// folio" — un chèque bien encaissé sur un élève bien inscrit dans un cours, invisible sur le folio
+// consulté. Cause identifiée : la SEULE source de vérité pour savoir ce qui apparaît réellement sur un
+// bordereau généré/aperçu est bordereauLog[].paymentIds (voir generateBordereauPdf/regenerateBordereauFromLog
+// ci-dessous, qui filtrent data.payments sur ce tableau) — le champ payment.bordereauFolio n'est qu'un
+// RACCOURCI d'affichage (badge "Folio N°X" dans "Paiements encaissés", voir buildEncaissedBlockHtml) et
+// sert aussi à savoir si un paiement est "déjà rattaché" (autoAssignPaymentToBordereau s'arrête dessus).
+// Or dedupeBordereauPaymentAcrossLogs() ci-dessus — le nettoyage qui retire un paiement dupliqué sur
+// PLUSIEURS bordereaux à la fois (typique de 2 comptes qui encaissent en même temps sur des appareils
+// différents, ex: admin + secrétaire) — ne corrigeait QUE bordereauLog[].paymentIds, jamais ce champ sur
+// le paiement lui-même : un paiement gardé sur le folio le plus ancien (le bon, voir commentaire
+// ci-dessus) pouvait donc continuer à afficher/pointer vers le numéro de l'AUTRE folio (celui dont le
+// doublon venait d'être retiré). Thomas se fiait alors à ce numéro, cherchait le chèque sur CE folio-là,
+// et ne le trouvait pas — alors qu'il était bien présent, juste sur un autre folio que celui indiqué.
+// Filet de sécurité général (pas seulement pour ce cas précis) : repasse chaque paiement déjà "rattaché"
+// en revue et réaligne ce champ sur la réalité de bordereauLog — s'il ne se trouve plus dans AUCUN
+// bordereau du tout, on le libère pour qu'autoAssignAllPendingPaymentsToBordereaux (juste après, voir
+// applyDataInvariants) le rattache tout de suite à un folio réel, plutôt que de le laisser invisible
+// indéfiniment. Idempotent, sans drapeau — même raisonnement que les autres correctifs de ce type.
+function healOrphanedBordereauPaymentPointers(){
+  const logs = data.settings.bordereauLog || [];
+  let changed = false;
+  (data.payments||[]).forEach(p=>{
+    if(!p.bordereauFolio) return;
+    const actualLog = logs.find(l=> (l.paymentIds||[]).includes(p.id));
+    if(actualLog){
+      if(p.bordereauFolio !== actualLog.folio || p.bordereauSection !== actualLog.section){
+        p.bordereauFolio = actualLog.folio;
+        p.bordereauSection = actualLog.section;
+        changed = true;
+      }
+    } else {
+      p.bordereauFolio = null;
+      p.bordereauSection = null;
+      changed = true;
+    }
+  });
+  return changed;
 }
 // Le bordereau papier A.M.A.M compte 20 lignes. Un feuillet ne doit donc jamais dépasser 20 lignes
 // (une ligne par adhérent, peu importe le nombre de paiements qui les concernent).
