@@ -8341,10 +8341,15 @@ function memberFeeDetails(m, familyRank){
   } else if(isBabyCourse && applicable.includes('BABY')){
     tier = 'BABY';
   } else {
+    // On arrive ici seulement si isBabyCourse est FAUX (sinon la branche juste au-dessus aurait déjà
+    // fixé tier='BABY') : le cours suivi n'est PAS un cours Baby, donc le tarif BABY ne doit plus
+    // jamais être sélectionné ici, même si l'élève a encore moins de 6 ans. Bug corrigé le
+    // 09/09/2026 (signalé par Thomas) : un enfant déplacé de "Baby Judo" vers "Cours 1" continuait
+    // à se voir appliquer le tarif Baby tant qu'il avait moins de 6 ans, alors que c'est le cours
+    // suivi qui doit déterminer le tarif (voir le commentaire juste au-dessus), pas seulement l'âge.
     const age = ageAtDate(m.birthDate, todayStr());
     if(age===null) return { error: 'Date de naissance invalide' };
-    if(applicable.includes('BABY') && age<6) tier = 'BABY';
-    else if(applicable.includes('- 15 ANS') && age<15) tier = '- 15 ANS';
+    if(applicable.includes('- 15 ANS') && age<15) tier = '- 15 ANS';
     else tier = applicable.includes('+ 15 ANS') ? '+ 15 ANS' : applicable[applicable.length-1];
   }
   const isMennecy = String(m.city||'').trim().toLowerCase()==='mennecy';
