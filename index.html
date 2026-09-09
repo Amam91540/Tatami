@@ -8881,8 +8881,15 @@ function renderFamilyGroupsCard(){
   const families = Object.values(data.settings.familyGroups||{}).filter(f=>familyMembers(f.id).some(m=>memberMatchesSeasonView(m.id)));
   if(families.length===0){ wrap.innerHTML = ''; return; }
   const addableMembers = cotisationsScopedMembers().filter(m=>!m.familyId).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
+  // Demande de Thomas du 09/09/2026 : dès qu'il y a plusieurs familles validées, il devait faire
+  // défiler toute la carte pour en retrouver une en particulier — on ajoute une barre de recherche
+  // qui filtre les blocs par nom de membre (accents/casse ignorés, voir normalizeForMatch), sans
+  // reconstruire le HTML à chaque frappe (le filtrage se fait en JS pur sur les blocs déjà rendus,
+  // pour ne jamais perdre le focus du champ pendant la saisie — voir le listener 'input' plus bas).
+  if(ui.familyGroupsSearchQuery===undefined) ui.familyGroupsSearchQuery = '';
   const rows = families.map(f=>{
     const members = familyMembers(f.id).filter(m=>memberMatchesSeasonView(m.id)).sort((a,b)=> (a.feeRank||'p1').localeCompare(b.feeRank||'p1'));
+    const searchKey = normalizeForMatch(members.map(m=>m.name).join(' '));
     const membersHtml = members.map(m=>{
       const due = memberRemainingDue(m);
       return `<div style="display:flex; justify-content:space-between; gap:8px; padding:3px 0; font-size:13px;">
@@ -8891,7 +8898,7 @@ function renderFamilyGroupsCard(){
       </div>`;
     }).join('');
     return `
-    <div class="group-block" style="margin-top:10px;">
+    <div class="group-block" data-family-search="${escapeHtml(searchKey)}" style="margin-top:10px;">
       <div style="margin-top:4px;">${membersHtml}</div>
       ${addableMembers.length ? `
       <div class="row" style="margin-top:8px; position:relative;">
@@ -8904,8 +8911,42 @@ function renderFamilyGroupsCard(){
   wrap.innerHTML = `
     <div class="card">
       <h2 style="margin-top:0;">Familles validées</h2>
+      ${families.length>1 ? `
+      <div style="position:relative; margin-bottom:4px;">
+        <input type="text" id="familyGroupsSearch" placeholder="Rechercher une famille par nom…" value="${escapeHtml(ui.familyGroupsSearchQuery)}" autocomplete="off" style="width:100%; padding-right:32px;">
+        ${ui.familyGroupsSearchQuery ? `<button class="ghost icon-btn" id="familyGroupsSearchClear" title="Effacer" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); padding:2px 8px; font-size:12px; border:none; background:transparent;">✕</button>` : ''}
+      </div>
+      <div class="empty" id="familyGroupsSearchEmpty" style="display:none;">Aucune famille ne correspond à cette recherche.</div>` : ''}
       ${rows}
     </div>`;
+  // Filtrage live sans re-rendu (voir commentaire ci-dessus) : on masque/affiche directement les
+  // blocs déjà présents dans le DOM à chaque frappe, et on ne persiste/relit ui.familyGroupsSearchQuery
+  // que pour que la recherche en cours survive à un re-rendu déclenché par une AUTRE action de cette
+  // carte (ajouter un membre, dissoudre une famille...).
+  const searchInput = document.getElementById('familyGroupsSearch');
+  const searchEmpty = document.getElementById('familyGroupsSearchEmpty');
+  const applyFamilyGroupsFilter = ()=>{
+    const q = normalizeForMatch(ui.familyGroupsSearchQuery);
+    let visibleCount = 0;
+    wrap.querySelectorAll('.group-block[data-family-search]').forEach(block=>{
+      const matches = !q || block.dataset.familySearch.includes(q);
+      block.style.display = matches ? '' : 'none';
+      if(matches) visibleCount++;
+    });
+    if(searchEmpty) searchEmpty.style.display = (q && visibleCount===0) ? '' : 'none';
+  };
+  if(searchInput){
+    applyFamilyGroupsFilter();
+    searchInput.addEventListener('input', ()=>{
+      ui.familyGroupsSearchQuery = searchInput.value;
+      applyFamilyGroupsFilter();
+    });
+    const clearBtn = document.getElementById('familyGroupsSearchClear');
+    if(clearBtn) clearBtn.addEventListener('click', ()=>{
+      ui.familyGroupsSearchQuery = '';
+      renderFamilyGroupsCard();
+    });
+  }
   wrap.querySelectorAll('[data-action="fam-add-search"]').forEach(input=>{
     const familyId = input.dataset.family;
     const suggestDiv = wrap.querySelector(`[data-family-suggest="${familyId}"]`);
