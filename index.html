@@ -607,6 +607,13 @@
   .city-autocomplete-item:hover{ background:var(--surface-2); }
   .city-autocomplete-item strong{ font-size:13.5px; }
   .city-autocomplete-item span{ font-size:11.5px; color:var(--ink-dim); }
+  #address-autocomplete-box{ display:none; background:var(--surface); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.18); z-index:200; max-height:260px; overflow:auto; }
+  #address-autocomplete-box.show{ display:block; }
+  .addr-autocomplete-item{ padding:9px 12px; cursor:pointer; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:2px; }
+  .addr-autocomplete-item:last-child{ border-bottom:none; }
+  .addr-autocomplete-item:hover{ background:var(--surface-2); }
+  .addr-autocomplete-item strong{ font-size:13.5px; }
+  .addr-autocomplete-item span{ font-size:11.5px; color:var(--ink-dim); }
 
   .convoc-print-page{
     display:flex; gap:14px; max-width:1000px; margin:0 auto 22px;
@@ -1529,6 +1536,57 @@ function fmtDateRange(start, end){
   if(isNaN(d1.getTime()) || isNaN(d2.getTime())) return fmtDate(start);
   const sameMonth = d1.getMonth()===d2.getMonth() && d1.getFullYear()===d2.getFullYear();
   return sameMonth ? `du ${d1.getDate()} au ${fmtDate(end)}` : `du ${fmtDate(start)} au ${fmtDate(end)}`;
+}
+// Remplace le sélecteur de date natif (<input type="date">) pour la date de naissance, partout où
+// elle est saisie/modifiée (fiche élève, fiches incomplètes après import, ajout rapide) — demande de
+// Thomas du 08/09/2026 : sur un PC Windows (Chrome/Edge), taper l'année dans le champ natif ne rentre
+// pas correctement (même en cliquant précisément sur la case année, même via le pavé numérique) —
+// souci propre au sélecteur natif de ce système, absent sur Mac (qui affiche un mini calendrier sans
+// problème). 3 listes déroulantes Jour/Mois/Année évitent complètement la saisie clavier dans un champ
+// date : rendu identique et fiable sur toutes les plateformes.
+//
+// groupId doit être unique dans la page à un instant donné (ex: "bd-fiche-"+m.id) pour que
+// syncBirthDateGroup (juste en dessous) retrouve sans ambiguïté les 3 <select> et le champ caché
+// associés, même si plusieurs fiches sont en cours d'édition en même temps sur le même écran.
+// hiddenAttrs porte les attributs data-action/data-field déjà attendus par les écouteurs existants
+// (ex: data-action="edit-birthdate" data-id="..." pour la fiche élève, data-field="birthDate" pour les
+// écrans qui lisent la valeur au clic sur "Enregistrer") — ce champ caché est ce que ces écouteurs
+// voient, jamais les 3 <select> eux-mêmes, pour ne rien changer à leur câblage.
+function buildBirthDateSelectsHtml(value, groupId, hiddenAttrs){
+  const iso = String(value||'');
+  const yPart = iso.slice(0,4), mPart = iso.slice(5,7), dPart = iso.slice(8,10);
+  const dayOptions = ['<option value="">Jour</option>'];
+  for(let i=1;i<=31;i++){ const v = String(i).padStart(2,'0'); dayOptions.push(`<option value="${v}" ${dPart===v?'selected':''}>${i}</option>`); }
+  const monthOptions = ['<option value="">Mois</option>'];
+  MONTH_NAMES_FR.forEach((label,i)=>{ const v = String(i+1).padStart(2,'0'); monthOptions.push(`<option value="${v}" ${mPart===v?'selected':''}>${label}</option>`); });
+  const currentYear = new Date().getFullYear();
+  const yearOptions = ['<option value="">Année</option>'];
+  for(let yr=currentYear; yr>=1920; yr--){ const v = String(yr); yearOptions.push(`<option value="${v}" ${yPart===v?'selected':''}>${yr}</option>`); }
+  return `<span class="bd-selects" data-bd-group="${groupId}" style="display:inline-flex; gap:4px; flex-wrap:wrap; width:100%;">
+    <select data-bd-part="day" onchange="syncBirthDateGroup('${groupId}')" style="flex:0.8; min-width:62px;">${dayOptions.join('')}</select>
+    <select data-bd-part="month" onchange="syncBirthDateGroup('${groupId}')" style="flex:1.6; min-width:104px;">${monthOptions.join('')}</select>
+    <select data-bd-part="year" onchange="syncBirthDateGroup('${groupId}')" style="flex:1; min-width:82px;">${yearOptions.join('')}</select>
+  </span><input type="hidden" data-bd-hidden="${groupId}" ${hiddenAttrs||''} value="${escapeHtml(iso)}">`;
+}
+// Recalcule la date ISO à partir des 3 <select> du groupe et la pose sur le champ caché associé — voir
+// buildBirthDateSelectsHtml ci-dessus pour le contexte complet de ce remplacement.
+function syncBirthDateGroup(groupId){
+  const wrap = document.querySelector(`[data-bd-group="${groupId}"]`);
+  const hidden = document.querySelector(`[data-bd-hidden="${groupId}"]`);
+  if(!wrap || !hidden) return;
+  const d = wrap.querySelector('[data-bd-part="day"]').value;
+  const mo = wrap.querySelector('[data-bd-part="month"]').value;
+  const y = wrap.querySelector('[data-bd-part="year"]').value;
+  const hadValue = !!hidden.value;
+  const iso = (d && mo && y) ? `${y}-${mo}-${d}` : '';
+  hidden.value = iso;
+  // Ne déclenche le 'change' (qui commite/réaffiche derrière, voir data-action="edit-birthdate" et les
+  // boucles data-field="birthDate") que si la date est désormais complète, OU qu'elle vient de
+  // repasser incomplète après avoir été complète (vraie action d'effacement) — jamais pour un état
+  // intermédiaire (ex: jour choisi, mois/année pas encore) : un ré-affichage déclenché à ce moment-là
+  // effacerait sinon la sélection déjà faite, puisque m.birthDate resterait vide tant que la date
+  // n'est pas complète.
+  if(iso || hadValue) hidden.dispatchEvent(new Event('change', { bubbles:true }));
 }
 function showToast(msg, duration){
   const t = document.getElementById('toast');
@@ -2828,7 +2886,7 @@ function renderFamilyPortalGate(token, prefillIso, loading){
         <div class="fp-gate-eyebrow">Tatami</div>
         <h1>Espace personnel famille</h1>
         <label>Date de naissance (la vôtre si vous êtes majeur, sinon celle de votre enfant)
-          <input type="date" id="fpGateBirthDate" value="${escapeHtml(prefillIso||'')}">
+          ${buildBirthDateSelectsHtml(prefillIso, 'bd-fpgate', 'id="fpGateBirthDate"')}
         </label>
         <p class="fp-gate-error" id="fpGateError">${loading ? 'Connexion en cours…' : ''}</p>
         <button class="primary" id="fpGateSubmitBtn" style="width:100%;" ${loading?'disabled':''}>Accéder à mon espace</button>
@@ -3027,7 +3085,7 @@ function renderFamilyPortalForgotPasswordGate(token){
           <input type="email" id="fpForgotEmail" autocomplete="email">
         </label>
         <label>Date de naissance
-          <input type="date" id="fpForgotBirthDate">
+          ${buildBirthDateSelectsHtml('', 'bd-fpforgot', 'id="fpForgotBirthDate"')}
         </label>
         <p class="fp-gate-error" id="fpGateError"></p>
         <button class="primary" id="fpForgotSubmitBtn" style="width:100%;">Envoyer</button>
@@ -5823,7 +5881,7 @@ function renderGroupsTab(){
           <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field">
               <span class="field-label">Date de naissance</span>
-              <input type="date" data-action="edit-birthdate" data-id="${m.id}" value="${m.birthDate||''}">
+              ${buildBirthDateSelectsHtml(m.birthDate, 'bd-fiche-'+m.id, `data-action="edit-birthdate" data-id="${m.id}"`)}
             </div>
           </div>
           <div>
@@ -5861,7 +5919,7 @@ function renderGroupsTab(){
           <div class="row" style="width:100%; margin:0; gap:8px;">
             <div class="fiche-field" style="flex:2;">
               <span class="field-label">Adresse</span>
-              <input type="text" data-action="edit-address" data-id="${m.id}" value="${escapeHtml(m.address||'')}">
+              <input type="text" data-action="edit-address" data-id="${m.id}" data-address-autocomplete="1" value="${escapeHtml(m.address||'')}">
             </div>
             <div class="fiche-field" style="flex:1;">
               <span class="field-label">Code postal</span>
@@ -6367,6 +6425,130 @@ document.addEventListener('click', e=>{
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') hideCityAutocompleteBox(); });
 document.addEventListener('scroll', ()=>{ hideCityAutocompleteBox(); }, true);
 
+// ==================================================================================
+// AUTOCOMPLETE ADRESSE COMPLÈTE (rue + code postal + ville) — demande de Thomas du 09/09/2026
+// ==================================================================================
+// Suite logique de l'autocomplete ville ci-dessus : "est-ce que tu penses que tu peux retrouver les
+// adresses completes ? comme pour les villes ? [...] que ca remplisse tout le reste automatiquement
+// (code postal et ville)". Même principe (API officielle gratuite du gouvernement, sans clé, appelée
+// à la demande avec anti-rebond + jeton de course, totalement silencieuse en cas de coupure réseau —
+// la saisie manuelle reste toujours possible), mais ici sur api-adresse.data.gouv.fr (Base Adresse
+// Nationale), qui indexe les adresses complètes et pas seulement les communes.
+// En sélectionnant une suggestion : remplit le champ adresse, ET, quand ils existent dans le MÊME
+// formulaire (voir findAddressAutocompleteSibling), les champs code postal / ville. S'applique à la
+// fiche élève, l'ajout rapide, et les formulaires de compétition/stage — ces derniers n'ayant pas de
+// champ code postal séparé, seuls adresse (+ ville quand présente à proximité) y sont remplis ; rien
+// n'est jamais écrasé de force, l'autocomplete ne se déclenche que sur clic explicite d'une suggestion.
+const ADDRESS_AUTOCOMPLETE_MIN_CHARS = 4;
+const ADDRESS_AUTOCOMPLETE_DEBOUNCE_MS = 300;
+const ADDRESS_AUTOCOMPLETE_API_URL = 'https://api-adresse.data.gouv.fr/search/';
+let addressAutocompleteTimer = null;
+let addressAutocompleteToken = 0;
+let addressAutocompleteActiveInput = null;
+
+// Marqueur explicite (comme data-city-autocomplete plus haut) : seuls les champs adresse volontairement
+// équipés portent data-address-autocomplete="1" — jamais de correspondance générique sur data-field="address"
+// qui pourrait un jour être réutilisé ailleurs pour un usage différent.
+function isAddressAutocompleteInput(el){
+  return !!(el && el.dataset && el.dataset.addressAutocomplete === '1');
+}
+function ensureAddressAutocompleteBox(){
+  let box = document.getElementById('address-autocomplete-box');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'address-autocomplete-box';
+    document.body.appendChild(box);
+  }
+  return box;
+}
+function hideAddressAutocompleteBox(){
+  const box = document.getElementById('address-autocomplete-box');
+  if(box){ box.classList.remove('show'); box.innerHTML = ''; }
+  addressAutocompleteActiveInput = null;
+}
+function positionAddressAutocompleteBox(box, input){
+  const r = input.getBoundingClientRect();
+  box.style.position = 'fixed';
+  box.style.left = r.left + 'px';
+  box.style.top = (r.bottom + 4) + 'px';
+  box.style.width = r.width + 'px';
+}
+async function fetchAddressSuggestions(query){
+  const url = ADDRESS_AUTOCOMPLETE_API_URL + '?q=' + encodeURIComponent(query) + '&limit=6';
+  try{
+    const res = await fetch(url);
+    if(!res.ok) return [];
+    const json = await res.json();
+    return (json && Array.isArray(json.features)) ? json.features : [];
+  }catch(e){
+    // Coupure réseau, api-adresse.data.gouv.fr indisponible... : jamais bloquant, comme pour les villes.
+    return [];
+  }
+}
+function renderAddressAutocompleteBox(input, features){
+  const box = ensureAddressAutocompleteBox();
+  if(!features.length){ hideAddressAutocompleteBox(); return; }
+  addressAutocompleteActiveInput = input;
+  box.innerHTML = features.map(f=>{
+    const p = f.properties || {};
+    const street = p.name || p.label || '';
+    const cp = p.postcode || '';
+    const city = p.city || '';
+    const sub = [cp, city].filter(Boolean).join(' ');
+    return `<div class="addr-autocomplete-item" data-address="${escapeHtml(street)}" data-postcode="${escapeHtml(cp)}" data-city="${escapeHtml(city)}"><strong>${escapeHtml(street)}</strong>${sub?`<span>${escapeHtml(sub)}</span>`:''}</div>`;
+  }).join('');
+  positionAddressAutocompleteBox(box, input);
+  box.classList.add('show');
+}
+function handleAddressAutocompleteInput(input){
+  if(!isAddressAutocompleteInput(input)) return;
+  const query = (input.value||'').trim();
+  if(addressAutocompleteTimer) clearTimeout(addressAutocompleteTimer);
+  if(query.length < ADDRESS_AUTOCOMPLETE_MIN_CHARS){ hideAddressAutocompleteBox(); return; }
+  const myToken = ++addressAutocompleteToken;
+  addressAutocompleteTimer = setTimeout(async ()=>{
+    const features = await fetchAddressSuggestions(query);
+    if(myToken !== addressAutocompleteToken) return;
+    renderAddressAutocompleteBox(input, features);
+  }, ADDRESS_AUTOCOMPLETE_DEBOUNCE_MS);
+}
+// findAddressAutocompleteSibling : cherche, dans le conteneur de formulaire le plus proche du champ
+// adresse (.row sur la fiche élève, .qam-fields sur l'ajout rapide, [data-form] sur les formulaires
+// compétition/stage), un champ code postal ou ville à remplir avec la même suggestion — reconnaît les
+// deux conventions de câblage déjà utilisées dans l'appli (data-action="edit-X" / data-field="X").
+// Renvoie null si ce formulaire n'a pas ce champ (ex: compétitions n'ont pas de code postal séparé) :
+// jamais une erreur bloquante, juste un champ de moins rempli automatiquement.
+function findAddressAutocompleteSibling(input, kind){
+  const container = input.closest('.row') || input.closest('.qam-fields') || input.closest('[data-form]');
+  if(!container) return null;
+  const actionAttr = kind === 'postalCode' ? 'edit-postalcode' : 'edit-city';
+  return container.querySelector(`[data-action="${actionAttr}"]`) || container.querySelector(`[data-field="${kind}"]`);
+}
+function selectAddressAutocompleteSuggestion(input, item){
+  const setVal = (el, val)=>{
+    if(!el) return;
+    el.value = val;
+    if(typeof Event === 'function') el.dispatchEvent(new Event('change', { bubbles:true }));
+    else if(typeof el.dispatchEvent === 'function') el.dispatchEvent({ type:'change' });
+  };
+  setVal(input, item.dataset.address || '');
+  const postalField = findAddressAutocompleteSibling(input, 'postalCode');
+  const cityField = findAddressAutocompleteSibling(input, 'city');
+  if(postalField && item.dataset.postcode) setVal(postalField, item.dataset.postcode);
+  if(cityField && item.dataset.city) setVal(cityField, item.dataset.city);
+  hideAddressAutocompleteBox();
+}
+document.addEventListener('input', e=>{ handleAddressAutocompleteInput(e.target); });
+document.addEventListener('click', e=>{
+  const item = e.target.closest && e.target.closest('.addr-autocomplete-item');
+  if(item && addressAutocompleteActiveInput){ selectAddressAutocompleteSuggestion(addressAutocompleteActiveInput, item); return; }
+  if(addressAutocompleteActiveInput && e.target !== addressAutocompleteActiveInput && !(e.target.closest && e.target.closest('#address-autocomplete-box'))){
+    hideAddressAutocompleteBox();
+  }
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') hideAddressAutocompleteBox(); });
+document.addEventListener('scroll', ()=>{ hideAddressAutocompleteBox(); }, true);
+
 // Demande de Thomas : la famille indique une date en même temps que le dépôt du certificat médical
 // (docMedicalCertDate) mais celle-ci ne devient la date OFFICIELLE (medicalCertDate, utilisée partout
 // ailleurs dans l'appli — export, fiche, etc.) qu'au moment où le club valide en cochant la case
@@ -6604,7 +6786,7 @@ function renderIncompleteFichesSection(){
 // bon type. Un champ laissé vide n'efface jamais une valeur déjà présente sur la fiche.
 function incompleteFieldInputHtml(m, key){
   const val = m[key] || '';
-  if(key==='birthDate') return `<input type="date" data-field="birthDate" value="${val}">`;
+  if(key==='birthDate') return buildBirthDateSelectsHtml(val, 'bd-incomplete-'+m.id, 'data-field="birthDate"');
   if(key==='gender') return `
     <select data-field="gender">
       <option value="" ${!val?'selected':''}>—</option>
@@ -9907,7 +10089,7 @@ function renderImportedCompetitionRow(c){
       </div>
       <div>
         <span class="field-label">Adresse de la manifestation</span>
-        <input type="text" data-field="address" value="${escapeHtml(effectiveCompetitionAddress(c))}" placeholder="Ex. Dojo David Larose - 9 rue Albert Camus">
+        <input type="text" data-field="address" data-address-autocomplete="1" value="${escapeHtml(effectiveCompetitionAddress(c))}" placeholder="Ex. Dojo David Larose - 9 rue Albert Camus">
       </div>
       ${ageCategoryCheckboxesHtml(importedCompetitionAgeCategories(c))}
       ${disciplineSelectHtml(importedCompetitionDiscipline(c))}
@@ -9966,7 +10148,7 @@ function renderManualEventRow(e){
       </div>
       <div>
         <span class="field-label">Adresse (optionnel)</span>
-        <input type="text" data-field="address" value="${escapeHtml(e.address||'')}">
+        <input type="text" data-field="address" data-address-autocomplete="1" value="${escapeHtml(e.address||'')}">
       </div>
       ${ageCategoryCheckboxesHtml(e.ageCategories!==undefined?e.ageCategories:[])}
       ${courseCheckboxesHtml(e.courseIds!==undefined?e.courseIds:[])}
@@ -10024,7 +10206,7 @@ function renderCalendarAddForm(){
     </div>
     <div>
       <span class="field-label">Adresse (optionnel)</span>
-      <input type="text" data-field="address">
+      <input type="text" data-field="address" data-address-autocomplete="1">
     </div>
     ${ageCategoryCheckboxesHtml([])}
     ${courseCheckboxesHtml([])}
@@ -11550,7 +11732,7 @@ function openImportMissingInfoOverlay(candidates, onDone){
       <div class="imo-name">${escapeHtml(m.name)} <span class="imo-group">— ${escapeHtml(groupName)}</span></div>
       <div class="imo-fields">
         <label>Date de naissance
-          <input type="date" data-field="birthDate" value="${m.birthDate||''}">
+          ${buildBirthDateSelectsHtml(m.birthDate, 'bd-import-'+memberId, 'data-field="birthDate"')}
         </label>
         <label>Email
           <input type="email" data-field="email" value="${escapeHtml(m.email||'')}">
@@ -11986,7 +12168,7 @@ function quickAddFieldsHtml(v){
       <input data-field="prenom" value="${escapeHtml(v.prenom)}">
     </label>
     <label>Date de naissance
-      <input type="date" data-field="birthDate" value="${v.birthDate||''}">
+      ${buildBirthDateSelectsHtml(v.birthDate, 'bd-quickadd', 'data-field="birthDate"')}
     </label>
     <label>Sexe
       <select data-field="gender">
@@ -12008,7 +12190,7 @@ function quickAddFieldsHtml(v){
       <input data-field="profession" value="${escapeHtml(v.profession)}">
     </label>` : '<label>&nbsp;</label>'}
     <label class="full">Adresse
-      <input data-field="address" value="${escapeHtml(v.address)}">
+      <input data-field="address" data-address-autocomplete="1" value="${escapeHtml(v.address)}">
     </label>
     <label>Code postal
       <input data-field="postalCode" value="${escapeHtml(v.postalCode)}">
