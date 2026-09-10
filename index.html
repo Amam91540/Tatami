@@ -2164,7 +2164,7 @@ function dedupeSpecialGroup(predicate){
   const canonical = matches[0];
   const extras = matches.slice(1);
   extras.forEach(g=>{
-    data.members.forEach(m=>{ if(m.groupId===g.id) m.groupId = canonical.id; });
+    data.members.forEach(m=>{ if(m.groupId===g.id){ m.groupId = canonical.id; touchGroupState(m); } });
     markDeleted('groups', g.id);
   });
   const extraIds = new Set(extras.map(g=>g.id));
@@ -4720,6 +4720,24 @@ function applyDataInvariants(trusted){
   // rôle, voir sanitizePayloadForRole côté Code.gs).
   const session = getSession();
   if(session && session.role==='admin' && trusted){
+    // Établit une fois pour toutes une "ligne de base" fraîche pour la protection anti-écrasement
+    // groupChangedAt (voir touchGroupState / Code.gs writeAllData) — demande explicite de Thomas le
+    // 10/09/2026 après avoir manuellement recopié dans l'onglet Membre les bonnes fiches récupérées
+    // (« mets a jour la regle, pour que l'affichage actuel (qui a tout archivé) ne recrase pas les
+    // données du fichier »). Sans ce backfill, les fiches tout juste restaurées à la main sur le
+    // classeur n'ont pas de groupChangedAt : la protection ne les reconnaît alors pas comme "plus
+    // fraîches" qu'un onglet périmé, qui pourrait donc encore les écraser. Cette fonction — comme
+    // hasOnceFlag/setOnceFlag le permettent — ne s'exécute qu'UNE SEULE fois pour toujours (jamais à
+    // chaque chargement, contrairement aux backfills idempotents ci-dessous) : sinon, un onglet resté
+    // ouvert qui n'aurait pas encore vu ce correctif se verrait lui aussi "rafraîchi" au premier
+    // chargement suivant, ce qui annulerait complètement la protection pour ses propres données
+    // périmées. Le PREMIER onglet admin rechargé après ce déploiement (donc porteur des fiches déjà
+    // corrigées à la main sur le classeur) fixe la référence pour tout le monde ensuite.
+    if(!hasOnceFlag('groupChangedAtBaseline20260910')){
+      data.members.forEach(m=>touchGroupState(m));
+      setOnceFlag('groupChangedAtBaseline20260910');
+      saveData();
+    }
     if(healOrphanedPreparedSeasonYear()){ saveData(); }
     if(removeHardcodedVeteranCalendarOnce()){ saveData(); }
     if(renameExportGroupToComiteDirecteurOnce()){ saveData(); }
@@ -7127,7 +7145,7 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
       // la supprimer, et on coupe le lien pour arrêter la synchronisation en direct des deux côtés.
       if(m.linkedMemberId){
         const old = data.members.find(x=>x.id===m.linkedMemberId);
-        if(old && old.linkedMemberId===m.id){ old.archived = true; old.archivedAt = new Date().toISOString(); old.linkedMemberId = null; }
+        if(old && old.linkedMemberId===m.id){ old.archived = true; old.archivedAt = new Date().toISOString(); old.linkedMemberId = null; touchGroupState(old); }
       }
       m.groupId = targetGroup.id;
       m.pendingGroupId = null;
@@ -7150,6 +7168,7 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
       // pour cette personne : on lève donc ce drapeau immédiatement, plutôt que d'attendre un
       // roulement de saison complet qui peut arriver des mois plus tard.
       m.forNextSeason = false;
+      touchGroupState(m);
       saveData(); renderActiveTab();
       showToast(`${m.name} inscrit(e) dans « ${targetGroup.name} »`);
     }
@@ -7289,7 +7308,7 @@ function createLinkedMemberRecord(sourceMember, targetGroupId){
     whatsappPhone2: sourceMember.whatsappPhone2||'', whatsappPhone2Role: sourceMember.whatsappPhone2Role||'',
     medicalCertDate: sourceMember.medicalCertDate||null, questionnaireStatus: sourceMember.questionnaireStatus||'',
     licenseNumber: sourceMember.licenseNumber||'',
-    note: sourceMember.note||''
+    note: sourceMember.note||'', groupChangedAt: new Date().toISOString()
   };
   data.members.push(newMember);
   return newMember;
@@ -7320,6 +7339,21 @@ function syncLinkedMember(m){
   other.weightCategory = m.weightCategory;
 }
 
+// Horodatage de fraîcheur pour tout le cluster "état d'inscription" d'une fiche (archived/archivedAt/
+// groupId/pendingGroupId/forNextSeason/linkedMemberId) — correctif du 10/09/2026 (incident remonté par
+// Thomas : des élèves tout juste validés dans leur vrai cours, ET des élèves déjà archivés, sont
+// revenus dans « Licence à prendre », ces derniers même réactivés). Cause : le correctif du 29/08/2026
+// (voir writeAllData côté Code.gs, ARCHIVE_STALENESS_WINDOW_MS) ne protège QUE archived/archivedAt
+// contre un onglet resté ouvert avec une copie périmée de data.members, pas le reste de ce cluster —
+// pourtant modifié ensemble, au même instant, par validate-license/createPendingLicenseRecord/changer
+// de cours/reactivateArchivedMember ci-dessous. Un onglet périmé peut donc, à l'occasion d'une
+// sauvegarde sans rapport (ex: une présence cochée le lendemain), renvoyer toute la ligne dans son état
+// d'avant ces changements. touchGroupState() doit être appelée à CHAQUE mutation de ce cluster (elle
+// est appelée à tous les points identifiés dans ce fichier — voir Code.gs pour la protection
+// symétrique côté serveur, qui compare cet horodatage à celui déjà enregistré sur le classeur).
+function touchGroupState(m){
+  if(m) m.groupChangedAt = new Date().toISOString();
+}
 // Réactive un élève archivé en le rattachant au cours indiqué : on modifie l'élève existant
 // (même id) au lieu d'en créer un nouveau, donc tout son historique (passages de grade,
 // résultats, stages, présences passées) reste automatiquement rattaché.
@@ -7338,16 +7372,24 @@ async function archiveMember(memberId){
   if(!(await confirmDialog(`Archiver la fiche de ${m.name} ? Elle disparaîtra des listes de cours, présences et convocations, mais rien n'est supprimé : historique et résultats restent consultables, et tu pourras la retrouver par son nom (recherche « archivé ») si elle revient.`, { confirmLabel:'Archiver' }))) return;
   m.archived = true;
   m.archivedAt = new Date().toISOString();
+  touchGroupState(m);
   saveData(); renderActiveTab();
   showToast(`${m.name} archivé(e)`);
 }
+// reactivateArchivedMember stamp désormais archivedAt avec un horodatage FRAIS (au lieu de le vider) :
+// une réactivation est, comme un archivage, une transition volontaire du cluster "état d'inscription"
+// — elle doit donc pouvoir être authentifiée comme récente par la même protection côté serveur (voir
+// touchGroupState ci-dessus). Sans risque : memberInactiveSeasonsCount() (RGPD, fiches inactives) est
+// le seul lecteur de archivedAt en dehors de ce cluster, et il n'est jamais appelé pour une fiche
+// active (voir inactiveMembersForRgpdReview, filtré sur m.archived).
 function reactivateArchivedMember(memberId, newGroupId){
   const m = data.members.find(x=>x.id===memberId);
   const newGroup = data.groups.find(x=>x.id===newGroupId);
   if(!m || !newGroup) return;
   m.archived = false;
-  m.archivedAt = null;
+  m.archivedAt = new Date().toISOString();
   m.groupId = newGroupId;
+  touchGroupState(m);
   saveData(); renderActiveTab();
   showToast(`${m.name} retrouvé(e) et rattaché(e) à « ${newGroup.name} » — historique conservé`);
 }
@@ -7429,6 +7471,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     if(m && groupSel.value){
       const newGroup = data.groups.find(x=>x.id===groupSel.value);
       m.groupId = groupSel.value;
+      touchGroupState(m);
       // Si cette fiche a une fiche liée en attente (voir prepareNextSeasonLicenses), on répercute
       // le changement de cours sur son "cours visé" — pas sur son groupId à elle (qui doit rester
       // dans "Licence à prendre" tant qu'elle n'est pas validée).
@@ -7436,6 +7479,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
         const other = data.members.find(x=>x.id===m.linkedMemberId);
         if(other && other.linkedMemberId===m.id && isLicensePendingGroup(data.groups.find(x=>x.id===other.groupId))){
           other.pendingGroupId = groupSel.value;
+          touchGroupState(other);
         }
       }
       saveData();
@@ -11647,6 +11691,7 @@ function openImportConflictOverlay(fieldConflicts, groupChangeConflicts, onDone)
         const m = data.members.find(x=>x.id===c.fromMemberId);
         if(m){
           m.groupId = c.toGroupId;
+          touchGroupState(m);
           // La ceinture (et le certificat/n° de licence) peuvent légitimement différer d'une
           // discipline à l'autre : on les resynchronise sur la ligne importée, comme pour une mise
           // à jour normale — sinon un élève qui change de cours garderait la ceinture de son
@@ -11745,14 +11790,14 @@ function openImportArchivePreview(candidates, courseCandidates){
     candidates.forEach(c=>{
       if(!checkedMemberIds.has(c.memberId)) return;
       const m = data.members.find(x=>x.id===c.memberId);
-      if(m && !m.archived){ m.archived = true; m.archivedAt = archiveTs; archivedCount++; }
+      if(m && !m.archived){ m.archived = true; m.archivedAt = archiveTs; touchGroupState(m); archivedCount++; }
     });
 
     courseCandidates.forEach(c=>{
       if(!checkedCourseIds.has(c.groupId)) return;
       c.memberIds.forEach(mid=>{
         const m = data.members.find(x=>x.id===mid);
-        if(m && !m.archived){ m.archived = true; m.archivedAt = archiveTs; archivedCount++; }
+        if(m && !m.archived){ m.archived = true; m.archivedAt = archiveTs; touchGroupState(m); archivedCount++; }
       });
       markDeleted('groups', c.groupId);
       data.groups = data.groups.filter(g=>g.id!==c.groupId);
@@ -12117,7 +12162,7 @@ async function mergeDuplicateGroups(){
     const canonical = sorted[0];
     const duplicates = sorted.slice(1);
     duplicates.forEach(dup=>{
-      data.members.forEach(m=>{ if(m.groupId===dup.id){ m.groupId = canonical.id; movedMembersCount++; } });
+      data.members.forEach(m=>{ if(m.groupId===dup.id){ m.groupId = canonical.id; touchGroupState(m); movedMembersCount++; } });
       data.sessions.forEach(s=>{ if(s.groupId===dup.id) s.groupId = canonical.id; });
       markDeleted('groups', dup.id);
       data.groups = data.groups.filter(x=>x.id!==dup.id);
@@ -20395,12 +20440,14 @@ async function archiveCurrentSeason(){
         m.archived = true;
         m.archivedAt = new Date().toISOString();
         m.linkedMemberId = null;
+        touchGroupState(m);
         other.linkedMemberId = null;
+        touchGroupState(other);
       }
     }
   });
   data.members.forEach(m=>{
-    if(m.forNextSeason){ m.forNextSeason = false; rolledOverCount++; }
+    if(m.forNextSeason){ m.forNextSeason = false; touchGroupState(m); rolledOverCount++; }
   });
   const newSeasonYear = activeNextSeasonYear();
   data.settings.seasonStartYear = newSeasonYear;
@@ -20851,10 +20898,11 @@ function createPendingLicenseRecord(sourceMember, licenseGroupId){
     docMedicalCert: !!sourceMember.docMedicalCert, docMedicalCertFileId: sourceMember.docMedicalCertFileId||'',
     docMedicalCertUploadedAt: sourceMember.docMedicalCertUploadedAt||'', docMedicalCertDate: sourceMember.docMedicalCertDate||'',
     note: sourceMember.note||'', pendingGroupId: sourceMember.groupId, linkedMemberId: sourceMember.id,
-    forNextSeason: true
+    forNextSeason: true, groupChangedAt: new Date().toISOString()
   };
   data.members.push(pending);
   sourceMember.linkedMemberId = pending.id;
+  touchGroupState(sourceMember);
   return pending;
 }
 // Rattrapage (demande de Thomas) : createPendingLicenseRecord n'a longtemps pas recopié
@@ -20917,6 +20965,12 @@ function backfillValidatedLicenseForNextSeason(){
     const g = data.groups.find(x=>x.id===m.groupId);
     if(g && !isLicensePendingGroup(g)){
       m.forNextSeason = false;
+      // Correctif du 10/09/2026 : ce rattrapage corrige l'état localement, mais sans horodater le
+      // changement, la prochaine sauvegarde d'un AUTRE onglet périmé (voir touchGroupState /
+      // protection Code.gs) pouvait annuler cette correction elle-même en la voyant comme "pas plus
+      // fraîche" que sa propre copie périmée. On la marque donc fraîche au même titre qu'un vrai
+      // changement volontaire.
+      touchGroupState(m);
       changed = true;
     }
   });
