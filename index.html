@@ -1883,7 +1883,7 @@ function ensureKnownRecurrence(){
   data.groups.forEach(g=>{
     if(!(g.recurrence||[]).length){
       const known = knownSchedules[(g.name||'').trim().toLowerCase()];
-      if(known) g.recurrence = known.map(s=>({...s}));
+      if(known){ g.recurrence = known.map(s=>({...s})); touchRow(g); }
     }
   });
 }
@@ -2127,7 +2127,7 @@ function renameExportGroupToComiteDirecteurOnce(){
   const flag = 'exportGroupRenamedToComite_v1';
   if(hasOnceFlag(flag)) return false;
   const g = data.groups.find(x=> normalizeCategoryKey(x.name) === 'export');
-  if(g) g.name = 'Comité directeur';
+  if(g){ g.name = 'Comité directeur'; touchRow(g); }
   setOnceFlag(flag);
   return !!g;
 }
@@ -2147,7 +2147,11 @@ function ensureLicensePendingGroupOnce(){
   const flag = 'licensePendingGroupCreated_v1';
   if(hasOnceFlag(flag)) return false;
   const exists = data.groups.some(g=>isLicensePendingGroup(g));
-  if(!exists) data.groups.push({ id: uid(), name: 'Licence à prendre', recurrence:[] });
+  if(!exists){
+    const licenseGroup = { id: uid(), name: 'Licence à prendre', recurrence:[] };
+    touchRow(licenseGroup);
+    data.groups.push(licenseGroup);
+  }
   setOnceFlag(flag);
   return !exists;
 }
@@ -7354,6 +7358,38 @@ function syncLinkedMember(m){
 function touchGroupState(m){
   if(m) m.groupChangedAt = new Date().toISOString();
 }
+// Version générique de touchGroupState, pour les autres collections où le même risque existe
+// (incident du 10/09/2026, demande explicite de Thomas : "cite moi TOUS les problèmes... une
+// ouverture d'un compte qui n'aurait pas été ouvert depuis longtemps ne doit JAMAIS ecraser aucune
+// donnée ... resultat, convoc, groupe, appel cours"). Audit fait ce jour-là avec Thomas :
+// - convocEvents (convocations + résultats) : DÉJÀ protégé, champ par champ (voir writeAllData côté
+//   Code.gs, section Convocations — orBlank partout, une valeur vide n'écrase jamais une valeur
+//   renseignée). Rien à faire ici.
+// - attendance (présences) : DÉJÀ largement protégé par construction — fusionné par (sessionId,
+//   memberId), donc un appareil qui n'a jamais touché un élève n'envoie tout simplement pas de ligne
+//   pour lui (rien à écraser). Reste un risque plus étroit (un appareil qui a une VIEILLE présence en
+//   mémoire pour ce même élève peut encore la resauvegarder par-dessus une présence plus récente) —
+//   non couvert ici pour l'instant, risque jugé secondaire par rapport aux cas ci-dessous.
+// - sessions (l'appel : validated/guestMemberIds) et payments (paiements/encaissements) : protégés
+//   ce jour-là via touchRow() ci-dessous + protectStaleRows côté Code.gs.
+// - groups/stages/beltPassages/calendarEvents : même famille de risque (écrasement ligne entière par
+//   id) — protégés le même jour (suite, "fais le pour tout"), via touchRow() ci-dessous appliqué à
+//   chaque site de création/modification (nom de cours, validation de stage, diplôme imprimé,
+//   annulation/désactivation d'événement de calendrier).
+// - autres champs d'une fiche élève (téléphone, adresse, ceinture, note...) en dehors du cluster
+//   "état d'inscription" déjà protégé par touchGroupState : protégés le même jour via un 3e cluster
+//   dédié, touchMemberInfo() ci-dessous (voir MEMBER_INFO_CLUSTER_FIELDS côté Code.gs) — séparé de
+//   touchRow/updatedAt pour ne jamais se confondre avec archivedAt/groupChangedAt sur la même fiche.
+function touchRow(obj){
+  if(obj) obj.updatedAt = new Date().toISOString();
+}
+// Cluster "informations générales" d'une fiche élève (voir commentaire ci-dessus + audit du
+// 10/09/2026) : à appeler à CHAQUE édition individuelle d'un champ hors des deux autres clusters déjà
+// protégés (archived/archivedAt via archiveMember/reactivateArchivedMember, groupState via
+// touchGroupState) — téléphone, adresse, email, ceinture, fonction, rattachement familial, tarif...
+function touchMemberInfo(m){
+  if(m) m.infoUpdatedAt = new Date().toISOString();
+}
 // Réactive un élève archivé en le rattachant au cours indiqué : on modifie l'élève existant
 // (même id) au lieu d'en créer un nouveau, donc tout son historique (passages de grade,
 // résultats, stages, présences passées) reste automatiquement rattaché.
@@ -7413,7 +7449,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
       const full = formatMemberFullName(prenom, nom);
       if(full){
         if(isProfSession()){ submitProfFieldEdit(m.id, 'name', full); return; }
-        m.name = full; syncLinkedMember(m); saveData();
+        m.name = full; touchMemberInfo(m); syncLinkedMember(m); saveData();
       }
     }
     return;
@@ -7423,7 +7459,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===bdInput.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'birthDate', bdInput.value || ''); return; }
-      m.birthDate = bdInput.value || null; syncLinkedMember(m); saveData(); renderGroupsTab();
+      m.birthDate = bdInput.value || null; touchMemberInfo(m); syncLinkedMember(m); saveData(); renderGroupsTab();
     }
     return;
   }
@@ -7438,6 +7474,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
         m.beltHistory.push({ belt: newBelt, date: todayStr() });
       }
       m.belt = newBelt;
+      touchMemberInfo(m);
       syncLinkedMember(m);
       saveData(); renderGroupsTab();
     }
@@ -7448,7 +7485,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===weightCatSel.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'weightCategory', weightCatSel.value || ''); return; }
-      m.weightCategory = weightCatSel.value || undefined; syncLinkedMember(m); saveData(); renderGroupsTab();
+      m.weightCategory = weightCatSel.value || undefined; touchMemberInfo(m); syncLinkedMember(m); saveData(); renderGroupsTab();
     }
     return;
   }
@@ -7457,7 +7494,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===genderSel.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'gender', genderSel.value || ''); return; }
-      m.gender = genderSel.value || undefined; syncLinkedMember(m); saveData(); renderGroupsTab();
+      m.gender = genderSel.value || undefined; touchMemberInfo(m); syncLinkedMember(m); saveData(); renderGroupsTab();
     }
     return;
   }
@@ -7505,7 +7542,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===phoneInput.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'phone', phoneInput.value.trim()); return; }
-      m.phone = phoneInput.value.trim(); syncLinkedMember(m); saveData();
+      m.phone = phoneInput.value.trim(); touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7514,7 +7551,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===addressInput.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'address', addressInput.value.trim()); return; }
-      m.address = addressInput.value.trim(); syncLinkedMember(m); saveData();
+      m.address = addressInput.value.trim(); touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7523,7 +7560,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===postalInput.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'postalCode', postalInput.value.trim()); return; }
-      m.postalCode = postalInput.value.trim(); syncLinkedMember(m); saveData();
+      m.postalCode = postalInput.value.trim(); touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7532,7 +7569,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===cityInput.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'city', cityInput.value.trim()); return; }
-      m.city = cityInput.value.trim(); syncLinkedMember(m); saveData();
+      m.city = cityInput.value.trim(); touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7541,7 +7578,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===birthPlaceInput.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'birthPlace', birthPlaceInput.value.trim()); return; }
-      m.birthPlace = birthPlaceInput.value.trim(); syncLinkedMember(m); saveData();
+      m.birthPlace = birthPlaceInput.value.trim(); touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7550,7 +7587,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===professionInput.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'profession', professionInput.value.trim()); return; }
-      m.profession = professionInput.value.trim(); syncLinkedMember(m); saveData();
+      m.profession = professionInput.value.trim(); touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7559,7 +7596,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===whatsapp1Input.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'whatsappPhone1', whatsapp1Input.value.trim()); return; }
-      m.whatsappPhone1 = whatsapp1Input.value.trim(); syncLinkedMember(m); saveData();
+      m.whatsappPhone1 = whatsapp1Input.value.trim(); touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7568,7 +7605,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===whatsapp2Input.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'whatsappPhone2', whatsapp2Input.value.trim()); return; }
-      m.whatsappPhone2 = whatsapp2Input.value.trim(); syncLinkedMember(m); saveData();
+      m.whatsappPhone2 = whatsapp2Input.value.trim(); touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7577,7 +7614,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===whatsapp1RoleSel.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'whatsappPhone1Role', whatsapp1RoleSel.value || ''); return; }
-      m.whatsappPhone1Role = whatsapp1RoleSel.value || ''; syncLinkedMember(m); saveData();
+      m.whatsappPhone1Role = whatsapp1RoleSel.value || ''; touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7586,7 +7623,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===whatsapp2RoleSel.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'whatsappPhone2Role', whatsapp2RoleSel.value || ''); return; }
-      m.whatsappPhone2Role = whatsapp2RoleSel.value || ''; syncLinkedMember(m); saveData();
+      m.whatsappPhone2Role = whatsapp2RoleSel.value || ''; touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7599,14 +7636,14 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     // proposer en attente de validation.
     if(isProfSession()) return;
     const m = data.members.find(x=>x.id===certInput.dataset.id);
-    if(m){ m.medicalCertDate = certInput.value || null; syncLinkedMember(m); saveData(); }
+    if(m){ m.medicalCertDate = certInput.value || null; touchMemberInfo(m); syncLinkedMember(m); saveData(); }
     return;
   }
   const questionnaireSel = e.target.closest('[data-action="edit-questionnaire"]');
   if(questionnaireSel){
     if(isProfSession()) return;
     const m = data.members.find(x=>x.id===questionnaireSel.dataset.id);
-    if(m){ m.questionnaireStatus = questionnaireSel.value || ''; syncLinkedMember(m); saveData(); }
+    if(m){ m.questionnaireStatus = questionnaireSel.value || ''; touchMemberInfo(m); syncLinkedMember(m); saveData(); }
     return;
   }
   const licenseInput = e.target.closest('[data-action="edit-license"]');
@@ -7614,7 +7651,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===licenseInput.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'licenseNumber', licenseInput.value.trim()); return; }
-      m.licenseNumber = licenseInput.value.trim(); syncLinkedMember(m); saveData();
+      m.licenseNumber = licenseInput.value.trim(); touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7623,7 +7660,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===noteInput.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'note', noteInput.value); return; }
-      m.note = noteInput.value; syncLinkedMember(m); saveData();
+      m.note = noteInput.value; touchMemberInfo(m); syncLinkedMember(m); saveData();
     }
     return;
   }
@@ -7634,7 +7671,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
     const m = data.members.find(x=>x.id===roleSelect.dataset.id);
     if(m){
       if(isProfSession()){ submitProfFieldEdit(m.id, 'committeeRole', roleSelect.value || ''); return; }
-      m.committeeRole = roleSelect.value || ''; saveData();
+      m.committeeRole = roleSelect.value || ''; touchMemberInfo(m); saveData();
     }
     return;
   }
@@ -7648,6 +7685,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
   const emailVal = normalizeEmail(input.value);
   if(isProfSession()){ submitProfFieldEdit(m.id, 'email', emailVal); return; }
   m.email = emailVal;
+  touchMemberInfo(m);
   syncLinkedMember(m);
   saveData();
 });
@@ -7747,10 +7785,11 @@ function renderBeltPassageSection(){
       if(!newBelt){ showToast('Aucune ceinture supérieure disponible'); return; }
       const passageDate = todayStr();
       m.belt = newBelt;
+      touchMemberInfo(m);
       if(!m.beltHistory) m.beltHistory = [];
       m.beltHistory.push({ belt: newBelt, date: passageDate });
       if(!data.beltPassages) data.beltPassages = [];
-      data.beltPassages.push({
+      const beltPassageRecord = {
         id: uid(),
         memberId: m.id,
         memberName: m.name,
@@ -7759,7 +7798,9 @@ function renderBeltPassageSection(){
         belt: newBelt,
         date: passageDate,
         printed: false
-      });
+      };
+      touchRow(beltPassageRecord);
+      data.beltPassages.push(beltPassageRecord);
       saveData();
       renderBeltPassageSection();
       renderBeltDiplomasSection();
@@ -8009,7 +8050,7 @@ async function generateBeltDiplomasPdf(){
     }
     pdf.save(`diplomes-passage-de-grade-${new Date().toISOString().slice(0,10)}.pdf`);
     const printedIds = new Set(pending.map(p=>p.id));
-    (data.beltPassages||[]).forEach(p=>{ if(printedIds.has(p.id)) p.printed = true; });
+    (data.beltPassages||[]).forEach(p=>{ if(printedIds.has(p.id)){ p.printed = true; touchRow(p); } });
     saveData();
     renderBeltDiplomasSection();
     renderBeltValidatedSection();
@@ -8588,6 +8629,7 @@ function validateFamilyGroup(memberIds){
     m.familyId = familyId;
     const a = assignment.find(x=>x.memberId===m.id);
     if(a) m.feeRank = a.feeRank;
+    touchMemberInfo(m);
   });
   if(!data.settings.familyGroups) data.settings.familyGroups = {};
   data.settings.familyGroups[familyId] = { id: familyId, memberIds: members.map(m=>m.id), createdAt: new Date().toISOString() };
@@ -8789,6 +8831,7 @@ function addMemberToFamily(memberId, familyId){
   const fam = data.settings.familyGroups && data.settings.familyGroups[familyId];
   if(!m || !fam) return false;
   m.familyId = familyId;
+  touchMemberInfo(m);
   if(!fam.memberIds.includes(memberId)) fam.memberIds.push(memberId);
   // L'ajout d'une personne change potentiellement la répartition optimale de toute la famille.
   const members = familyMembers(familyId);
@@ -8796,6 +8839,7 @@ function addMemberToFamily(memberId, familyId){
   members.forEach(mm=>{
     const a = assignment.find(x=>x.memberId===mm.id);
     if(a) mm.feeRank = a.feeRank;
+    touchMemberInfo(mm);
   });
   return true;
 }
@@ -8924,7 +8968,7 @@ function cssEscapeAttr(s){
   return String(s).replace(/["\\]/g, '\\$&');
 }
 function dissolveFamily(familyId){
-  data.members.forEach(m=>{ if(m.familyId===familyId){ m.familyId = null; m.feeRank = null; } });
+  data.members.forEach(m=>{ if(m.familyId===familyId){ m.familyId = null; m.feeRank = null; touchMemberInfo(m); } });
   if(data.settings.familyGroups) delete data.settings.familyGroups[familyId];
 }
 function renderFamilyGroupsCard(){
@@ -9336,7 +9380,11 @@ function openPaymentFormOverlay(opts){
         bordereauSection: editing ? (editing.bordereauSection || null) : null,
         allocations: draft.allocations.map(a=>({ memberId:a.memberId, amount: Math.round((Number(a.amount)||0)*100)/100 })),
         season: editing ? editing.season : (data.settings.seasonStartYear || autoSeasonStartYear()),
-        createdAt: editing ? editing.createdAt : new Date().toISOString()
+        createdAt: editing ? editing.createdAt : new Date().toISOString(),
+        // updatedAt (correctif du 10/09/2026, même protection anti-écrasement que sessions/membres —
+        // voir touchRow/protectStaleRows) : posé à CHAQUE création/édition, y compris un simple
+        // changement de statut plus bas (cheque-mark-encaisse, génération de bordereau).
+        updatedAt: new Date().toISOString()
       };
       if(!data.payments) data.payments = [];
       const idx = data.payments.findIndex(p=>p.id===payload.id);
@@ -9540,11 +9588,12 @@ function renderMemberCotisationOverlay(memberId){
     });
   });
   document.getElementById('mc-feerank').addEventListener('change', e=>{
-    m.feeRank = e.target.value; saveData(); renderMemberCotisationOverlay(memberId); renderActiveTab();
+    m.feeRank = e.target.value; touchMemberInfo(m); saveData(); renderMemberCotisationOverlay(memberId); renderActiveTab();
   });
   document.getElementById('mc-override').addEventListener('change', e=>{
     const v = e.target.value.trim();
     m.feeOverrideAmount = v==='' ? null : Number(v);
+    touchMemberInfo(m);
     saveData(); renderMemberCotisationOverlay(memberId); renderActiveTab();
   });
   document.getElementById('mc-add-payment').addEventListener('click', ()=>{
@@ -10582,6 +10631,7 @@ function renderImportedCompetitionsSettings(){
         courseIds: courseIdsVal,
         createdByAccountId: ''
       };
+      touchRow(entry);
       if(!data.calendarEvents) data.calendarEvents = [];
       data.calendarEvents.push(entry);
       saveCompetitionProfile(name, cityVal, { address: addressVal, ageCategories: ageCategoriesVal, discipline: disciplineVal });
@@ -10671,6 +10721,7 @@ function renderImportedCompetitionsSettings(){
       const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
       if(!entry) return;
       entry.cancelled = !entry.cancelled;
+      touchRow(entry);
       saveData();
       renderImportedCompetitionsSettings();
       renderCompetitionsCalendarCard();
@@ -10695,6 +10746,7 @@ function renderImportedCompetitionsSettings(){
       const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
       if(!entry) return;
       entry.disabled = !entry.disabled;
+      touchRow(entry);
       saveData();
       renderImportedCompetitionsSettings();
       renderCompetitionsCalendarCard();
@@ -10753,6 +10805,7 @@ function renderImportedCompetitionsSettings(){
       entry.ageCategories = readAgeCategoriesFromForm(manualEditForm);
       entry.courseIds = readCourseIdsFromForm(manualEditForm);
       entry.discipline = deriveDisciplineFromCourseIds(entry.courseIds);
+      touchRow(entry);
       saveCompetitionProfile(entry.name, entry.city, { address: entry.address, ageCategories: entry.ageCategories, discipline: entry.discipline, courseIds: entry.courseIds });
       saveData();
       ui.editingCompetitionKey = null;
@@ -11413,6 +11466,7 @@ function importWorkbookMultiSheet(wb){
     let group = data.groups.find(g=>g.name.toLowerCase()===sheetName.trim().toLowerCase());
     if(!group){
       group = { id: uid(), name: toTitleCase(sheetName.trim()), recurrence:[] };
+      touchRow(group);
       data.groups.push(group);
       groupsCreated++;
     }
@@ -12609,6 +12663,7 @@ function renderPresenceSheet(){
       if(!row) return;
       if(!session.guestMemberIds) session.guestMemberIds = [];
       if(!session.guestMemberIds.includes(row.dataset.id)) session.guestMemberIds.push(row.dataset.id);
+      touchRow(session);
       ui.addingSessionGuest = false;
       saveData();
       renderPresenceSheet();
@@ -12620,6 +12675,7 @@ function renderPresenceSheet(){
   if(validateBtn){
     validateBtn.addEventListener('click', ()=>{
       session.validated = true;
+      touchRow(session);
       const g = data.groups.find(x=>x.id===session.groupId);
       logActivity('presence-validee', `Appel validé — ${g?g.name:'cours'} du ${fmtDate(session.date)}`);
       saveData();
@@ -12632,6 +12688,7 @@ function renderPresenceSheet(){
   if(unvalidateBtn){
     unvalidateBtn.addEventListener('click', ()=>{
       session.validated = false;
+      touchRow(session);
       saveData();
       renderPresenceSheet();
       renderPresenceHistory();
@@ -13607,6 +13664,7 @@ function renderCotisationsCard(){
       if(!p) return;
       p.status = 'encaisse';
       p.encaissedAt = todayStr();
+      touchRow(p);
       saveData();
       renderActiveTab();
       showToast('Chèque marqué comme encaissé');
@@ -14541,6 +14599,7 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
       if(p.method==='cheque' && p.status==='attente'){
         p.status = 'encaisse';
         if(!p.encaissedAt) p.encaissedAt = todayIso;
+        touchRow(p);
       }
     });
     saveData();
@@ -17343,6 +17402,7 @@ function renderDisciplineCalendarCard(){
         courseIds: (()=>{ const chosen = readCourseIdsFromForm(addForm); return chosen.length>0 ? chosen : myOwnedGroupIds(); })(),
         createdByAccountId: session.accountId || ''
       };
+      touchRow(entry);
       if(!data.calendarEvents) data.calendarEvents = [];
       data.calendarEvents.push(entry);
       logActivity('calendrier-ajout', `Événement ajouté au calendrier — ${entry.name} (${fmtDate(entry.date)})`);
@@ -17373,6 +17433,7 @@ function renderDisciplineCalendarCard(){
       // Voir save-own-calendar-event : même repli sur tous ses cours si rien n'est coché.
       const chosenCourseIds = readCourseIdsFromForm(editForm);
       entry.courseIds = chosenCourseIds.length>0 ? chosenCourseIds : myOwnedGroupIds();
+      touchRow(entry);
       logActivity('calendrier-modif', `Événement modifié — ${entry.name} (${fmtDate(entry.date)})`);
       saveData();
       ui.editingOwnCalendarEventId = null;
@@ -17408,6 +17469,7 @@ function renderDisciplineCalendarCard(){
       const entry = (data.calendarEvents||[]).find(e=>e.id===btn.dataset.id);
       if(!entry) return;
       entry.disabled = !entry.disabled;
+      touchRow(entry);
       logActivity(entry.disabled ? 'calendrier-desactivation' : 'calendrier-reactivation', `Événement ${entry.disabled?'désactivé':'réactivé'} — ${entry.name}`);
       saveData();
       renderDisciplineCalendarCard();
@@ -17489,10 +17551,12 @@ function findOrCreateStage(name, dateStart, dateEnd){
   let stage = data.stages.find(s=> !s.validated && s.name.toLowerCase()===name.trim().toLowerCase());
   if(!stage){
     stage = { id: uid(), name: name.trim(), dateStart: dateStart||'', dateEnd: dateEnd||'', participants: [], validated: false };
+    touchRow(stage);
     data.stages.push(stage);
   } else {
     if(dateStart) stage.dateStart = dateStart;
     if(dateEnd) stage.dateEnd = dateEnd;
+    touchRow(stage);
   }
   return stage;
 }
@@ -17592,6 +17656,7 @@ function renderStageForm(){
     const s = findOrCreateStage(nameVal, stageDateStartVal, document.getElementById('stageDateEnd').value);
     if(s.participants.length===0){ showToast('Ajoute au moins un élève avant de valider'); return; }
     s.validated = true;
+    touchRow(s);
     saveData();
     ui.currentStageId = null;
     renderStageForm();
@@ -17620,6 +17685,7 @@ function addMemberToStage(memberId){
   ui.currentStageId = stage.id;
   if(!stage.participants.some(p=>p.memberId===memberId)){
     stage.participants.push({ memberId, name: member.name });
+    touchRow(stage);
     saveData();
     showToast(`${displayNameOrder(member.name)} ajouté(e) au stage`);
   } else {
@@ -17641,7 +17707,7 @@ function renderStageParticipantsList(stageId){
   wrap.querySelectorAll('[data-action="remove-stage-participant"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const s = (data.stages||[]).find(x=>x.id===btn.dataset.stage);
-      if(s){ s.participants = s.participants.filter(p=>p.memberId!==btn.dataset.member); saveData(); renderStageParticipantsList(s.id); }
+      if(s){ s.participants = s.participants.filter(p=>p.memberId!==btn.dataset.member); touchRow(s); saveData(); renderStageParticipantsList(s.id); }
     });
   });
 }
@@ -17697,6 +17763,7 @@ function renderStageHistory(){
       const s = (data.stages||[]).find(x=>x.id===btn.dataset.id);
       if(!s) return;
       s.validated = false;
+      touchRow(s);
       saveData();
       saveStageFormHidden(false);
       ui.currentStageId = s.id;
