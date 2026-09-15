@@ -9695,6 +9695,7 @@ function renderAttestationSettings(){
       </div>
       ` : ''}
       <button class="primary" id="generateAttestationBtn" style="width:100%; margin-top:10px;">📄 ${isChequeSport ? 'Générer une attestation Chèque Sport Mennecy' : 'Générer une attestation de paiement'}</button>
+      <button class="ghost" id="sendAttestationEmailBtn" style="width:100%; margin-top:8px;" ${m.email ? '' : 'disabled title="Aucun email renseigné dans la fiche"'}>📧 Envoyer par email${m.email ? ' ('+escapeHtml(m.email)+')' : ' — pas d’email renseigné'}</button>
       ` : ''}
       <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
         <span class="field-label">Retrouver une attestation déjà générée</span>
@@ -9782,6 +9783,8 @@ function renderAttestationSettings(){
   if(inscriptionDateInput) inscriptionDateInput.addEventListener('change', ()=>{ ui.attestationInscriptionDate = inscriptionDateInput.value || todayStr(); });
   const genBtn = document.getElementById('generateAttestationBtn');
   if(genBtn) genBtn.addEventListener('click', isChequeSport ? generateChequeSportAttestationPdf : generatePaymentAttestationPdf);
+  const sendEmailBtn = document.getElementById('sendAttestationEmailBtn');
+  if(sendEmailBtn) sendEmailBtn.addEventListener('click', sendAttestationByEmail);
   const historySelect = document.getElementById('attestationHistorySelect');
   if(historySelect) historySelect.addEventListener('change', ()=>{
     ui.attestationHistorySelectedId = historySelect.value || null;
@@ -10130,6 +10133,125 @@ async function generateChequeSportRecapPdf(fromDate, toDate){
   }
 }
 
+// Envoie l'attestation (paiement ou Chèque Sport, selon ui.attestationType) par email directement
+// au destinataire renseigné dans la fiche élève (m.email), en pièce jointe PDF — plutôt que de
+// laisser l'utilisateur télécharger puis joindre le fichier lui-même. Un lien mailto: ne peut
+// techniquement PAS porter de pièce jointe (limitation de tous les navigateurs) : c'est pourquoi
+// l'envoi passe par le serveur, exactement comme pour les convocations (voir
+// sendSingleConvocationEmail) — on réutilise d'ailleurs la même action générique 'sendConvocation'
+// côté Code.gs (déjà autorisée pour admin/prof/secrétaire), donc aucune modification côté serveur
+// n'est nécessaire pour cette fonctionnalité. Une fois l'envoi confirmé, l'attestation est journalisée
+// exactement comme un téléchargement (logAttestationGenerated) pour rester visible dans "Retrouver
+// une attestation".
+async function sendAttestationByEmail(){
+  const session = getSession();
+  if(!session || !session.sessionToken){
+    showToast('Non connecté — reconnecte-toi pour pouvoir envoyer des emails avec PDF joint');
+    return;
+  }
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const m = data.members.find(x=>x.id===ui.attestationMemberId);
+  if(!m){ showToast('Sélectionne un élève'); return; }
+  if(!m.email){ showToast(`${displayNameOrder(m.name)} n'a pas d'email renseigné dans sa fiche`); return; }
+  const isChequeSport = (ui.attestationType||'paiement')==='chequesport';
+  let fee = null;
+  if(!isChequeSport){
+    fee = memberFeeDetails(m, ui.attestationFamilyRank || 'p1');
+    if(fee.error){ showToast(fee.error); return; }
+  } else {
+    // Même contrôle d'éligibilité que generateChequeSportAttestationPdf (mineur domicilié à
+    // Mennecy) : on bloque l'envoi plutôt que de laisser partir une attestation invalide par email.
+    const cityOk = String(m.city||'').trim().toLowerCase()==='mennecy';
+    const age = m.birthDate ? ageAtDate(m.birthDate, todayStr()) : null;
+    const isMajeur = age!==null && age>=18;
+    if(!cityOk || isMajeur){
+      const problems = [];
+      if(!cityOk) problems.push(`ne réside pas à Mennecy (ville renseignée : "${m.city ? m.city : '—'}")`);
+      if(isMajeur) problems.push(`est majeur (${age} ans)`);
+      await confirmDialog(
+        `${m.name} ${problems.join(' et ')}.\n\nLe Chèque Sport Mennecy est réservé aux mineurs domiciliés à Mennecy — cette attestation ne peut pas être délivrée pour cet élève.`,
+        { title: '⚠️ Chèque Sport Mennecy — non éligible', okOnly:true, danger:true }
+      );
+      return;
+    }
+  }
+  const btn = document.getElementById('sendAttestationEmailBtn');
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Envoi en cours…'; }
+  try{
+    const logoImg = document.querySelector('header.topbar .club-logo-light');
+    const logoSrc = logoImg ? logoImg.src : '';
+    let html, type, subject, logExtra;
+    if(isChequeSport){
+      const seasonLabel = schoolYearLabel(autoSeasonStartYear());
+      const inscriptionDate = ui.attestationInscriptionDate || todayStr();
+      html = buildChequeSportHtml(m, ui.attestationCotisationAmount, ui.attestationCafAmount, ui.attestationPassSportAmount, inscriptionDate, seasonLabel);
+      type = 'chequesport';
+      subject = `Attestation Chèque Sport Mennecy — ${data.clubName || 'AMAM'}`;
+      logExtra = {
+        discipline: memberDisciplineLabel(m),
+        cotisation: (ui.attestationCotisationAmount!==undefined && ui.attestationCotisationAmount!==null && ui.attestationCotisationAmount!=='') ? Number(String(ui.attestationCotisationAmount).replace(',','.')) : null,
+        caf: ui.attestationCafAmount || '',
+        passSport: ui.attestationPassSportAmount || '',
+        inscriptionDate,
+        seasonLabel
+      };
+    } else {
+      html = buildAttestationHtml(m, fee, logoSrc);
+      type = 'paiement';
+      subject = `Attestation de paiement — ${data.clubName || 'AMAM'}`;
+      logExtra = {
+        familyRank: ui.attestationFamilyRank || 'p1',
+        fee: { adhesion: fee.adhesion, license: fee.license, course: fee.course, total: fee.total, disciplineLabel: fee.disciplineLabel }
+      };
+    }
+    const canvas = await captureOffscreenSection(html, '', 700);
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    addCanvasFitOrTop(pdf, canvas, 24);
+    const pdfBase64 = pdf.output('datauristring').split(',')[1];
+    const safeName = displayNameOrder(m.name).replace(/[\\/:*?"<>|]+/g,'').trim();
+    const filename = `${safeName} - Attestation ${isChequeSport ? 'Chèque Sport' : 'Paiement'}.pdf`;
+    const textBody = `${convocGreetingLine(m)}\n\nVeuillez trouver ci-joint votre attestation ${isChequeSport ? 'Chèque Sport Mennecy' : 'de paiement'}.\n\nSportivement,\n${data.clubName || 'Le club'}`;
+    const htmlBody = escapeHtml(textBody).replace(/\n/g,'<br>');
+    const res = await fetch(BACKEND_URL, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action:'sendConvocation',
+        sessionToken: session.sessionToken,
+        subject,
+        textBody,
+        htmlBody,
+        senderName: data.clubName || '',
+        items:[{ to: m.email, filename, pdfBase64 }]
+      })
+    });
+    let json;
+    try{ json = await res.json(); }
+    catch(parseErr){
+      const raw = await res.text().catch(()=> '');
+      throw new Error(`réponse invalide du script (HTTP ${res.status})${raw ? ' — '+raw.slice(0,200) : ''}`);
+    }
+    if(json && json.ok && json.sent){
+      logAttestationGenerated(type, m, logExtra);
+      showToast(`Attestation envoyée par email à ${displayNameOrder(m.name)}`);
+    } else if(json && json.error){
+      showToast(`Échec : ${json.error}`);
+    } else if(json && (json.failed||[]).length){
+      showToast(`Échec : ${json.failed[0].error||'erreur côté Gmail'}`);
+    } else {
+      showToast('Échec inconnu lors de l’envoi');
+    }
+  } catch(err){
+    showToast('Échec de l’envoi : ' + (err.message||err));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
 // Retrouve et régénère à l'identique une attestation déjà générée (Chèque Sport ou paiement), à
 // partir de son entrée dans le journal data.settings.attestationLog. On ne stocke jamais le PDF
 // lui-même (trop volumineux pour le classeur Google Sheets qui sert de backend) : on reconstruit le
