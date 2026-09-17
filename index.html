@@ -1006,7 +1006,7 @@
       </div>
       <div id="existing-competition-body">
         <div style="margin-top:10px;">
-          <label class="small">Compétitions du calendrier (dans le mois à venir)</label>
+          <label class="small">Compétitions du calendrier (30 prochains jours)</label>
           <select id="calendarCompetitionSelect"></select>
         </div>
         <div id="calendarCompetitionNote"></div>
@@ -16449,7 +16449,7 @@ function migrateFederationCalendarOnce(defaultDiscipline){
     // compétition fédérale ne servirait à rien, elle reviendrait au prochain clic sur "Basculer".
     if(deletedFederationKeys.has(migrationKey)) return;
     const ov = getCompetitionOverride(c);
-    data.calendarEvents.push({
+    const migrated = {
       id: uid(), type:'competition',
       name: effectiveCompetitionName(c), date: effectiveDate, city: effectiveCompetitionCity(c),
       address: effectiveCompetitionAddress(c), ageCategories: importedCompetitionAgeCategories(c),
@@ -16469,7 +16469,11 @@ function migrateFederationCalendarOnce(defaultDiscipline){
       validated: ov.validated===true, cancelled: ov.cancelled===true,
       level: c.level||'', dayLabel: c.dayLabel||'', details: c.details||[], weighIn: c.weighIn||[],
       source:'federation', federationKey
-    });
+    };
+    // Même correctif du 17/09/2026 que applyCalendarImportPlan (voir son commentaire) : sans
+    // updatedAt, protectStaleRows ne protège jamais ces lignes d'un écrasement par une session périmée.
+    touchRow(migrated);
+    data.calendarEvents.push(migrated);
     existingFederationKeys.add(migrationKey);
   });
   if(!data.settings.deletedCalendarCompetitions) data.settings.deletedCalendarCompetitions = [];
@@ -16735,17 +16739,27 @@ function applyCalendarImportPlan(plan, discipline){
     // Une mise à jour ne touche jamais la discipline : si elle était déjà taguée (par l'admin ou
     // héritée d'un import précédent), on ne l'écrase pas avec le sélecteur de CE import — utile
     // si un même fichier est réimporté plus tard pour rafraîchir juste les dates.
+    // Bug corrigé le 17/09/2026 (Thomas : "une connexion sur un compte prof a modifié tout le
+    // calendrier general et remis toutes les anciennes dates") : cet import ne posait JAMAIS
+    // updatedAt sur les entrées créées/mises à jour, alors que protectStaleRows côté Code.gs
+    // (writeAllData) ne protège une ligne calendrier que si elle porte un horodatage — sans lui,
+    // n'importe quel onglet/session resté ouvert avec une ancienne copie de data.calendarEvents en
+    // mémoire (typiquement un compte prof pas rouvert depuis un moment) pouvait, à la moindre
+    // sauvegarde sans rapport, renvoyer ses vieilles dates et écraser silencieusement ce rafraîchissement.
+    touchRow(existing);
   });
   plan.toCreate.forEach(({incoming, fk})=>{
     const guessed = matchConfiguredBandLabel(incoming.name + ' ' + (incoming.details||[]).join(' '));
-    data.calendarEvents.push({
+    const created = {
       id: uid(), type: incoming.type, name: incoming.name, date: incoming.date, city: incoming.city,
       address:'', ageCategories: guessed ? [guessed] : [],
       discipline: discipline || '', createdByAccountId: '',
       validated:false, cancelled:false,
       level: incoming.level, dayLabel: incoming.dayLabel, details: incoming.details, weighIn: incoming.weighIn,
       source:'federation', federationKey: fk
-    });
+    };
+    touchRow(created); // même correctif que ci-dessus : une entrée nouvellement importée doit aussi être protégée dès sa création.
+    data.calendarEvents.push(created);
   });
   saveData();
   renderImportedCompetitionsSettings();
@@ -16819,15 +16833,30 @@ async function handleCalendarExcelImport(file, discipline){
     showToast('Impossible de lire ce fichier : ' + (err.message||err));
   }
 }
-function competitionsWithinNextMonth(){
+// Corrigée le 17/09/2026 (Thomas : "dans les convocations a faire ... si ce n'est pas le meme mois
+// les competitions ne s'affiche pas ... je ne veux plus que ca soit le mois le repert mais 30 jours
+// calendriers"). Deux problèmes distincts trouvés en creusant :
+// 1) La fenêtre était "un mois calendaire" via new Date(year, month+1, date) — durée variable selon
+//    le jour de départ (28 à 31 jours, voire plus en cas de rollover comme 31 janvier -> 3 mars) au
+//    lieu d'un vrai repère fixe. Corrigé : aujourd'hui + 30 jours calendriers, point fixe.
+// 2) Bien plus grave : cette liste lisait visibleCompetitionCalendar(), basée sur COMPETITION_CALENDAR
+//    — le calendrier fédéral figé en dur dans le code lors de la saison 2025-2026 (migré une fois vers
+//    data.calendarEvents via migrateFederationCalendarOnce, qui tombstone alors CHAQUE entrée d'origine
+//    dans deletedCalendarCompetitions). Résultat : cette liste était vide en pratique depuis la
+//    migration, quelle que soit la fenêtre de dates choisie — les compétitions que Thomas importe
+//    régulièrement via Excel (voir applyCalendarImportPlan) vont, elles, dans data.calendarEvents,
+//    jamais dans COMPETITION_CALENDAR. Seule la recherche "Autre…" (renderCalendarOtherSearchResults)
+//    lisait la bonne source (getAllCalendarEntries/data.calendarEvents) ; ce menu déroulant rapide, non.
+//    Corrigé : lit maintenant directement data.calendarEvents, la même source que le reste de l'app.
+function competitionsWithinNext30Days(){
   const today = new Date(); today.setHours(0,0,0,0);
-  const cutoff = new Date(today.getFullYear(), today.getMonth()+1, today.getDate());
-  return visibleCompetitionCalendar().filter(c=>{
-    const dt = effectiveCompetitionDate(c);
-    if(!dt) return false;
-    const d = new Date(dt+'T00:00:00');
+  const cutoff = new Date(today); cutoff.setDate(cutoff.getDate()+30);
+  return (data.calendarEvents||[]).filter(c=>{
+    if((c.type||'competition')!=='competition') return false;
+    if(!c.date) return false;
+    const d = new Date(c.date+'T00:00:00');
     return d >= today && d <= cutoff;
-  }).sort((a,b)=> effectiveCompetitionDate(a).localeCompare(effectiveCompetitionDate(b)));
+  }).sort((a,b)=> (a.date||'').localeCompare(b.date||''));
 }
 function competitionNameWithCategory(c){
   const bandLabel = matchConfiguredBandLabel(c.name + ' ' + (c.details||[]).join(' '));
@@ -16875,8 +16904,12 @@ function applyConvocSectionsVisibility(){
   if(noteWrap) noteWrap.innerHTML = '';
   showToast('Champs réinitialisés');
 }
-function pickCalendarCompetition(idx){
-  const c = COMPETITION_CALENDAR[idx];
+// Depuis le 17/09/2026, prend directement l'objet compétition (data.calendarEvents ou, plus
+// rarement, une entrée brute pas encore migrée de COMPETITION_CALENDAR) plutôt qu'un index dans
+// COMPETITION_CALENDAR — voir le commentaire de competitionsWithinNext30Days(). effectiveCompetition*
+// restent utilisables sans changement sur les deux formes : sans override enregistré pour cet objet,
+// elles retombent simplement sur ses champs bruts (name/date/city/address déjà à jour dans les deux cas).
+function pickCalendarCompetition(c){
   if(!c) return;
   const fullEventName = effectiveCompetitionName(c);
   document.getElementById('convocEvent').value = fullEventName;
@@ -16885,11 +16918,17 @@ function pickCalendarCompetition(idx){
   document.getElementById('convocLieu').value = effectiveCompetitionAddress(c);
   saveCompetitionProfile(c.name, c.city, { address: effectiveCompetitionAddress(c), ageCategories: importedCompetitionAgeCategories(c) });
   saveData();
-  const fullText = c.name + ' ' + c.details.join(' ');
+  // c.details/c.weighIn : toujours des tableaux pour une compétition issue de COMPETITION_CALENDAR ou
+  // d'un import Excel (voir applyCalendarImportPlan/migrateFederationCalendarOnce), mais absents sur
+  // une compétition ajoutée à la main via le formulaire "Ajouter un événement" (pas de pesée fédérale
+  // à en tirer) — sans ce garde-fou (||[]), ajouté le 17/09/2026 en même temps que le rebasage de ce
+  // picker sur data.calendarEvents, .join()/.forEach() plantait sur ce cas.
+  const details = c.details||[], weighIn = c.weighIn||[];
+  const fullText = c.name + ' ' + details.join(' ');
   const bandLabel = matchConfiguredBandLabel(fullText);
   const categorieValue = bandLabel ? bandYearRangeLabel(bandLabel) : '';
   const cats = bandLabel ? weightOptionsForBandLabel(bandLabel) : null;
-  c.weighIn.forEach(line=>{
+  weighIn.forEach(line=>{
     const times = extractAllTimesFromLine(line);
     if(times.length>=2){
       const segments = parseWeighInSegments(line);
@@ -16902,7 +16941,7 @@ function pickCalendarCompetition(idx){
   renderConvocSchedule();
   const noteWrap = document.getElementById('calendarCompetitionNote');
   noteWrap.innerHTML = `<div style="background:#F1F4EA; border-radius:8px; padding:10px 12px; margin-top:8px; font-size:12.5px; line-height:1.5;">
-    📋 <strong>Infos du calendrier</strong> — ${c.dayLabel}${c.level?' · Niveau : '+escapeHtml(c.level):''}${c.details.length?'<br>Catégories concernées : '+escapeHtml(c.details.join(', ')):''}${c.weighIn.length?'<br>Pesées : '+escapeHtml(c.weighIn.join(' — ')):''}${bandLabel?'<br><strong>Catégorie et poids pré-remplis :</strong> '+escapeHtml(categorieValue):'<br><em>Catégorie non détectée automatiquement — choisis-la manuellement sur chaque ligne.</em>'}
+    📋 <strong>Infos du calendrier</strong> — ${c.dayLabel||''}${c.level?' · Niveau : '+escapeHtml(c.level):''}${details.length?'<br>Catégories concernées : '+escapeHtml(details.join(', ')):''}${weighIn.length?'<br>Pesées : '+escapeHtml(weighIn.join(' — ')):''}${bandLabel?'<br><strong>Catégorie et poids pré-remplis :</strong> '+escapeHtml(categorieValue):'<br><em>Catégorie non détectée automatiquement — choisis-la manuellement sur chaque ligne.</em>'}
   </div>`;
   saveNewConvocFormHidden(false);
   applyConvocSectionsVisibility();
@@ -16922,7 +16961,7 @@ function pickCalendarEntryOther(entry){
   if(select) select.value = '';
   if(entry.kind==='imported'){
     const idx = COMPETITION_CALENDAR.findIndex(c=>competitionKey(c)===entry.key);
-    if(idx>=0){ pickCalendarCompetition(idx); return; }
+    if(idx>=0){ pickCalendarCompetition(COMPETITION_CALENDAR[idx]); return; }
   }
   const e = (data.calendarEvents||[]).find(x=>x.id===entry.id);
   if(!e) return;
@@ -16978,16 +17017,17 @@ function initCalendarCompetitionPicker(){
     const isProf = !!(session && session.role==='prof');
     const ownedGroupIds = isProf ? myOwnedGroupIds() : [];
     // Même cloisonnement que renderCalendarOtherSearchResults : un prof ne voit dans ce menu que les
-    // compétitions/stages importés rattachés à un de ses cours (l'admin, lui, voit toujours tout).
-    // Une compétition désactivée (voir toggle-disable-imported) n'apparaît jamais ici, pour personne.
-    const withinMonth = competitionsWithinNextMonth().filter(c=> (!isProf || importedCompetitionVisibleToProf(c, ownedGroupIds)) && getCompetitionOverride(c).disabled !== true);
-    select.innerHTML = `<option value="">— Choisir une compétition —</option>` + withinMonth.map(c=>{
-      const idx = COMPETITION_CALENDAR.indexOf(c);
+    // compétitions rattachées à un de ses cours (l'admin, lui, voit toujours tout). Voir
+    // manualEventVisibleToProf (remplace depuis le 17/09/2026 importedCompetitionVisibleToProf, devenu
+    // inadapté maintenant que competitionsWithinNext30Days() lit directement data.calendarEvents — voir
+    // son commentaire). Une compétition désactivée n'apparaît jamais ici, pour personne.
+    const within30Days = competitionsWithinNext30Days().filter(c=> (!isProf || manualEventVisibleToProf(c, ownedGroupIds)) && c.disabled !== true);
+    select.innerHTML = `<option value="">— Choisir une compétition —</option>` + within30Days.map(c=>{
       const already = hasConvocationForCompetition(c) ? '✓ ' : '';
       const dateLabel = effectiveCompetitionDate(c) ? fmtDate(effectiveCompetitionDate(c)) : c.dayLabel;
       const levelPart = c.level ? ` (${c.level})` : '';
       const label = `${already}${effectiveCompetitionName(c)}${levelPart} — ${dateLabel} · ${effectiveCompetitionCity(c)}`;
-      return `<option value="${idx}">${escapeHtml(label)}</option>`;
+      return `<option value="${escapeHtml(c.id)}">${escapeHtml(label)}</option>`;
     }).join('') + `<option value="other">Autre…</option>`;
     select.addEventListener('change', ()=>{
       const otherBox = document.getElementById('calendarCompetitionOtherBox');
@@ -17003,7 +17043,8 @@ function initCalendarCompetitionPicker(){
         resetCompetitionFormFields();
         return;
       }
-      pickCalendarCompetition(parseInt(select.value,10));
+      const picked = (data.calendarEvents||[]).find(e=>e.id===select.value);
+      pickCalendarCompetition(picked);
     });
     const otherInput = document.getElementById('calendarCompetitionOtherInput');
     if(otherInput){
