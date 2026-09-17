@@ -16854,7 +16854,16 @@ function competitionsWithinNext30Days(){
   return (data.calendarEvents||[]).filter(c=>{
     if((c.type||'competition')!=='competition') return false;
     if(!c.date) return false;
-    const d = new Date(c.date+'T00:00:00');
+    // Bug rapporté par Thomas le 17/09/2026 (v2) : une compétition du 10 octobre n'apparaissait
+    // toujours pas malgré le rebasage sur data.calendarEvents. Cause : certaines dates stockées de
+    // longue date dans le classeur reviennent avec un "T" déjà présent (horodatage ISO complet, ex:
+    // suite à une conversion automatique par Google Sheets avant le passage en format "Texte brut"
+    // généralisé — voir writeObjects) plutôt qu'un simple "AAAA-MM-JJ". new Date(c.date+'T00:00:00')
+    // donnait alors une chaîne invalide ("...T00:00:00.000ZT00:00:00") -> Invalid Date -> exclue
+    // silencieusement de toute comparaison. Même garde-fou déjà utilisé ailleurs dans l'app pour cette
+    // raison (voir fmtDate, weekdayShortFr...) : ne rajouter 'T00:00:00' que si absent.
+    const d = c.date.includes('T') ? new Date(c.date) : new Date(c.date+'T00:00:00');
+    if(isNaN(d.getTime())) return false;
     return d >= today && d <= cutoff;
   }).sort((a,b)=> (a.date||'').localeCompare(b.date||''));
 }
@@ -16913,7 +16922,10 @@ function pickCalendarCompetition(c){
   if(!c) return;
   const fullEventName = effectiveCompetitionName(c);
   document.getElementById('convocEvent').value = fullEventName;
-  if(effectiveCompetitionDate(c)) document.getElementById('convocDate').value = effectiveCompetitionDate(c);
+  // <input type="date"> exige strictement "AAAA-MM-JJ" : un timestamp ISO complet ("...T00:00:00.000Z",
+  // voir le commentaire de competitionsWithinNext30Days() sur cette même incohérence de format) serait
+  // silencieusement rejeté (champ vidé) sans ce .slice(0,10) — même correctif de robustesse.
+  if(effectiveCompetitionDate(c)) document.getElementById('convocDate').value = effectiveCompetitionDate(c).slice(0,10);
   document.getElementById('convocVille').value = effectiveCompetitionCity(c);
   document.getElementById('convocLieu').value = effectiveCompetitionAddress(c);
   saveCompetitionProfile(c.name, c.city, { address: effectiveCompetitionAddress(c), ageCategories: importedCompetitionAgeCategories(c) });
@@ -16966,7 +16978,7 @@ function pickCalendarEntryOther(entry){
   const e = (data.calendarEvents||[]).find(x=>x.id===entry.id);
   if(!e) return;
   document.getElementById('convocEvent').value = e.name||'';
-  if(e.date) document.getElementById('convocDate').value = e.date;
+  if(e.date) document.getElementById('convocDate').value = e.date.slice(0,10); // même garde-fou format "T" que pickCalendarCompetition
   document.getElementById('convocVille').value = e.city||'';
   document.getElementById('convocLieu').value = e.address||'';
   saveCompetitionProfile(e.name, e.city, { address: e.address, ageCategories: e.ageCategories });
