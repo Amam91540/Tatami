@@ -8383,6 +8383,16 @@ function courseDisciplineKey(groupName){
 // du Judo / Karaté "adultes", mais toutes les variantes d'Aïkibudo (Enfants/Adultes/Soft) sont
 // regroupées ensemble. Insensible aux accents et à la casse (Karaté = Karate, Aïkibudo = Aikibudo).
 const DISCIPLINE_GROUPS = ['Baby Judo', 'Baby Karate', 'Judo', 'Karate', 'Aikibudo', 'Kobudo', 'Taiso'];
+// Demande de Thomas du 17/09/2026 : "pour les convocations dans les destinataires par categorie d'age,
+// je veux que seulemenent les eleves dans les cours de judo (baby, cours 1, 2 ,3,4..) apparaissent...
+// les autres disciplines n'ont pas besoin d'y apparaitre" — regroupe 'Judo' ET 'Baby Judo' (les deux
+// variantes que courseToDiscipline ci-dessous distingue), à l'exclusion des autres disciplines.
+function memberIsInJudoCourse(m){
+  const group = (data.groups||[]).find(g=>g.id===m.groupId);
+  if(!group) return false;
+  const disc = courseToDiscipline(group.name);
+  return disc==='Judo' || disc==='Baby Judo';
+}
 function courseToDiscipline(groupName){
   const n = normalizeCategoryKey(groupName);
   const isBaby = /baby/.test(n);
@@ -15796,9 +15806,12 @@ function renderConvocTab(){
   // Cloisonné à la vue actuellement affichée (saison en cours / saison à venir), même logique que les
   // Cotisations et Présences — une convocation ne concerne jamais les fiches de l'autre saison.
   const convocNextView = isViewingNextSeason();
+  // Restreint au Judo (Baby compris) — demande de Thomas du 17/09/2026 : les convocations ne
+  // concernent que les compétitions/stages Judo, les autres disciplines n'ont pas à apparaître dans
+  // cette liste de destinataires. Voir memberIsInJudoCourse.
   const membersRaw = categoryValue==='all'
-    ? data.members.filter(m=>!m.archived && !!m.forNextSeason===convocNextView)
-    : data.members.filter(m=>!m.archived && !!m.forNextSeason===convocNextView && memberMatchesGroupedCategory(m, categoryValue));
+    ? data.members.filter(m=>!m.archived && !!m.forNextSeason===convocNextView && memberIsInJudoCourse(m))
+    : data.members.filter(m=>!m.archived && !!m.forNextSeason===convocNextView && memberMatchesGroupedCategory(m, categoryValue) && memberIsInJudoCourse(m));
   const members = categoryValue==='all'
     ? sortMembersByCategoryThenName(membersRaw)
     : [...membersRaw].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
