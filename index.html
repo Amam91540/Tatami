@@ -8360,8 +8360,14 @@ function courseLevelSuffix(groupName){
 function courseDisciplineKey(groupName){
   const n = String(groupName||'').toLowerCase();
   if(/aikibudo\s*soft/.test(n)) return 'AIKIBUDO SOFT';
-  if(/aikibudo/.test(n)) return 'AIKIBUDO';
+  // "aiki.*enfant" doit être testé AVANT le "aikibudo" générique ci-dessous : le nom du cours réel
+  // est "Aikibudo Enfants", qui contient le mot "aikibudo" et matchait donc TOUJOURS la règle
+  // générique en premier (retournant 'AIKIBUDO', le tarif adulte à 227€) sans jamais atteindre cette
+  // règle plus spécifique. Bug signalé par Thomas le 17/09/2026 : les enfants du cours "Aikibudo
+  // Enfants" recevaient le tarif Aikibudo (227€) au lieu du tarif Aiki Enfants -15 ans (189€
+  // Menneçois / 214€ Extérieurs).
   if(/aiki.*enfant/.test(n)) return 'AIKI ENFANTS';
+  if(/aikibudo/.test(n)) return 'AIKIBUDO';
   if(/kobudo/.test(n)) return 'KOBUDO';
   if(/ta[iï][sz]o/.test(n)) return 'TAISO';
   if(/karat/.test(n)) return 'KARATE';
@@ -8420,7 +8426,19 @@ function memberFeeDetails(m, familyRank){
   if(!m.city) return { error: 'Ville manquante sur la fiche' };
   const group = data.groups.find(g=>g.id===m.groupId);
   if(!group) return { error: 'Cours introuvable pour cet élève' };
-  const disc = courseDisciplineKey(group.name);
+  let disc = courseDisciplineKey(group.name);
+  // Cas particulier Aikibudo (hors Aikibudo Soft, qui reste sa propre discipline indépendante de
+  // l'âge) : demande explicite de Thomas le 17/09/2026 — "Aikibudo" et "Aiki Enfants" sont deux
+  // colonnes tarifaires qui concernent LES DEUX groupes (Aikibudo Adultes ET Aikibudo Enfants) à la
+  // fois ; c'est l'âge de l'élève qui décide, pas le cours suivi : -15 ans -> colonne "Aiki Enfants",
+  // 15 ans et plus -> colonne "Aikibudo". On écrase donc ici la discipline déduite du nom du cours
+  // (utile ailleurs, ex: inscriptionDisciplineChecks, qui doit refléter le cours réel) uniquement
+  // pour le calcul tarifaire.
+  if(disc==='AIKIBUDO' || disc==='AIKI ENFANTS'){
+    const aikiAge = ageAtDate(m.birthDate, todayStr());
+    if(aikiAge===null) return { error: 'Date de naissance invalide' };
+    disc = aikiAge<15 ? 'AIKI ENFANTS' : 'AIKIBUDO';
+  }
   if(!disc || !fees.disciplines.includes(disc)) return { error: `Discipline non reconnue pour le cours « ${group.name} »` };
   const applicable = fees.applicableTiers[disc] || [];
   // Un élève inscrit dans un cours "Baby" (Baby Judo / Baby Karaté) paie toujours le tarif Baby,
