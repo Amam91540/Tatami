@@ -5680,6 +5680,7 @@ function renderAll(){
   renderCompetitionsCalendarCard();
   renderExportCard();
   renderConvocTab();
+  renderCalendarCompetitionSelect();
   renderResultsTab();
   renderDisciplineCalendarCard();
 }
@@ -5694,7 +5695,7 @@ const TAB_RENDER_FNS = {
   presences: [renderPresencesTab, renderPresencesAlerts],
   groupes: [renderGroupsTab, renderIncompleteFichesSection, renderBeltPassageSection, renderBeltDiplomasSection, renderBeltValidatedSection],
   suivi: [renderSuiviTab, renderSuiviAlerts, renderCompetitionsCalendarCard, renderCotisationsCard, renderDisciplineCalendarCard],
-  convoc: [renderConvocTab],
+  convoc: [renderConvocTab, renderCalendarCompetitionSelect],
   resultats: [renderResultsTab],
   param: [renderDuplicateGroupsCard, renderDuplicateMembersCard, renderFamilySuggestionsCard, renderFamilyGroupsCard, renderAgeSettings, renderMembershipFeesSettings, renderAttestationSettings, renderImportedCompetitionsSettings, renderBackendSettings, renderAccountsCard, renderActivityLogCard, renderInactiveMembersCard, renderLicensePendingCard, renderArchiveCard, renderBirthdaysCard, renderExportCard]
 };
@@ -17022,25 +17023,47 @@ function renderCalendarOtherSearchResults(query){
     });
   });
 }
+// Corrigé le 17/09/2026 (v3) — Thomas : "j'ai des competitions le 10 octobre et elle n'apparaissent
+// pas dans les evenements a venir", persistant malgré les 2 correctifs précédents (source de données,
+// puis format de date). Vérification en direct dans sa console : competitionsWithinNext30Days()
+// renvoyait bien les 2 compétitions du 10 octobre — la fonction et les données étaient donc
+// parfaitement correctes. Le vrai bug : initCalendarCompetitionPicker() (qui remplit ce menu) n'était
+// appelée QU'UNE SEULE FOIS, tout en bas du script au chargement de la page (ligne ~21654) — avant que
+// loadData() (asynchrone) n'ait fini de récupérer les vraies données du classeur. Le menu se figeait
+// donc pour toute la session avec la liste (vide) du tout premier instant, et n'était jamais
+// régénéré ensuite, ni à l'arrivée des données, ni en changeant d'onglet. Scindé en deux : la
+// construction de la liste d'options (ci-dessous) est maintenant appelée à chaque rendu de l'onglet
+// Convocations (voir son ajout dans renderConvocTab()) ; le câblage des écouteurs d'événements reste
+// lui posé une seule fois (élément <select> statique du template HTML, jamais recréé) pour ne pas
+// empiler des doublons de gestionnaires à chaque rendu.
+function renderCalendarCompetitionSelect(){
+  const select = document.getElementById('calendarCompetitionSelect');
+  if(!select) return;
+  const session = getSession();
+  const isProf = !!(session && session.role==='prof');
+  const ownedGroupIds = isProf ? myOwnedGroupIds() : [];
+  // Même cloisonnement que renderCalendarOtherSearchResults : un prof ne voit dans ce menu que les
+  // compétitions rattachées à un de ses cours (l'admin, lui, voit toujours tout). Voir
+  // manualEventVisibleToProf (remplace depuis le 17/09/2026 importedCompetitionVisibleToProf, devenu
+  // inadapté maintenant que competitionsWithinNext30Days() lit directement data.calendarEvents — voir
+  // son commentaire). Une compétition désactivée n'apparaît jamais ici, pour personne.
+  const within30Days = competitionsWithinNext30Days().filter(c=> (!isProf || manualEventVisibleToProf(c, ownedGroupIds)) && c.disabled !== true);
+  // Préserve la sélection en cours (ex: reste sur "Autre…" après un rendu déclenché par autre chose
+  // pendant que l'utilisateur est en train de chercher une compétition dans ce mode).
+  const previousValue = select.value;
+  select.innerHTML = `<option value="">— Choisir une compétition —</option>` + within30Days.map(c=>{
+    const already = hasConvocationForCompetition(c) ? '✓ ' : '';
+    const dateLabel = effectiveCompetitionDate(c) ? fmtDate(effectiveCompetitionDate(c)) : c.dayLabel;
+    const levelPart = c.level ? ` (${c.level})` : '';
+    const label = `${already}${effectiveCompetitionName(c)}${levelPart} — ${dateLabel} · ${effectiveCompetitionCity(c)}`;
+    return `<option value="${escapeHtml(c.id)}">${escapeHtml(label)}</option>`;
+  }).join('') + `<option value="other">Autre…</option>`;
+  if(previousValue==='other' || within30Days.some(c=>c.id===previousValue)) select.value = previousValue;
+}
 function initCalendarCompetitionPicker(){
+  renderCalendarCompetitionSelect();
   const select = document.getElementById('calendarCompetitionSelect');
   if(select){
-    const session = getSession();
-    const isProf = !!(session && session.role==='prof');
-    const ownedGroupIds = isProf ? myOwnedGroupIds() : [];
-    // Même cloisonnement que renderCalendarOtherSearchResults : un prof ne voit dans ce menu que les
-    // compétitions rattachées à un de ses cours (l'admin, lui, voit toujours tout). Voir
-    // manualEventVisibleToProf (remplace depuis le 17/09/2026 importedCompetitionVisibleToProf, devenu
-    // inadapté maintenant que competitionsWithinNext30Days() lit directement data.calendarEvents — voir
-    // son commentaire). Une compétition désactivée n'apparaît jamais ici, pour personne.
-    const within30Days = competitionsWithinNext30Days().filter(c=> (!isProf || manualEventVisibleToProf(c, ownedGroupIds)) && c.disabled !== true);
-    select.innerHTML = `<option value="">— Choisir une compétition —</option>` + within30Days.map(c=>{
-      const already = hasConvocationForCompetition(c) ? '✓ ' : '';
-      const dateLabel = effectiveCompetitionDate(c) ? fmtDate(effectiveCompetitionDate(c)) : c.dayLabel;
-      const levelPart = c.level ? ` (${c.level})` : '';
-      const label = `${already}${effectiveCompetitionName(c)}${levelPart} — ${dateLabel} · ${effectiveCompetitionCity(c)}`;
-      return `<option value="${escapeHtml(c.id)}">${escapeHtml(label)}</option>`;
-    }).join('') + `<option value="other">Autre…</option>`;
     select.addEventListener('change', ()=>{
       const otherBox = document.getElementById('calendarCompetitionOtherBox');
       if(select.value === 'other'){
