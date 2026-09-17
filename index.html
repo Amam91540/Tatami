@@ -4411,7 +4411,7 @@ function familyPortalCalendarHtml(){
           <div class="cal-event type-${ev.type||'competition'}">
             <div class="cal-daybox"><div class="d">${validDate?d.getDate():'?'}</div><div class="m">${validDate?MONTH_NAMES_FR[d.getMonth()].slice(0,3):''}</div></div>
             <div class="cal-info">
-              <div class="n">${ev.type==='stage'?'🥋':'🏆'} ${escapeHtml(ev.name)}${cancelledBadgeHtml(ev.cancelled)}</div>
+              <div class="n">${calendarEventTypeIcon(ev.type)} ${escapeHtml(ev.name)}${cancelledBadgeHtml(ev.cancelled)}</div>
               <div class="e">${ev.dateEnd && ev.dateEnd!==ev.date ? fmtDateRange(ev.date, ev.dateEnd)+' — ' : ''}${escapeHtml(ev.city||'')}</div>
             </div>
           </div>`;
@@ -10413,8 +10413,9 @@ function renderManualEventRow(e){
         <div style="flex:1;">
           <span class="field-label">Type</span>
           <select data-field="type">
-            <option value="competition" ${e.type!=='stage'?'selected':''}>🏆 Compétition</option>
+            <option value="competition" ${e.type!=='stage' && e.type!=='event'?'selected':''}>🏆 Compétition</option>
             <option value="stage" ${e.type==='stage'?'selected':''}>🥋 Stage</option>
+            <option value="event" ${e.type==='event'?'selected':''}>📅 Événement</option>
           </select>
         </div>
         <div style="flex:1;">
@@ -10440,13 +10441,14 @@ function renderManualEventRow(e){
       </div>
       ${ageCategoryCheckboxesHtml(e.ageCategories!==undefined?e.ageCategories:[])}
       ${courseCheckboxesHtml(e.courseIds!==undefined?e.courseIds:[])}
+      ${calendarScheduleFieldsHtml(e)}
       <div class="row" style="margin-top:2px;">
         <button class="primary" data-action="save-manual-edit" style="flex:1;">✓ Enregistrer</button>
         <button class="ghost" data-action="cancel-manual-edit" style="flex:1;">Annuler</button>
       </div>
     </div>`;
   }
-  const typeBadge = e.type==='stage' ? '🥋' : '🏆';
+  const typeBadge = calendarEventTypeIcon(e.type);
   const cancelled = e.cancelled === true;
   const disabled = e.disabled === true;
   return `
@@ -10473,6 +10475,7 @@ function renderCalendarAddForm(){
         <select data-field="type">
           <option value="competition">🏆 Compétition</option>
           <option value="stage">🥋 Stage</option>
+          <option value="event">📅 Événement</option>
         </select>
       </div>
       <div style="flex:1;">
@@ -10498,11 +10501,75 @@ function renderCalendarAddForm(){
     </div>
     ${ageCategoryCheckboxesHtml([])}
     ${courseCheckboxesHtml([])}
+    ${calendarScheduleFieldsHtml({})}
     <div class="row" style="margin-top:2px;">
       <button class="primary" data-action="save-add-calendar-event" style="flex:1;">✓ Ajouter au calendrier</button>
       <button class="ghost" data-action="cancel-add-calendar-event" style="flex:1;">Annuler</button>
     </div>
   </div>`;
+}
+// Section "Horaires" du formulaire d'ajout/édition d'un événement calendrier — visible uniquement
+// pour le type "Événement" (📅), pas pour compétition/stage (demande explicite de Thomas du
+// 17/09/2026 : "les paramètres seront les mêmes que pour les compétitions [...] ajoutes par contre une
+// partie horaires"). Anticipe les 4 combinaisons possibles : pas d'horaire précisé, toute la journée,
+// une heure de début seule, ou un horaire de début ET de fin — voir calendarEventTimeLabel() pour le
+// formatage à l'affichage, et wireCalendarTypeAndSchedule() pour l'affichage/masquage dynamique selon
+// les choix faits dans le formulaire.
+function calendarScheduleFieldsHtml(e){
+  const mode = e.timeMode || 'none';
+  const isEvent = e.type==='event';
+  return `
+    <div data-schedule-wrap style="display:${isEvent?'block':'none'};">
+      <span class="field-label">Horaires</span>
+      <select data-field="timeMode">
+        <option value="none" ${mode==='none'?'selected':''}>Sans horaire précisé</option>
+        <option value="allday" ${mode==='allday'?'selected':''}>Toute la journée</option>
+        <option value="start" ${mode==='start'?'selected':''}>Heure de début uniquement</option>
+        <option value="range" ${mode==='range'?'selected':''}>Heure de début et de fin</option>
+      </select>
+      <div class="row" data-time-inputs style="margin-top:6px; display:${(mode==='start'||mode==='range')?'flex':'none'};">
+        <div style="flex:1;">
+          <span class="field-label">Heure de début</span>
+          <input type="time" data-field="startTime" value="${escapeHtml(e.startTime||'')}">
+        </div>
+        <div style="flex:1;" data-end-time-wrap>
+          <span class="field-label">Heure de fin</span>
+          <input type="time" data-field="endTime" value="${escapeHtml(e.endTime||'')}">
+        </div>
+      </div>
+    </div>`;
+}
+// Câble l'affichage/masquage dynamique du bloc Horaires (visible seulement pour type="event") et,
+// à l'intérieur, des champs heure de début/fin selon le mode choisi — sans re-rendre tout le
+// formulaire à chaque changement (on perdrait la saisie en cours dans les autres champs).
+function wireCalendarTypeAndSchedule(formEl){
+  const typeSelect = formEl.querySelector('[data-field="type"]');
+  const scheduleWrap = formEl.querySelector('[data-schedule-wrap]');
+  const timeModeSelect = formEl.querySelector('[data-field="timeMode"]');
+  const timeInputsRow = formEl.querySelector('[data-time-inputs]');
+  const endTimeWrap = formEl.querySelector('[data-end-time-wrap]');
+  function refresh(){
+    if(scheduleWrap) scheduleWrap.style.display = (typeSelect && typeSelect.value==='event') ? 'block' : 'none';
+    const mode = timeModeSelect ? timeModeSelect.value : 'none';
+    if(timeInputsRow) timeInputsRow.style.display = (mode==='start'||mode==='range') ? 'flex' : 'none';
+    if(endTimeWrap) endTimeWrap.style.display = mode==='range' ? '' : 'none';
+  }
+  if(typeSelect) typeSelect.addEventListener('change', refresh);
+  if(timeModeSelect) timeModeSelect.addEventListener('change', refresh);
+  refresh();
+}
+// Lit le bloc Horaires d'un formulaire (voir calendarScheduleFieldsHtml) et normalise le résultat
+// selon le mode choisi : on ne garde jamais une heure de fin orpheline si le mode n'est plus "range"
+// (ex: l'utilisateur avait rempli une heure de fin puis est repassé sur "Heure de début uniquement"),
+// pour ne jamais enregistrer une donnée incohérente avec le mode affiché.
+function readCalendarScheduleFromForm(formEl){
+  const timeModeEl = formEl.querySelector('[data-field="timeMode"]');
+  const mode = timeModeEl ? timeModeEl.value : 'none';
+  const startTimeEl = formEl.querySelector('[data-field="startTime"]');
+  const endTimeEl = formEl.querySelector('[data-field="endTime"]');
+  const startTime = (mode==='start' || mode==='range') && startTimeEl ? startTimeEl.value : '';
+  const endTime = mode==='range' && endTimeEl ? endTimeEl.value : '';
+  return { timeMode: mode, startTime, endTime };
 }
 function calendarRowFields(r){
   if(r.kind==='imported'){
@@ -10712,6 +10779,7 @@ function renderImportedCompetitionsSettings(){
   const addForm = wrap.querySelector('[data-form="add-calendar-event"]');
   if(addForm){
     wireAgeCategoryExclusivity(addForm);
+    wireCalendarTypeAndSchedule(addForm);
     const addFormApplyProfile = ()=>{
       const nameVal = addForm.querySelector('[data-field="name"]').value.trim();
       const cityVal = addForm.querySelector('[data-field="city"]').value.trim();
@@ -10758,6 +10826,7 @@ function renderImportedCompetitionsSettings(){
       const ageCategoriesVal = readAgeCategoriesFromForm(addForm);
       const courseIdsVal = readCourseIdsFromForm(addForm);
       const disciplineVal = deriveDisciplineFromCourseIds(courseIdsVal);
+      const scheduleVal = readCalendarScheduleFromForm(addForm);
       const entry = {
         id: uid(),
         type: addForm.querySelector('[data-field="type"]').value,
@@ -10769,6 +10838,9 @@ function renderImportedCompetitionsSettings(){
         ageCategories: ageCategoriesVal,
         discipline: disciplineVal,
         courseIds: courseIdsVal,
+        timeMode: scheduleVal.timeMode,
+        startTime: scheduleVal.startTime,
+        endTime: scheduleVal.endTime,
         createdByAccountId: ''
       };
       touchRow(entry);
@@ -10928,6 +11000,7 @@ function renderImportedCompetitionsSettings(){
   const manualEditForm = wrap.querySelector('[data-form="manual-edit"]');
   if(manualEditForm){
     wireAgeCategoryExclusivity(manualEditForm);
+    wireCalendarTypeAndSchedule(manualEditForm);
     manualEditForm.querySelector('[data-action="save-manual-edit"]').addEventListener('click', async ()=>{
       const id = manualEditForm.dataset.entryId;
       const entry = (data.calendarEvents||[]).find(e=>e.id===id);
@@ -10945,6 +11018,10 @@ function renderImportedCompetitionsSettings(){
       entry.ageCategories = readAgeCategoriesFromForm(manualEditForm);
       entry.courseIds = readCourseIdsFromForm(manualEditForm);
       entry.discipline = deriveDisciplineFromCourseIds(entry.courseIds);
+      const scheduleVal = readCalendarScheduleFromForm(manualEditForm);
+      entry.timeMode = scheduleVal.timeMode;
+      entry.startTime = scheduleVal.startTime;
+      entry.endTime = scheduleVal.endTime;
       touchRow(entry);
       saveCompetitionProfile(entry.name, entry.city, { address: entry.address, ageCategories: entry.ageCategories, discipline: entry.discipline, courseIds: entry.courseIds });
       saveData();
@@ -13426,8 +13503,8 @@ function buildCalendarTimelineHtml(entries){
         <div class="cal-event type-${en.type}">
           <div class="cal-daybox"><div class="d">${day}</div><div class="m">${MONTH_NAMES_FR[d.getMonth()].slice(0,3)}</div></div>
           <div class="cal-info">
-            <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}${validatedBadgeHtml(isPassed)}${cancelledBadgeHtml(en.cancelled)}${disabledBadgeHtml(en.disabled)}</div>
-            <div class="e">${en.dateEnd && en.dateEnd!==en.date ? fmtDateRange(en.date, en.dateEnd)+' — ' : ''}${escapeHtml(en.city||'')}</div>
+            <div class="n">${calendarEventTypeIcon(en.type)} ${escapeHtml(en.name)}${validatedBadgeHtml(isPassed)}${cancelledBadgeHtml(en.cancelled)}${disabledBadgeHtml(en.disabled)}</div>
+            <div class="e">${en.dateEnd && en.dateEnd!==en.date ? fmtDateRange(en.date, en.dateEnd)+' — ' : ''}${escapeHtml(en.city||'')}${calendarEventTimeLabel(en) ? ' · '+escapeHtml(calendarEventTimeLabel(en)) : ''}</div>
             <div class="cats">${catsHtml}</div>
           </div>
         </div>`;
@@ -14886,8 +14963,9 @@ function buildCalendarGridHtml(monthBlocks, logoSrc, title, showLegend){
               return `
               <div class="pdfcal-event type-${en.type}${cancelled?' is-cancelled':''}"${bgStyle}>
                 <div class="pce-day">${dayLabelHtml}</div>
-                <div class="pce-name">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}</div>
+                <div class="pce-name">${calendarEventTypeIcon(en.type)} ${escapeHtml(en.name)}</div>
                 ${en.city ? `<div class="pce-city">${escapeHtml(en.city)}</div>` : ''}
+                ${calendarEventTimeLabel(en) ? `<div class="pce-city">${escapeHtml(calendarEventTimeLabel(en))}</div>` : ''}
                 <div class="pce-cat"${hasCategory?'':' style="color:#B3492F; font-weight:700;"'}>${dotsHtml}<span>${escapeHtml(catLabel)}</span></div>
                 ${cancelled ? '<div class="pdfcal-cancelled-stamp">ANNULÉ</div>' : ''}
               </div>`;
@@ -15006,6 +15084,8 @@ function buildIcsFromEntries(entries, calendarName){
     const catList = en.ageCategories==='all' ? ['Toutes catégories'] : (Array.isArray(en.ageCategories) ? en.ageCategories : []);
     const descParts = [];
     if(catList.length) descParts.push('Catégorie(s) : ' + catList.join(', '));
+    const timeLabel = calendarEventTimeLabel(en);
+    if(timeLabel) descParts.push('Horaires : ' + timeLabel);
     if(en.cancelled) descParts.push('ÉVÉNEMENT ANNULÉ');
     const uid = (en.key||(en.name+en.date)).replace(/[^a-zA-Z0-9]+/g,'-') + '@' + (data.clubName||'club').replace(/[^a-zA-Z0-9]+/g,'-').toLowerCase() + '.calendrier';
     lines.push('BEGIN:VEVENT');
@@ -15013,7 +15093,7 @@ function buildIcsFromEntries(entries, calendarName){
     lines.push('DTSTAMP:' + nowStamp);
     lines.push('DTSTART;VALUE=DATE:' + icsDateStamp(en.date));
     lines.push('DTEND;VALUE=DATE:' + icsDateStamp(endExclusive));
-    lines.push(icsFoldLine('SUMMARY:' + icsEscapeText(`${en.type==='stage'?'Stage':'Compétition'} — ${en.name}${en.cancelled?' (ANNULÉ)':''}`)));
+    lines.push(icsFoldLine('SUMMARY:' + icsEscapeText(`${calendarEventTypeLabel(en.type)} — ${en.name}${en.cancelled?' (ANNULÉ)':''}`)));
     if(en.city) lines.push(icsFoldLine('LOCATION:' + icsEscapeText(en.city)));
     if(descParts.length) lines.push(icsFoldLine('DESCRIPTION:' + icsEscapeText(descParts.join(' — '))));
     lines.push('STATUS:' + (en.cancelled ? 'CANCELLED' : 'CONFIRMED'));
@@ -16028,6 +16108,36 @@ function calendarEntryAppliesToCategory(ageCategories, label){
   if(ageCategories==='all') return true;
   return Array.isArray(ageCategories) && ageCategories.includes(label);
 }
+// Icône/libellé d'un événement de calendrier selon son type — centralisé ici (demande Thomas du
+// 17/09/2026 : ajout d'un 3e type "événement" en plus de compétition/stage, avec les mêmes réglages
+// de ciblage — catégorie d'âge/cours — que les compétitions) pour que les ~12 endroits qui affichent
+// un événement (liste admin, Suivi annuel, PDF calendrier, calendrier prof, sélecteur de convocation,
+// export ICS...) restent synchrones sans dupliquer un ternaire à chaque fois.
+function calendarEventTypeIcon(type){
+  if(type==='stage') return '🥋';
+  if(type==='event') return '📅';
+  return '🏆'; // 'competition' (comportement historique par défaut)
+}
+function calendarEventTypeLabel(type){
+  if(type==='stage') return 'Stage';
+  if(type==='event') return 'Événement';
+  return 'Compétition';
+}
+// Formate les horaires d'un événement de calendrier — champ ajouté pour le type "événement" mais
+// générique (timeMode/startTime/endTime), pour rester réutilisable si un jour une compétition ou un
+// stage veut aussi préciser un horaire. Anticipe les 4 cas possibles (demande explicite de Thomas) :
+// pas d'horaire précisé, toute la journée, une heure de début seule, ou un horaire de début ET de fin.
+function calendarEventTimeLabel(e){
+  if(!e || !e.timeMode || e.timeMode==='none') return '';
+  if(e.timeMode==='allday') return 'Toute la journée';
+  const fmt = t => t ? String(t).replace(':','h') : '';
+  if(e.timeMode==='start') return e.startTime ? `à ${fmt(e.startTime)}` : '';
+  if(e.timeMode==='range'){
+    if(e.startTime && e.endTime) return `${fmt(e.startTime)} – ${fmt(e.endTime)}`;
+    if(e.startTime) return `à partir de ${fmt(e.startTime)}`;
+  }
+  return '';
+}
 function calendarCategoryTagsHtml(ageCategories){
   if(ageCategories==='all') return '<span class="tag">Toutes catégories</span>';
   if(Array.isArray(ageCategories) && ageCategories.length) return ageCategories.map(l=>`<span class="tag">${escapeHtml(l)}</span>`).join('');
@@ -16227,7 +16337,11 @@ function getAllCalendarEntries(){
     disabled: e.disabled === true,
     ageCategories: e.ageCategories!==undefined ? e.ageCategories : [],
     courseIds: e.courseIds,
-    validated: e.validated === true
+    validated: e.validated === true,
+    // Horaires (type "événement" uniquement pour l'instant) : sans ça, calendarEventTimeLabel()
+    // resterait toujours vide pour tout ce qui consomme getAllCalendarEntries() (PDF calendrier,
+    // Suivi annuel, calendrier prof, export ICS) — voir calendarScheduleFieldsHtml côté formulaire.
+    timeMode: e.timeMode || '', startTime: e.startTime || '', endTime: e.endTime || ''
   }));
   return [...imported, ...manual].filter(e=>e.date).sort((a,b)=> a.date.localeCompare(b.date));
 }
@@ -16651,7 +16765,7 @@ function openCalendarImportPreview(plan, discipline){
     <label class="iao-row">
       <input type="checkbox" data-kind="update" data-row-id="u${idx}" checked>
       <span>
-        <div class="iao-name">${incoming.type==='stage'?'🥋':'🏆'} ${escapeHtml(incoming.name)}</div>
+        <div class="iao-name">${calendarEventTypeIcon(incoming.type)} ${escapeHtml(incoming.name)}</div>
         <div class="iao-group">${existing.date ? fmtDate(existing.date) : 'pas de date'} → ${incoming.date ? fmtDate(incoming.date) : 'pas de date'}${incoming.city?' · '+escapeHtml(incoming.city):''}</div>
       </span>
     </label>`).join('');
@@ -16659,7 +16773,7 @@ function openCalendarImportPreview(plan, discipline){
     <label class="iao-row" style="background:rgba(154,170,107,0.08);">
       <input type="checkbox" data-kind="create" data-row-id="c${idx}" checked>
       <span>
-        <div class="iao-name">${incoming.type==='stage'?'🥋':'🏆'} ${escapeHtml(incoming.name)} <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Nouveau</span></div>
+        <div class="iao-name">${calendarEventTypeIcon(incoming.type)} ${escapeHtml(incoming.name)} <span class="tag" style="background:var(--tatami-dim); color:var(--tatami);">Nouveau</span></div>
         <div class="iao-group">${incoming.date?fmtDate(incoming.date):'pas de date'}${incoming.city?' · '+escapeHtml(incoming.city):''}</div>
       </span>
     </label>`).join('');
@@ -16822,7 +16936,7 @@ function pickCalendarEntryOther(entry){
   const noteWrap = document.getElementById('calendarCompetitionNote');
   if(noteWrap){
     noteWrap.innerHTML = `<div style="background:#F1F4EA; border-radius:8px; padding:10px 12px; margin-top:8px; font-size:12.5px; line-height:1.5;">
-      📋 <strong>Infos du calendrier</strong> — ${e.type==='stage'?'Stage':'Compétition'} ajouté(e) manuellement<br><em>Pas d'horaires de pesée disponibles — ajoute-les manuellement si besoin.</em>
+      📋 <strong>Infos du calendrier</strong> — ${calendarEventTypeLabel(e.type)} ajouté(e) manuellement<br><em>Pas d'horaires de pesée disponibles — ajoute-les manuellement si besoin.</em>
     </div>`;
   }
   saveNewConvocFormHidden(false);
@@ -16846,8 +16960,8 @@ function renderCalendarOtherSearchResults(query){
   wrap.innerHTML = matches.slice(0,50).map(en=>`
     <div class="convoc-row" data-action="pick-calendar-other" data-key="${escapeHtml(en.key)}" style="cursor:pointer;">
       <div class="info">
-        <div class="n">${en.type==='stage'?'🥋':'🏆'} ${escapeHtml(en.name)}</div>
-        <div class="e">${en.date?fmtDateRange(en.date, en.dateEnd):''} · ${escapeHtml(en.city||'')}</div>
+        <div class="n">${calendarEventTypeIcon(en.type)} ${escapeHtml(en.name)}</div>
+        <div class="e">${en.date?fmtDateRange(en.date, en.dateEnd):''} · ${escapeHtml(en.city||'')}${calendarEventTimeLabel(en) ? ' · '+escapeHtml(calendarEventTimeLabel(en)) : ''}</div>
       </div>
     </div>`).join('') || '<div class="empty" style="padding:10px;">Aucun résultat.</div>';
   wrap.querySelectorAll('[data-action="pick-calendar-other"]').forEach(row=>{
@@ -17107,6 +17221,7 @@ function scheduleWeightDisplay(r){
   const masc = [], fem = [], other = [];
   r.weights.forEach(w=>{
     if(w==='Toutes les féminines'){ fem.push({ order:999, text:'Toutes les féminines' }); return; }
+    if(w==='Tous les masculins'){ masc.push({ order:999, text:'Tous les masculins' }); return; }
     const gIdx = cats.g.indexOf(w);
     if(gIdx>-1){ masc.push({ order:gIdx, text:`${w} kg` }); return; }
     const fIdx = cats.f.indexOf(w);
@@ -17138,6 +17253,9 @@ function renderScheduleWeightField(r, idx){
     <div style="margin-top:6px; max-height:220px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px 10px;">
       <div class="small" style="margin-bottom:2px;">Garçons</div>
       ${cats.g.map(w=>`<label style="display:flex; gap:8px; align-items:center; padding:5px 0; font-size:13px;"><input type="checkbox" data-action="schedule-weight-check" data-idx="${idx}" value="${w}" ${selected.includes(w)?'checked':''}> ${w} kg</label>`).join('')}
+      <label style="display:flex; gap:8px; align-items:center; padding:5px 0 4px; font-size:13px; border-top:1px solid var(--line); margin-top:6px;">
+        <input type="checkbox" data-action="schedule-weight-check" data-idx="${idx}" value="Tous les masculins" ${selected.includes('Tous les masculins')?'checked':''}> Tous les masculins
+      </label>
       <div class="small" style="margin:8px 0 2px;">Filles</div>
       ${cats.f.map(w=>`<label style="display:flex; gap:8px; align-items:center; padding:5px 0; font-size:13px;"><input type="checkbox" data-action="schedule-weight-check" data-idx="${idx}" value="${w}" ${selected.includes(w)?'checked':''}> ${w} kg</label>`).join('')}
       <label style="display:flex; gap:8px; align-items:center; padding:8px 0 4px; font-size:13px; border-top:1px solid var(--line); margin-top:6px;">
@@ -17379,20 +17497,20 @@ function renderDisciplineCalendarCard(){
   const rowHtml = (r)=>{
     const f = r.kind==='imported' ? {
       name: effectiveCompetitionName(r.c), city: effectiveCompetitionCity(r.c),
-      icon: r.c.type==='stage' ? '🥋' : '🏆', mine: false, id: null, dateLabel: r.date?fmtDate(r.date):escapeHtml(r.c.dayLabel||''),
+      icon: calendarEventTypeIcon(r.c.type), mine: false, id: null, dateLabel: r.date?fmtDate(r.date):escapeHtml(r.c.dayLabel||''),
       ageCategories: importedCompetitionAgeCategories(r.c), courseIds: importedCompetitionCourses(r.c)
     } : {
       name: r.e.name||'', city: r.e.city||'',
-      icon: r.e.type==='stage' ? '🥋' : '🏆', mine: session.accountId && r.e.createdByAccountId===session.accountId,
+      icon: calendarEventTypeIcon(r.e.type), mine: session.accountId && r.e.createdByAccountId===session.accountId,
       id: r.e.id, dateLabel: r.e.date?fmtDateRange(r.e.date, r.e.dateEnd):'',
       ageCategories: r.e.ageCategories!==undefined ? r.e.ageCategories : [], courseIds: r.e.courseIds,
-      disabled: r.e.disabled === true
+      disabled: r.e.disabled === true, timeLabel: calendarEventTimeLabel(r.e)
     };
     return `
     <div class="convoc-row" data-row-key="${r.kind}-${escapeHtml(f.id||competitionKey(r.c))}" style="align-items:flex-start;">
       <div class="info">
         <div class="n">${f.icon} ${escapeHtml(f.name)}${f.mine?' <span class="tag">Ajouté par toi</span>':''}${disabledBadgeHtml(f.disabled)}</div>
-        <div class="e">${f.dateLabel}${f.city?' · '+escapeHtml(f.city):''}</div>
+        <div class="e">${f.dateLabel}${f.city?' · '+escapeHtml(f.city):''}${f.timeLabel?' · '+escapeHtml(f.timeLabel):''}</div>
         <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">${calendarCategoryTagsHtml(f.ageCategories)}${calendarCourseTagsHtml(f.courseIds)}</div>
       </div>
       ${f.mine ? `
