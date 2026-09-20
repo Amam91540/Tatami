@@ -10790,6 +10790,7 @@ function renderImportedCompetitionsSettings(){
   const addForm = wrap.querySelector('[data-form="add-calendar-event"]');
   if(addForm){
     wireAgeCategoryExclusivity(addForm);
+    wireCourseCheckboxesAllToggle(addForm);
     wireCalendarTypeAndSchedule(addForm);
     const addFormApplyProfile = ()=>{
       const nameVal = addForm.querySelector('[data-field="name"]').value.trim();
@@ -10903,7 +10904,7 @@ function renderImportedCompetitionsSettings(){
     renderImportedCompetitionsSettings();
   });
   const importedEditForm = wrap.querySelector('[data-form="imported-edit"]');
-  if(importedEditForm) wireAgeCategoryExclusivity(importedEditForm);
+  if(importedEditForm){ wireAgeCategoryExclusivity(importedEditForm); wireCourseCheckboxesAllToggle(importedEditForm); }
   const saveBtn = wrap.querySelector('[data-action="save-competition-edit"]');
   if(saveBtn) saveBtn.addEventListener('click', ()=>{
     const row = saveBtn.closest('[data-form]');
@@ -11011,6 +11012,7 @@ function renderImportedCompetitionsSettings(){
   const manualEditForm = wrap.querySelector('[data-form="manual-edit"]');
   if(manualEditForm){
     wireAgeCategoryExclusivity(manualEditForm);
+    wireCourseCheckboxesAllToggle(manualEditForm);
     wireCalendarTypeAndSchedule(manualEditForm);
     manualEditForm.querySelector('[data-action="save-manual-edit"]').addEventListener('click', async ()=>{
       const id = manualEditForm.dataset.entryId;
@@ -16245,13 +16247,37 @@ function courseCheckboxesHtml(courseIds, availableCourses){
   const courses = availableCourses || calendarSelectableCourses();
   if(courses.length===0) return '';
   const selected = Array.isArray(courseIds) ? courseIds : [];
+  // "Toutes les disciplines" (demande de Thomas du 20/09/2026) : simple raccourci qui coche/décoche
+  // d'un coup tous les cours listés ci-dessous — voir wireCourseCheckboxesAllToggle. Ne change rien au
+  // modèle de données : courseIds reste un tableau d'ids de cours individuels (tous cochés dans ce cas),
+  // donc aucun changement requis côté Code.gs/filterDataForRole.
+  const allChecked = courses.length>0 && courses.every(g=>selected.includes(g.id));
   return `
     <div>
       <span class="field-label">Cours concernés — coche au moins un cours pour que cet événement apparaisse chez le(s) prof(s) concerné(s). Sans cours coché, personne (aucun prof) ne le voit ; seul l'admin le voit toujours.</span>
       <div style="display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:4px;">
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600;"><input type="checkbox" data-all-courses ${allChecked?'checked':''}> Toutes les disciplines</label>
         ${courses.map(g=>`<label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" data-course="${escapeHtml(g.id)}" ${selected.includes(g.id)?'checked':''}> ${escapeHtml(g.name)}</label>`).join('')}
       </div>
     </div>`;
+}
+// Câble le raccourci "Toutes les disciplines" ci-dessus : le cocher/décocher répercute l'état sur
+// chaque case de cours individuelle ; à l'inverse, (dé)cocher une case individuelle met à jour l'état
+// de "Toutes les disciplines" (coché seulement si, désormais, tous les cours le sont). Sans effet si
+// le formulaire ne contient pas ces cases (ex: courseCheckboxesHtml a renvoyé '' faute de cours) —
+// donc appelable sans condition partout où wireAgeCategoryExclusivity l'est déjà.
+function wireCourseCheckboxesAllToggle(formEl){
+  const allBox = formEl.querySelector('[data-all-courses]');
+  if(!allBox) return;
+  const courseBoxes = Array.from(formEl.querySelectorAll('[data-course]'));
+  allBox.addEventListener('change', ()=>{
+    courseBoxes.forEach(cb=>{ cb.checked = allBox.checked; });
+  });
+  courseBoxes.forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      allBox.checked = courseBoxes.length>0 && courseBoxes.every(x=>x.checked);
+    });
+  });
 }
 function readCourseIdsFromForm(formEl){
   return Array.from(formEl.querySelectorAll('[data-course]:checked')).map(cb=>cb.dataset.course);
@@ -17718,6 +17744,7 @@ function renderDisciplineCalendarCard(){
   const addForm = wrap.querySelector('[data-form="add-own-calendar-event"]');
   if(addForm){
     wireAgeCategoryExclusivity(addForm);
+    wireCourseCheckboxesAllToggle(addForm);
     const saveOwnCalendarBtn = addForm.querySelector('[data-action="save-own-calendar-event"]');
     saveOwnCalendarBtn.addEventListener('click', async ()=>{
       // Garde-fou anti double-clic (voir save-add-calendar-event) : évite qu'un événement se
@@ -17766,6 +17793,7 @@ function renderDisciplineCalendarCard(){
   const editForm = wrap.querySelector('[data-form="edit-own-calendar-event"]');
   if(editForm){
     wireAgeCategoryExclusivity(editForm);
+    wireCourseCheckboxesAllToggle(editForm);
     editForm.querySelector('[data-action="save-edit-own-calendar-event"]').addEventListener('click', async ()=>{
       const id = editForm.dataset.entryId;
       const entry = (data.calendarEvents||[]).find(e=>e.id===id);
