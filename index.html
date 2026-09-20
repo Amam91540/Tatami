@@ -16230,18 +16230,32 @@ function calendarSelectableCourses(){
   return (data.groups||[]).filter(g=>!!courseToDiscipline(g.name)).sort((a,b)=>a.name.localeCompare(b.name,'fr'));
 }
 // Un événement manuel n'a plus de discipline choisie à la main par l'admin (voir suppression du
-// sélecteur de discipline dans renderManualEventRow/renderCalendarAddForm) : elle est déduite du
-// premier cours coché, uniquement pour le regroupement par discipline (disciplineCalendarRows) et
+// sélecteur de discipline dans renderManualEventRow/renderCalendarAddForm) : elle est déduite des
+// cours cochés, uniquement pour le regroupement par discipline (disciplineCalendarRows) et
 // l'affichage — elle n'a plus aucun rôle de sécurité (voir courseIds/manualEventVisibleToProf et
 // filterDataForRole côté Code.gs, qui cloisonnent désormais par cours et non plus par discipline).
+// Corrigé le 20/09/2026 (Thomas, suite à l'ajout de la case "Toutes les disciplines" dans le ciblage
+// par cours) : ne retenait QUE la discipline du premier cours coché — un événement ciblant plusieurs
+// disciplines à la fois affichait alors une seule discipline au hasard (celle du premier cours dans
+// l'ordre de data.groups), trompeur. Retourne maintenant 'Toutes les disciplines' dès que plus d'une
+// discipline distincte est représentée parmi les cours cochés — voir aussi disciplineCalendarRows,
+// mis à jour en conséquence pour que ces événements restent visibles par tous les profs concernés.
+// Utilise courseToCalendarDiscipline (pas courseToDiscipline) : c'est le même regroupement que
+// myCalendarDisciplines()/disciplineCalendarRows (Baby Judo/Baby Karate ramenés à Judo/Karate, Taïso
+// exclu faute de calendrier dédié) — avec courseToDiscipline, "Baby Judo" et "Judo Cours 1" cochés
+// ensemble comptaient à tort comme 2 disciplines distinctes ('Baby Judo' + 'Judo') et déclenchaient
+// inutilement "Toutes les disciplines", alors qu'il s'agit du même calendrier fédéral.
 function deriveDisciplineFromCourseIds(courseIds){
   const ids = Array.isArray(courseIds) ? courseIds : [];
+  const disciplines = [];
   for(const id of ids){
     const g = (data.groups||[]).find(x=>x.id===id);
-    const disc = g && courseToDiscipline(g.name);
-    if(disc) return disc;
+    const disc = g && courseToCalendarDiscipline(g.name);
+    if(disc && !disciplines.includes(disc)) disciplines.push(disc);
   }
-  return '';
+  if(disciplines.length === 0) return '';
+  if(disciplines.length > 1) return 'Toutes les disciplines';
+  return disciplines[0];
 }
 function courseCheckboxesHtml(courseIds, availableCourses){
   const courses = availableCourses || calendarSelectableCourses();
@@ -17585,8 +17599,11 @@ function disciplineCalendarRows(disciplines){
   const imported = [...visibleCompetitionCalendar()]
     .filter(c=> discSet.has(importedCompetitionDiscipline(c)) && importedCompetitionVisibleToProf(c, ownedGroupIds))
     .map(c=>({ kind:'imported', c, date: effectiveCompetitionDate(c) }));
+  // e.discipline==='Toutes les disciplines' (voir deriveDisciplineFromCourseIds, 20/09/2026) : un
+  // événement dont les cours cochés couvrent plusieurs disciplines à la fois doit rester visible dans
+  // le calendrier de CHAQUE discipline concernée, pas disparaître faute de correspondance exacte dans discSet.
   const manual = (data.calendarEvents||[])
-    .filter(e=> discSet.has(e.discipline) && manualEventVisibleToProf(e, ownedGroupIds))
+    .filter(e=> (discSet.has(e.discipline) || e.discipline==='Toutes les disciplines') && manualEventVisibleToProf(e, ownedGroupIds))
     .map(e=>({ kind:'manual', e, date: e.date||'' }));
   return [...imported, ...manual].sort((a,b)=> (a.date||'').localeCompare(b.date||''));
 }
