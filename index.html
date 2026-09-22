@@ -13275,6 +13275,13 @@ async function generateBlankRollCallPdf(groupId){
   }
 
   try{
+    // Corrigé le 22/09/2026 (Thomas : "peu importe le nombre il faut que tous les noms rentre sur la
+    // meme page ... un cours = une page, meme si ils sont plus nombreux") : contrairement aux autres
+    // PDF de l'appli qui utilisent paginateRowsIntoPdf (plusieurs pages si le contenu déborde), cette
+    // feuille tient TOUJOURS sur une seule page, quel que soit l'effectif du cours — on capture le
+    // tableau entier en une seule image, puis on la réduit (jamais agrandie) pour qu'elle tienne dans
+    // les marges d'une page A4, comme un "ajuster à la page" d'imprimante. Avec un gros effectif, le
+    // texte devient simplement plus petit à l'impression plutôt que de déborder sur une 2e page.
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
     const { jsPDF } = window.jspdf;
@@ -13282,27 +13289,51 @@ async function generateBlankRollCallPdf(groupId){
     const margin = 24;
 
     const emptyCols = Array.from({ length: BLANK_ROLLCALL_COLUMNS }, ()=> `<th style="width:26px; padding:5px 2px;">&nbsp;</th>`).join('');
-    const rows = members.map(m=>{
+    const rowsHtml = members.map(m=>{
       const cells = Array.from({ length: BLANK_ROLLCALL_COLUMNS }, ()=> `<td style="width:26px; height:22px; border-left:1px solid #ddd;"></td>`).join('');
-      return { html: `<td style="white-space:nowrap;">${nameWithBoldSurname(m.name)}</td><td style="white-space:nowrap; font-size:11px; color:var(--ink-dim);">${escapeHtml(fmtDateShort(m.birthDate))}</td>${cells}`, isDivider:false, categoryLabel:null };
-    });
+      return `<tr><td style="white-space:nowrap;">${nameWithBoldSurname(m.name)}</td><td style="white-space:nowrap; font-size:11px; color:var(--ink-dim);">${escapeHtml(fmtDateShort(m.birthDate))}</td>${cells}</tr>`;
+    }).join('');
     const widthPx = 300 + BLANK_ROLLCALL_COLUMNS*26;
-    const buildContextHtml = (isFirst)=> !isFirst ? '' : `
+
+    const container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.left = '-9999px';
+    container.style.top = '0';
+    container.className = 'recap-doc';
+    container.style.width = widthPx+'px';
+    container.innerHTML = `
       <div class="recap-header">
         ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
         <div>
           <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
           <div class="rh-sub">Feuille d'appel — ${escapeHtml(g.name)}</div>
         </div>
-      </div>`;
-    await paginateRowsIntoPdf(pdf, {
-      rows,
-      tableHeadHtml: `<th style="white-space:nowrap;">Élève</th><th style="white-space:nowrap;">Né(e) le</th>${emptyCols}`,
-      buildContextHtml,
-      containerClass: 'recap-doc',
-      containerWidthPx: widthPx,
-      margin
-    });
+      </div>
+      <table class="recap-table"><tr><th style="white-space:nowrap;">Élève</th><th style="white-space:nowrap;">Né(e) le</th>${emptyCols}</tr>${rowsHtml}</table>`;
+    document.body.appendChild(container);
+    await waitForImages(container);
+    const domWidthPx = container.getBoundingClientRect().width;
+    const domHeightPx = container.getBoundingClientRect().height;
+    let imgData;
+    try{
+      const canvas = await html2canvas(container, { scale:2, backgroundColor:'#ffffff', useCORS:true });
+      imgData = canvas.toDataURL('image/jpeg', 0.9);
+    } finally {
+      document.body.removeChild(container);
+    }
+
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const availW = pageWidth - margin*2;
+    const availH = pageHeight - margin*2;
+    // On ne réduit JAMAIS en dessous de sa taille naturelle si peu d'élèves (Math.min(1, ...)) —
+    // seulement réduire si ça déborde, jamais agrandir un petit effectif jusqu'à remplir toute la page.
+    const fitRatio = Math.min(1, availW/domWidthPx, availH/domHeightPx);
+    const imgW = domWidthPx * fitRatio;
+    const imgH = domHeightPx * fitRatio;
+    const x = margin + (availW - imgW)/2;
+    const y = margin;
+    pdf.addImage(imgData, 'JPEG', x, y, imgW, imgH);
 
     const safeName = g.name.replace(/[^\w-]+/g,'-');
     pdf.save(`feuille-appel-${safeName}.pdf`);
