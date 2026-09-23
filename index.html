@@ -8536,25 +8536,27 @@ function memberLastName(m){
   return parts.length>1 ? parts.slice(1).join(' ') : '';
 }
 // Nom de famille toujours en MAJUSCULES sur la fiche (convention "Prénom NOM" des formulaires
-// officiels) — demande de Thomas du 19/08/2026. Seule la partie après le prénom passe en capitales,
-// jamais le prénom lui-même. Utilisées à la création (ajout manuel — openQuickAddMemberOverlay,
-// import Excel — importWorkbookMultiSheet/importSingleList) et à la modification (édition de fiche —
-// écouteur "edit-lastname"/"edit-firstname") d'une fiche élève, ainsi que par la migration une fois
-// (uppercaseMemberLastNamesOnce, plus bas) pour les fiches déjà importées avant ce correctif.
+// officiels) — demande de Thomas du 19/08/2026. Prénom mis en casse "Titre" (1ère lettre en
+// majuscule, le reste en minuscule) — demande de Thomas du 23/09/2026 : "pour les premoms, ... que
+// la 1ere lettre en majuscule et le reste du prénom en minuscule". Utilisées à la création (ajout
+// manuel — openQuickAddMemberOverlay, import Excel — importWorkbookMultiSheet/importSingleList) et à
+// la modification (édition de fiche — écouteur "edit-lastname"/"edit-firstname") d'une fiche élève,
+// ainsi que par les migrations une fois (uppercaseMemberLastNamesOnce/titleCaseMemberFirstNamesOnce,
+// plus bas) pour les fiches déjà importées avant ces correctifs.
 function formatMemberFullName(prenom, nom){
-  const p = String(prenom||'').trim();
+  const p = toTitleCase(prenom);
   const n = String(nom||'').trim().toUpperCase();
   return [p, n].filter(Boolean).join(' ');
 }
 // Même règle que formatMemberFullName ci-dessus, mais appliquée à un nom déjà combiné en un seul
 // champ ("Prénom Nom") — utile quand on ne dispose que d'une seule valeur texte (import "coller une
 // liste" — importSingleList, migration des fiches déjà en base) plutôt que de deux champs Prénom/Nom
-// séparés. Même découpage que memberLastName ci-dessus : le premier mot est le prénom (jamais
-// retouché), tout le reste est le nom de famille.
+// séparés. Même découpage que memberLastName ci-dessus : le premier mot est le prénom (mis en casse
+// "Titre"), tout le reste est le nom de famille (mis en MAJUSCULES).
 function uppercaseLastNameInFullName(fullName){
   const parts = String(fullName||'').trim().split(/\s+/).filter(Boolean);
-  if(parts.length<=1) return parts[0]||'';
-  const prenom = parts[0];
+  if(parts.length<=1) return toTitleCase(parts[0]||'');
+  const prenom = toTitleCase(parts[0]);
   const nom = parts.slice(1).join(' ').toUpperCase();
   return `${prenom} ${nom}`;
 }
@@ -21508,6 +21510,10 @@ function backfillLinkedMemberWeightCategoryOnce(){
 // parfaitement idempotente, et se relance sans risque ni coût notable à chaque chargement (juste une
 // comparaison de chaîne par fiche une fois toutes les fiches déjà à jour) — ce qui rattrape aussi sans
 // effort une fiche pas encore synchronisée sur un autre appareil.
+// Corrigé le 23/09/2026 (Thomas : prénom en casse "Titre", voir formatMemberFullName ci-dessus) :
+// uppercaseLastNameInFullName gère désormais les DEUX à la fois (nom de famille en MAJUSCULES +
+// prénom en casse "Titre"), donc ce rattrapage corrige maintenant aussi le prénom des fiches déjà en
+// base — pas besoin d'une seconde migration séparée.
 function uppercaseMemberLastNamesOnce(){
   let changed = false;
   data.members.forEach(m=>{
