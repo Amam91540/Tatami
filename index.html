@@ -13280,49 +13280,85 @@ async function generateBlankRollCallPdf(groupId){
     // Corrigé le 22/09/2026 (Thomas : "peu importe le nombre il faut que tous les noms rentre sur la
     // meme page ... un cours = une page, meme si ils sont plus nombreux") : contrairement aux autres
     // PDF de l'appli qui utilisent paginateRowsIntoPdf (plusieurs pages si le contenu déborde), cette
-    // feuille tient TOUJOURS sur une seule page, quel que soit l'effectif du cours — on capture le
-    // tableau entier en une seule image, puis on l'ajuste à la page A4 comme un "ajuster à la page"
-    // d'imprimante. Avec un gros effectif, le texte devient simplement plus petit à l'impression
-    // plutôt que de déborder sur une 2e page.
+    // feuille tient TOUJOURS sur une seule page, quel que soit l'effectif du cours.
     // Ajusté le 23/09/2026 (Thomas : "il est vachement centrée au milieu, décales le plus possible sur
-    // les coté de la page et reduit la marge") : l'ancienne version réduisait largeur ET hauteur avec
-    // le MÊME ratio (pour ne jamais déformer le tableau) — avec beaucoup d'élèves, la hauteur devenait
-    // le facteur limitant et forçait à réduire la largeur bien plus que nécessaire, laissant de grandes
-    // marges vides à gauche/droite ("centré"). La largeur est désormais TOUJOURS étirée pour remplir
-    // exactement la largeur imprimable (comme le fait "Ajuster à une page" dans Excel/Numbers, qui
-    // applique des facteurs horizontal/vertical indépendants) ; seule la hauteur reste réduite (jamais
-    // agrandie) pour ne jamais déborder sur une 2e page. Marge réduite de 24 à 10pt.
+    // les coté de la page et reduit la marge") — 1ère tentative : étirer largeur et hauteur avec des
+    // facteurs INDÉPENDANTS. Résultat rejeté par Thomas ("le pdf n'est pas bon du tout ... je te
+    // demandais juste de reduire les marges et d'ecrire les noms plus a gauche ... et aussi plus a
+    // droite") : un facteur différent en largeur et en hauteur déforme le texte (lettres étirées),
+    // visuellement mauvais.
+    // Refait le 23/09/2026 (v3) : plus AUCUNE déformation — un seul et même facteur d'échelle pour
+    // largeur ET hauteur (comme avant), mais on calcule maintenant la hauteur de chaque ligne du
+    // tableau (et la taille de police) à l'AVANCE, en fonction du nombre d'élèves, pour que le tableau
+    // remplisse déjà naturellement toute la largeur ET toute la hauteur disponibles avant capture —
+    // au lieu de partir d'une taille fixe puis de réduire après coup (ce qui laissait des marges).
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4', orientation:'portrait' });
-    const margin = 10;
+    const margin = 8;
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const availW = pageWidth - margin*2;
+    const availH = pageHeight - margin*2;
 
-    const emptyCols = Array.from({ length: BLANK_ROLLCALL_COLUMNS }, ()=> `<th style="width:26px; padding:5px 2px;">&nbsp;</th>`).join('');
+    const CONTAINER_WIDTH_PX = 300 + BLANK_ROLLCALL_COLUMNS*26; // largeur de travail arbitraire, mise à l'échelle ensuite (ratio unique)
+    const CONTAINER_PADDING_PX = 10;
+    const ptPerPx = availW / CONTAINER_WIDTH_PX; // ratio UNIQUE appliqué en largeur ET en hauteur : jamais de déformation
+
+    const headerHtml = `
+      <div class="recap-header" style="margin-bottom:8px; padding-bottom:6px;">
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="height:36px;">` : ''}
+        <div>
+          <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
+          <div class="rh-sub">Feuille d'appel — ${escapeHtml(g.name)}</div>
+        </div>
+      </div>`;
+    const emptyColsHead = Array.from({ length: BLANK_ROLLCALL_COLUMNS }, ()=> `<th style="width:26px; padding:3px 2px;">&nbsp;</th>`).join('');
+    const theadHtml = `<tr><th style="white-space:nowrap; padding:4px 8px;">Élève</th><th style="white-space:nowrap; padding:4px 8px;">Né(e) le</th>${emptyColsHead}</tr>`;
+
+    // 1) Mesure la partie fixe (en-tête + ligne d'en-tête du tableau), indépendante du nombre
+    // d'élèves, pour savoir combien de hauteur il reste à répartir entre les lignes élèves.
+    const measureEl = document.createElement('div');
+    measureEl.style.position = 'absolute';
+    measureEl.style.left = '-9999px';
+    measureEl.style.top = '0';
+    measureEl.style.boxSizing = 'border-box';
+    measureEl.className = 'recap-doc';
+    measureEl.style.width = CONTAINER_WIDTH_PX+'px';
+    measureEl.style.padding = CONTAINER_PADDING_PX+'px';
+    measureEl.innerHTML = headerHtml + `<table class="recap-table" style="border-collapse:collapse;">${theadHtml}</table>`;
+    document.body.appendChild(measureEl);
+    const fixedHeightPx = measureEl.getBoundingClientRect().height;
+    document.body.removeChild(measureEl);
+
+    // 2) Budget de hauteur restant pour les lignes élèves, réparti équitablement (petite marge de
+    // sécurité pour absorber les écarts d'arrondi entre la mesure et le rendu final).
+    const targetDomHeightPx = (availH / ptPerPx) - 4;
+    const rowBudgetPx = Math.max(4, (targetDomHeightPx - fixedHeightPx) / members.length);
+    const BASE_ROW_HEIGHT_PX = 22;
+    const rowHeightPx = Math.min(BASE_ROW_HEIGHT_PX, rowBudgetPx);
+    const fontPx = Math.max(4, Math.min(11, rowHeightPx*0.55));
+    const dateFontPx = Math.max(4, fontPx-1.5);
+
+    // 3) Construit la vraie feuille avec cette hauteur de ligne calculée — line-height fixe (au lieu
+    // de padding) pour une hauteur de ligne garantie, indépendante du rendu des polices.
     const rowsHtml = members.map(m=>{
-      const cells = Array.from({ length: BLANK_ROLLCALL_COLUMNS }, ()=> `<td style="width:26px; height:22px; border-left:1px solid #ddd;"></td>`).join('');
-      return `<tr><td style="white-space:nowrap;">${nameWithBoldSurname(m.name)}</td><td style="white-space:nowrap; font-size:11px; color:var(--ink-dim);">${escapeHtml(fmtDateShort(m.birthDate))}</td>${cells}</tr>`;
+      const cells = Array.from({ length: BLANK_ROLLCALL_COLUMNS }, ()=> `<td style="width:26px; height:${rowHeightPx}px; line-height:${rowHeightPx}px; padding:0; border-left:1px solid #ddd;"></td>`).join('');
+      return `<tr><td style="white-space:nowrap; padding:0 8px; height:${rowHeightPx}px; line-height:${rowHeightPx}px; font-size:${fontPx}px;">${nameWithBoldSurname(m.name)}</td><td style="white-space:nowrap; padding:0 8px; height:${rowHeightPx}px; line-height:${rowHeightPx}px; font-size:${dateFontPx}px; color:var(--ink-dim);">${escapeHtml(fmtDateShort(m.birthDate))}</td>${cells}</tr>`;
     }).join('');
-    const widthPx = 300 + BLANK_ROLLCALL_COLUMNS*26;
 
     const container = document.createElement('div');
     container.style.position = 'absolute';
     container.style.left = '-9999px';
     container.style.top = '0';
+    container.style.boxSizing = 'border-box';
     container.className = 'recap-doc';
-    container.style.width = widthPx+'px';
-    container.innerHTML = `
-      <div class="recap-header">
-        ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
-        <div>
-          <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
-          <div class="rh-sub">Feuille d'appel — ${escapeHtml(g.name)}</div>
-        </div>
-      </div>
-      <table class="recap-table"><tr><th style="white-space:nowrap;">Élève</th><th style="white-space:nowrap;">Né(e) le</th>${emptyCols}</tr>${rowsHtml}</table>`;
+    container.style.width = CONTAINER_WIDTH_PX+'px';
+    container.style.padding = CONTAINER_PADDING_PX+'px';
+    container.innerHTML = headerHtml + `<table class="recap-table" style="border-collapse:collapse; width:100%;"><thead>${theadHtml}</thead><tbody>${rowsHtml}</tbody></table>`;
     document.body.appendChild(container);
     await waitForImages(container);
-    const domWidthPx = container.getBoundingClientRect().width;
     const domHeightPx = container.getBoundingClientRect().height;
     let imgData;
     try{
@@ -13332,19 +13368,13 @@ async function generateBlankRollCallPdf(groupId){
       document.body.removeChild(container);
     }
 
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const availW = pageWidth - margin*2;
-    const availH = pageHeight - margin*2;
-    // Largeur toujours étirée pour remplir exactement la page (jamais de marges latérales "en trop") ;
-    // hauteur seulement réduite si besoin (jamais agrandie) pour tenir sur une seule page.
-    const scaleX = availW / domWidthPx;
-    const scaleY = Math.min(1, availH / domHeightPx);
-    const imgW = domWidthPx * scaleX;
-    const imgH = domHeightPx * scaleY;
-    const x = margin;
-    const y = margin;
-    pdf.addImage(imgData, 'JPEG', x, y, imgW, imgH);
+    // Un seul et même ratio (ptPerPx) pour largeur ET hauteur : la largeur remplit toujours exactement
+    // la page (imgW = availW), et la hauteur — dimensionnée à l'étape 2 pour tenir — ne dépasse
+    // normalement jamais availH ; le Math.min est juste un garde-fou contre un éventuel écart
+    // d'arrondi, pour ne JAMAIS déborder sur une 2e page.
+    const imgW = availW;
+    const imgH = Math.min(availH, domHeightPx * ptPerPx);
+    pdf.addImage(imgData, 'JPEG', margin, margin, imgW, imgH);
 
     const safeName = g.name.replace(/[^\w-]+/g,'-');
     pdf.save(`feuille-appel-${safeName}.pdf`);
