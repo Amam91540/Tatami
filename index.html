@@ -13279,14 +13279,22 @@ async function generateBlankRollCallPdf(groupId){
     // meme page ... un cours = une page, meme si ils sont plus nombreux") : contrairement aux autres
     // PDF de l'appli qui utilisent paginateRowsIntoPdf (plusieurs pages si le contenu déborde), cette
     // feuille tient TOUJOURS sur une seule page, quel que soit l'effectif du cours — on capture le
-    // tableau entier en une seule image, puis on la réduit (jamais agrandie) pour qu'elle tienne dans
-    // les marges d'une page A4, comme un "ajuster à la page" d'imprimante. Avec un gros effectif, le
-    // texte devient simplement plus petit à l'impression plutôt que de déborder sur une 2e page.
+    // tableau entier en une seule image, puis on l'ajuste à la page A4 comme un "ajuster à la page"
+    // d'imprimante. Avec un gros effectif, le texte devient simplement plus petit à l'impression
+    // plutôt que de déborder sur une 2e page.
+    // Ajusté le 23/09/2026 (Thomas : "il est vachement centrée au milieu, décales le plus possible sur
+    // les coté de la page et reduit la marge") : l'ancienne version réduisait largeur ET hauteur avec
+    // le MÊME ratio (pour ne jamais déformer le tableau) — avec beaucoup d'élèves, la hauteur devenait
+    // le facteur limitant et forçait à réduire la largeur bien plus que nécessaire, laissant de grandes
+    // marges vides à gauche/droite ("centré"). La largeur est désormais TOUJOURS étirée pour remplir
+    // exactement la largeur imprimable (comme le fait "Ajuster à une page" dans Excel/Numbers, qui
+    // applique des facteurs horizontal/vertical indépendants) ; seule la hauteur reste réduite (jamais
+    // agrandie) pour ne jamais déborder sur une 2e page. Marge réduite de 24 à 10pt.
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4', orientation:'portrait' });
-    const margin = 24;
+    const margin = 10;
 
     const emptyCols = Array.from({ length: BLANK_ROLLCALL_COLUMNS }, ()=> `<th style="width:26px; padding:5px 2px;">&nbsp;</th>`).join('');
     const rowsHtml = members.map(m=>{
@@ -13326,12 +13334,13 @@ async function generateBlankRollCallPdf(groupId){
     const pageHeight = pdf.internal.pageSize.getHeight();
     const availW = pageWidth - margin*2;
     const availH = pageHeight - margin*2;
-    // On ne réduit JAMAIS en dessous de sa taille naturelle si peu d'élèves (Math.min(1, ...)) —
-    // seulement réduire si ça déborde, jamais agrandir un petit effectif jusqu'à remplir toute la page.
-    const fitRatio = Math.min(1, availW/domWidthPx, availH/domHeightPx);
-    const imgW = domWidthPx * fitRatio;
-    const imgH = domHeightPx * fitRatio;
-    const x = margin + (availW - imgW)/2;
+    // Largeur toujours étirée pour remplir exactement la page (jamais de marges latérales "en trop") ;
+    // hauteur seulement réduite si besoin (jamais agrandie) pour tenir sur une seule page.
+    const scaleX = availW / domWidthPx;
+    const scaleY = Math.min(1, availH / domHeightPx);
+    const imgW = domWidthPx * scaleX;
+    const imgH = domHeightPx * scaleY;
+    const x = margin;
     const y = margin;
     pdf.addImage(imgData, 'JPEG', x, y, imgW, imgH);
 
