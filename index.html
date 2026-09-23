@@ -13222,7 +13222,12 @@ async function generateCourseAttendancePdf(groupId){
         }).join('');
         return { html: `<td style="white-space:nowrap;">${nameWithBoldSurname(m.name)}</td>${cells}`, isDivider:false, categoryLabel:null };
       });
-      const widthPx = 220 + batch.length*36;
+      // Largeur minimale de 500px (bug remonté par Thomas le 23/09/2026) : avec très peu de séances
+      // déjà enregistrées (typiquement en tout début de saison — un seul créneau au 08/09 par ex.),
+      // 220 + batch.length*36 donnait un tableau bien trop étroit pour l'en-tête (nom du club, logo),
+      // qui se retrouvait alors coupé/tronqué à la capture ("ACADÉMIE..." coupé en "ACAD..."). Un
+      // batch de moins de 8 séances ne réduit donc plus la largeur en-dessous de 500px.
+      const widthPx = Math.max(500, 220 + batch.length*36);
       const buildContextHtml = (isFirst)=> !isFirst ? '' : `
         <div class="recap-header">
           ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
@@ -13238,7 +13243,13 @@ async function generateCourseAttendancePdf(groupId){
         buildContextHtml,
         containerClass: 'recap-doc',
         containerWidthPx: widthPx,
-        margin
+        margin,
+        // Ce tableau n'a jamais de bandeau "(suite)" (pas de dividerType posé sur ses lignes) : pas
+        // besoin de réserver les 170px par défaut, réservés aux PDF avec des divisions par
+        // événement/catégorie (résultats, palmarès...). Avec un tableau étroit en tout début de
+        // saison (peu de séances), cette réserve fixe dévorait la quasi-totalité de la hauteur utile
+        // une fois reconvertie à l'échelle du tableau (d'où le "seulement 4 élèves par page").
+        dividerSafetyPx: 0
       });
     }
 
@@ -19823,7 +19834,7 @@ function addCanvasFitOrTop(pdf, canvas, margin){
 // Rend un tableau (contexte + en-tête + lignes) sur une ou plusieurs pages PDF, en garantissant
 // qu'aucune ligne n'est jamais coupée entre deux pages : on mesure la hauteur réelle de chaque
 // ligne au préalable, puis on répartit les lignes en pages entières avant de générer les images.
-async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml, containerClass, containerWidthPx, margin, scale }){
+async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml, containerClass, containerWidthPx, margin, scale, dividerSafetyPx }){
   const probe = document.createElement('div');
   probe.style.position = 'absolute';
   probe.style.left = '-9999px';
@@ -19851,8 +19862,15 @@ async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml,
   const ptPerPx = imgWidthPt / containerWidthPx;
   // Marge de sécurité : une page qui reprend un événement et/ou une catégorie coupée reçoit
   // un ou deux bandeaux "(suite)" dont la hauteur n'est pas mesurée à l'avance — on réserve
-  // donc une marge pour ne jamais déborder.
-  const DIVIDER_SAFETY_PX = 170;
+  // donc une marge pour ne jamais déborder. Uniquement utile aux appelants qui posent
+  // isDivider/dividerType sur leurs lignes (résultats, palmarès...) — les autres (suivi de
+  // présence, anniversaires, stages...) n'ont jamais de bandeau "(suite)" et peuvent donc passer
+  // dividerSafetyPx:0 pour ne pas perdre inutilement de la hauteur de page disponible (bug
+  // remonté par Thomas le 23/09/2026 : le suivi de présence, avec très peu de séances enregistrées
+  // en tout début de saison, n'affichait que 4 élèves par page — cette marge fixe de 170px, une
+  // fois reconvertie via ptPerPx pour un tableau très étroit à ce stade de l'année, dévorait la
+  // quasi-totalité de la hauteur utile).
+  const DIVIDER_SAFETY_PX = (typeof dividerSafetyPx === 'number') ? dividerSafetyPx : 170;
   const usableHeightPx = (pageHeight - margin*2) / ptPerPx - DIVIDER_SAFETY_PX;
 
   let curEventLabel = null, curEventDate = null, curCategoryLabel = null;
