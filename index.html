@@ -4327,9 +4327,14 @@ function familyPortalConvocationsHtml(){
       const statusLine = r.response
         ? `<div class="fp-empty" style="margin:2px 0 6px;">Réponse enregistrée${r.respondedAt?' le '+fmtDate(r.respondedAt):''} — tu peux la modifier à tout moment.</div>`
         : '';
+      // Le bouton correspondant à la réponse DÉJÀ enregistrée est désactivé (demande de Thomas du
+      // 24/09/2026, suite à 30 emails reçus après des clics répétés sur "Présent(e)") — re-cliquer
+      // dessus ne servirait à rien. L'AUTRE bouton reste actif pour changer d'avis à tout moment. Le
+      // serveur (familyPortalRespond) reste de toute façon la vraie protection contre un email en
+      // double (ceci n'est qu'un confort d'affichage, pas la seule protection).
       const buttonsHtml = `<div style="display:flex; gap:8px; margin-top:6px;">
-             <button class="ghost" data-fp-respond="present" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px; ${presentStyle}">✅ Présent(e)</button>
-             <button class="ghost" data-fp-respond="absent" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px; ${absentStyle}">❌ Absent(e)</button>
+             <button class="ghost" data-fp-respond="present" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px; ${presentStyle}" ${presentActive?'disabled':''}>✅ Présent(e)</button>
+             <button class="ghost" data-fp-respond="absent" data-event="${ev.id}" data-member="${m.id}" style="flex:1; padding:8px; ${absentStyle}" ${absentActive?'disabled':''}>❌ Absent(e)</button>
            </div>`;
       return `<div style="margin-bottom:10px;"><div class="fp-member-label" style="margin:0 0 4px;">${escapeHtml(m.name)}</div>${statusLine}${buttonsHtml}</div>`;
     }).join('');
@@ -4346,7 +4351,14 @@ function familyPortalConvocationsHtml(){
 }
 function wireFamilyPortalConvocations(body){
   body.querySelectorAll('[data-fp-respond]').forEach(btn=>{
-    btn.addEventListener('click', ()=> familyPortalRespond(btn.dataset.event, btn.dataset.member, btn.dataset.fpRespond));
+    // Désactivé immédiatement au clic (en plus du disabled déjà posé sur la réponse déjà enregistrée,
+    // voir familyPortalConvocationsHtml) : empêche un double-clic rapide de partir en double PENDANT
+    // l'aller-retour réseau, avant que le nouveau rendu (avec le bon bouton disabled) n'arrive.
+    btn.addEventListener('click', ()=>{
+      if(btn.disabled) return;
+      btn.disabled = true;
+      familyPortalRespond(btn.dataset.event, btn.dataset.member, btn.dataset.fpRespond).finally(()=>{ btn.disabled = false; });
+    });
   });
 }
 async function familyPortalRespond(eventId, memberId, status){
