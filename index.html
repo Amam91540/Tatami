@@ -14666,12 +14666,19 @@ const BORDEREAU_MAX_LINES = 13;
 // annulé ni rejeté) à un bordereau DÈS son enregistrement — plus besoin de cliquer sur "Générer" pour
 // qu'il rejoigne un folio. Demande de Thomas (28/08/2026) : le bordereau doit refléter TOUS les
 // paiements de la section, pas seulement ceux physiquement déposés en banque (le Chèque Sport garde
-// PAR AILLEURS son attestation dédiée, mais apparaît désormais aussi ici). On le pose sur le folio
-// "ouvert" de sa section (le plus récent qui n'a pas encore été généré en PDF, voir log.pdfGenerated)
-// tant qu'il reste de la place (BORDEREAU_MAX_LINES) ; sinon, ou si aucun folio ouvert n'existe, on en
-// ouvre un nouveau. Un folio reste "ouvert" — donc continue à récupérer les paiements suivants — tant
-// qu'il n'a pas atteint la limite de lignes ET que son PDF n'a pas été généré (le clic sur "📄 Générer
-// le PDF" dans l'aperçu le referme ; "💾 Enregistrer sans générer" le laisse ouvert).
+// PAR AILLEURS son attestation dédiée, mais apparaît désormais aussi ici). On le pose sur un folio
+// "ouvert" de sa section (pas encore généré en PDF, voir log.pdfGenerated) qui a encore de la place
+// (BORDEREAU_MAX_LINES) ; sinon, ou si aucun folio ouvert n'a de place, on en ouvre un nouveau.
+//
+// Corrigé le 30/09/2026 (Thomas : arrivé à 12 lignes, un paiement de 2 frères a fait déborder ce
+// folio-là à 14 -> nouveau folio ouvert, comme prévu ; mais le paiement SUIVANT est allé directement
+// sur ce nouveau folio, sans jamais revenir compléter le premier folio, resté bloqué à 12/13 alors
+// qu'il avait encore de la place). Avant ce correctif, seul le folio ouvert le plus RÉCENT (numéro le
+// plus haut) était essayé — s'il débordait, un nouveau folio s'ouvrait directement, sans jamais
+// revérifier si un folio ouvert plus ANCIEN avait, lui, encore de la place. On essaie désormais TOUS
+// les folios encore ouverts de la section, du plus ANCIEN au plus récent, et on rejoint le premier qui
+// a de la place — un folio déjà généré (pdfGenerated) n'est de toute façon JAMAIS dans cette liste
+// (filtré ci-dessous), donc jamais complété après coup.
 function autoAssignPaymentToBordereau(payment){
   if(!Object.prototype.hasOwnProperty.call(PAYMENT_METHOD_LABELS, payment.method)) return;
   if(payment.status==='annule' || payment.status==='rejete') return;
@@ -14682,10 +14689,10 @@ function autoAssignPaymentToBordereau(payment){
   // Un paiement "saison à venir" (fiche member.forNextSeason) ne doit jamais rejoindre le même folio
   // qu'un paiement de la saison en cours, même dans la même section — voir paymentInSeasonView.
   const paymentNextSeason = !!(payment.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean)?.forNextSeason;
-  const openLog = data.settings.bordereauLog
+  const openLogs = data.settings.bordereauLog
     .filter(l=>l.section===section && !l.pdfGenerated && bordereauLogSeasonMatches(l, paymentNextSeason))
-    .sort((a,b)=> b.folio-a.folio)[0];
-  if(openLog){
+    .sort((a,b)=> a.folio-b.folio); // le plus ancien d'abord : on complète un folio existant avant d'en ouvrir un nouveau
+  for(const openLog of openLogs){
     const ids = new Set(openLog.paymentIds||[]);
     ids.add(payment.id);
     const paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
@@ -14696,8 +14703,9 @@ function autoAssignPaymentToBordereau(payment){
       payment.bordereauSection = section;
       return;
     }
-    // Le folio ouvert déborderait avec ce paiement en plus : on le laisse tel quel (il sera considéré
-    // "plein", voir ⚠️ dans l'historique) et on en ouvre un nouveau pour ce paiement.
+    // Ce folio-là déborderait avec ce paiement en plus (il sera considéré "plein", voir ⚠️ dans
+    // l'historique) : on essaie le folio ouvert suivant plutôt que de conclure tout de suite qu'il en
+    // faut un nouveau.
   }
   const folio = nextBordereauFolio(section);
   data.settings.bordereauLog.push({ id: uid(), section, folio, generatedAt: todayStr(), paymentIds: [payment.id] });
