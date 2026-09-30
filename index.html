@@ -9175,8 +9175,8 @@ function openPaymentFormOverlay(opts){
     // est actif — le Divers en sera déduit automatiquement pour la répartition. En édition, on
     // reconstitue donc ce montant global à partir de la part cotisation enregistrée (editing.amountTotal,
     // qui elle reste toujours la part cotisation seule côté stockage) + le Divers déjà enregistré.
-    ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(Math.round(((Number(editing.amountTotal)||0) + (editing.diversEnabled ? (Number(editing.diversAmount)||0) : 0))*100)/100) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '', diversEnabled: !!editing.diversEnabled, diversMotif: editing.diversMotif || '', diversAmount: editing.diversAmount!==undefined && editing.diversAmount!==null && editing.diversAmount!=='' ? String(editing.diversAmount) : '' }
-    : { method: 'especes', status: 'encaisse', allocations: opts.presetMemberId ? [{ memberId: opts.presetMemberId, amount: null }] : [], payerNameOverride: false, payerName: '', amountTotal: '', cashDate: '', chequeNumber: '', chequeBank: '', note: '', diversEnabled: false, diversMotif: '', diversAmount: '' };
+    ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(Math.round(((Number(editing.amountTotal)||0) + (editing.diversEnabled ? (Number(editing.diversAmount)||0) : 0))*100)/100) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '', diversEnabled: !!editing.diversEnabled, diversMotif: editing.diversMotif || '', diversAmount: editing.diversAmount!==undefined && editing.diversAmount!==null && editing.diversAmount!=='' ? String(editing.diversAmount) : '', bordereauSectionChoice: editing.bordereauSectionChoice || null }
+    : { method: 'especes', status: 'encaisse', allocations: opts.presetMemberId ? [{ memberId: opts.presetMemberId, amount: null }] : [], payerNameOverride: false, payerName: '', amountTotal: '', cashDate: '', chequeNumber: '', chequeBank: '', note: '', diversEnabled: false, diversMotif: '', diversAmount: '', bordereauSectionChoice: null };
   // Ne propose que les fiches de la vue actuellement affichée (saison en cours / saison à venir) —
   // une fiche "saison à venir" étant un enregistrement distinct (member.forNextSeason), un paiement ne
   // doit jamais pouvoir mélanger un destinataire des deux saisons.
@@ -9209,6 +9209,16 @@ function openPaymentFormOverlay(opts){
     const missingFamilyMembers = currentFamilyIds.length===1
       ? familyMembers(currentFamilyIds[0]).filter(fm=>!fm.archived && !!fm.forNextSeason===isViewingNextSeason() && !allocIds.includes(fm.id))
       : [];
+    // Demande de Thomas du 30/09/2026 : quand un même paiement réunit des personnes de plusieurs
+    // sections (ex: la maman en Taiso + l'enfant en Judo, réglés par un seul chèque), le bordereau ne
+    // doit pas être deviné automatiquement (1ère personne saisie, voir paymentBordereauSection) — on
+    // laisse la personne choisir explicitement sur quel folio le paiement doit apparaître. Sans effet
+    // si une seule section est concernée (rien à choisir), ou si le paiement est déjà rattaché à un
+    // folio existant (voir bordereauFolio plus bas dans ce fichier — jamais réassigné après coup).
+    const involvedSections = [...new Set(draft.allocations.map(a=> memberBordereauSection(data.members.find(x=>x.id===a.memberId))).filter(Boolean))];
+    const showSectionChoice = involvedSections.length>1 && !(editing && editing.bordereauFolio);
+    if(!showSectionChoice) draft.bordereauSectionChoice = null;
+    else if(!involvedSections.includes(draft.bordereauSectionChoice)) draft.bordereauSectionChoice = involvedSections[0];
     // Même avec une seule personne, on affiche toujours la créance et un champ de montant à saisir
     // (comme pour un paiement familial partagé) — indispensable dès qu'un Divers coexiste avec la
     // cotisation dans le même paiement (ex: chèque de 255€ = 200€ de kimono + 55€ de cotisation) : sans
@@ -9291,6 +9301,13 @@ function openPaymentFormOverlay(opts){
             </select>
           </div>
         </div>
+        ${showSectionChoice ? `<div style="margin-top:6px;">
+          <span class="field-label">Folio (plusieurs sections concernées)</span>
+          <select id="pf-bordereau-section">
+            ${involvedSections.map(s=>`<option value="${s}" ${draft.bordereauSectionChoice===s?'selected':''}>Folio ${escapeHtml(s)}</option>`).join('')}
+          </select>
+          <p style="font-size:11.5px; color:var(--ink-dim); margin:2px 0 8px;">Ce paiement concerne des personnes de plusieurs sections (${involvedSections.join(', ')}) — choisis sur quel bordereau il doit apparaître.</p>
+        </div>` : ''}
         <div class="row" style="margin-top:12px;">
           <button class="primary" id="pf-save" style="flex:1;">✓ Enregistrer</button>
           <button class="ghost" id="pf-cancel" style="flex:1;">Annuler</button>
@@ -9315,6 +9332,8 @@ function openPaymentFormOverlay(opts){
     if(payerToggle) payerToggle.addEventListener('change', e=>{ draft.payerNameOverride = e.target.checked; render(); });
     const payerNameInput = document.getElementById('pf-payername');
     if(payerNameInput) payerNameInput.addEventListener('input', e=>{ draft.payerName = e.target.value; });
+    const bordereauSectionSelect = document.getElementById('pf-bordereau-section');
+    if(bordereauSectionSelect) bordereauSectionSelect.addEventListener('change', e=>{ draft.bordereauSectionChoice = e.target.value; });
     const diversToggle = document.getElementById('pf-divers-toggle');
     if(diversToggle) diversToggle.addEventListener('change', e=>{ draft.diversEnabled = e.target.checked; render(); });
     const diversMotifInput = document.getElementById('pf-divers-motif');
@@ -9445,6 +9464,12 @@ function openPaymentFormOverlay(opts){
         // inclus dans un bordereau si on rouvre le formulaire pour corriger un détail après coup.
         bordereauFolio: editing ? (editing.bordereauFolio || null) : null,
         bordereauSection: editing ? (editing.bordereauSection || null) : null,
+        // Choix explicite du folio quand plusieurs sections sont concernées (voir showSectionChoice
+        // dans render() ci-dessus) — lu par paymentBordereauSection au moment de l'assignation
+        // automatique (autoAssignPaymentToBordereau, plus bas). Conservé même une fois le folio déjà
+        // attribué (repli sur la valeur déjà enregistrée), pour ne pas perdre ce choix si le
+        // formulaire est rouvert ensuite pour corriger un autre détail.
+        bordereauSectionChoice: draft.bordereauSectionChoice || (editing ? (editing.bordereauSectionChoice || null) : null),
         allocations: draft.allocations.map(a=>({ memberId:a.memberId, amount: Math.round((Number(a.amount)||0)*100)/100 })),
         season: editing ? editing.season : (data.settings.seasonStartYear || autoSeasonStartYear()),
         createdAt: editing ? editing.createdAt : new Date().toISOString(),
@@ -14407,6 +14432,12 @@ function memberBordereauSection(m){
   return BORDEREAU_SECTIONS.includes(disc) ? disc : null;
 }
 function paymentBordereauSection(p){
+  // Choix explicite fait dans le formulaire de paiement (voir openPaymentFormOverlay) quand les
+  // personnes réparties sur ce paiement relèvent de plusieurs sections différentes (ex : la maman en
+  // Taiso + l'enfant en Judo, payés en un seul chèque) — demande de Thomas du 30/09/2026. Prioritaire
+  // sur la déduction automatique par 1ère personne ci-dessous, qui reste le repli par défaut quand une
+  // seule section est concernée (aucun choix à faire).
+  if(p.bordereauSectionChoice && BORDEREAU_SECTIONS.includes(p.bordereauSectionChoice)) return p.bordereauSectionChoice;
   const first = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
   return first ? memberBordereauSection(first) : null;
 }
@@ -14624,9 +14655,10 @@ function healOrphanedBordereauPaymentPointers(){
   });
   return changed;
 }
-// Le bordereau papier A.M.A.M compte 20 lignes. Un feuillet ne doit donc jamais dépasser 20 lignes
-// (une ligne par adhérent, peu importe le nombre de paiements qui les concernent).
-const BORDEREAU_MAX_LINES = 20;
+// Un feuillet ne doit jamais dépasser BORDEREAU_MAX_LINES lignes (une ligne par adhérent, peu importe
+// le nombre de paiements qui les concernent) — au-delà, un nouveau folio s'ouvre automatiquement (voir
+// autoAssignPaymentToBordereau). Abaissé de 20 à 13 le 30/09/2026 à la demande de Thomas.
+const BORDEREAU_MAX_LINES = 13;
 // Rattache un paiement (TOUTE méthode — espèces, chèque, ANCV, virement, chèque sport, autre —, ni
 // annulé ni rejeté) à un bordereau DÈS son enregistrement — plus besoin de cliquer sur "Générer" pour
 // qu'il rejoigne un folio. Demande de Thomas (28/08/2026) : le bordereau doit refléter TOUS les
