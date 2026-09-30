@@ -14971,6 +14971,20 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
   const computed = computeBordereauData(section, paymentsForDoc);
   const log = (data.settings.bordereauLog||[]).find(l=>l.folio===folio && l.section===section);
   const overrides = (log && log.overrides) ? log.overrides : { chequeName:{}, observations:{} };
+  // Demande de Thomas du 30/09/2026 : "les folios ne se valident plus... je l'ai fait 2 fois et
+  // toujours pas validé". Piste corrigée ici : `log` ci-dessus est capturé UNE FOIS à l'ouverture de
+  // cet aperçu et gardé en mémoire (fermeture/closure) pendant tout le temps où la fenêtre reste
+  // ouverte. Or `data` (donc `data.settings.bordereauLog` et chacun de ses éléments) est entièrement
+  // REMPLACÉ par une nouvelle copie à chaque resynchronisation avec le serveur (pullFromBackend,
+  // ligne `data = json`) — si une resynchro en arrière-plan se termine pendant que cet aperçu est
+  // ouvert (ex: elle avait déjà commencé juste avant l'ouverture), l'objet `log` capturé ici devient
+  // une copie DÉTACHÉE du tableau réel : le modifier (log.pdfGenerated = true, plus bas) ne touche
+  // alors plus rien de ce que l'appli affiche ni sauvegarde ensuite — le PDF se télécharge bien (rien
+  // à voir avec la génération elle-même) mais le folio reste "en attente". currentLog() redemande
+  // l'objet À JOUR juste avant chaque écriture, pour ne jamais retomber sur cette copie périmée.
+  function currentLog(){
+    return (data.settings.bordereauLog||[]).find(l=>l.folio===folio && l.section===section) || log;
+  }
   const rowsHtml = computed.families.map(fam=>{
     const rowspan = fam.memberRows.length || 1;
     const dateCellsHtml = fam.monthsSorted.map(m=>`<td rowspan="${rowspan}">${escapeHtml(m||'—')}</td>`).join('');
@@ -15033,7 +15047,8 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
     overlay.innerHTML = '';
   });
   document.getElementById('bordereauPreviewSaveBtn').addEventListener('click', ()=>{
-    if(log) log.overrides = collectOverridesFromInputs();
+    const liveLog = currentLog();
+    if(liveLog) liveLog.overrides = collectOverridesFromInputs();
     saveData();
     showToast('Modifications enregistrées — PDF pas encore généré');
     overlay.classList.remove('show');
@@ -15041,15 +15056,20 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
   });
   document.getElementById('bordereauPreviewGenerateBtn').addEventListener('click', async ()=>{
     const newOverrides = collectOverridesFromInputs();
-    if(log) log.overrides = newOverrides;
+    const liveLog = currentLog();
+    if(liveLog) liveLog.overrides = newOverrides;
     // Générer le PDF, c'est l'acte de dépôt en banque : les chèques encore "à encaisser" de ce folio
     // passent "encaissé" à ce moment précis (pas avant, au simple rattachement automatique du paiement).
+    // Même précaution que currentLog() ci-dessus : on modifie les objets VIVANTS de data.payments
+    // (retrouvés par id), pas ceux du tableau paymentsForDoc capturé à l'ouverture de l'aperçu, qui
+    // peut être devenu une copie détachée si une resynchro a remplacé `data` entre-temps.
     const todayIso = todayStr();
     paymentsForDoc.forEach(p=>{
-      if(p.method==='cheque' && p.status==='attente'){
-        p.status = 'encaisse';
-        if(!p.encaissedAt) p.encaissedAt = todayIso;
-        touchRow(p);
+      const liveP = (data.payments||[]).find(x=>x.id===p.id) || p;
+      if(liveP.method==='cheque' && liveP.status==='attente'){
+        liveP.status = 'encaisse';
+        if(!liveP.encaissedAt) liveP.encaissedAt = todayIso;
+        touchRow(liveP);
       }
     });
     saveData();
@@ -15059,8 +15079,11 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
     try{
       await buildAndSaveBordereauPdf(section, folio, generatedAt, paymentsForDoc, newOverrides);
       // Referme le folio : les paiements suivants de cette section ouvriront un nouveau folio (voir
-      // autoAssignPaymentToBordereau, qui ignore les folios déjà pdfGenerated).
-      if(log) log.pdfGenerated = true;
+      // autoAssignPaymentToBordereau, qui ignore les folios déjà pdfGenerated). Relit currentLog() ici
+      // plutôt que de réutiliser `liveLog` capturé plus haut (avant l'attente de buildAndSaveBordereauPdf) :
+      // même précaution contre une resynchro qui aurait remplacé data entre-temps.
+      const logToClose = currentLog();
+      if(logToClose) logToClose.pdfGenerated = true;
       saveData();
       renderActiveTab();
       overlay.classList.remove('show');
