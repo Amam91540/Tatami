@@ -13937,7 +13937,10 @@ function renderCotisationsCard(){
       const ids = new Set(l.paymentIds||[]);
       const paymentsForDoc = (data.payments||[]).filter(p=>ids.has(p.id));
       const lineCount = computeBordereauData(section, paymentsForDoc).families.reduce((s,f)=>s+(f.memberRows.length||1),0);
-      const icons = `${l.pdfGenerated ? '<span title="PDF déjà généré" style="color:#2E7D32; font-size:13px;">✅</span>' : ''}${lineCount>=BORDEREAU_MAX_LINES ? `<span title="Feuillet plein (${lineCount} lignes)" style="color:#B08A2E; font-size:13px;">⚠️</span>` : ''}`;
+      // Demande de Thomas du 30/09/2026 : le ⚠️ "feuillet plein" n'a de sens que tant que le folio est
+      // encore ouvert (en attente de génération) — une fois validé (✅, pdfGenerated), il n'y a plus
+      // rien à surveiller dessus, donc plus besoin du ⚠️ à côté.
+      const icons = `${l.pdfGenerated ? '<span title="PDF déjà généré" style="color:#2E7D32; font-size:13px;">✅</span>' : (lineCount>=BORDEREAU_MAX_LINES ? `<span title="Feuillet plein (${lineCount} lignes)" style="color:#B08A2E; font-size:13px;">⚠️</span>` : '')}`;
       // Bouton de suppression (demande de Thomas du 28/08/2026) — data-action distinct + stopPropagation
       // dans le handler (voir plus bas) pour ne jamais déclencher aussi l'ouverture de l'aperçu
       // (data-action="bordereau-history-item" sur le conteneur englobant).
