@@ -5191,11 +5191,23 @@ function saveLockRetryDelayMs(attemptNumber){
 // comme avant.
 const UNAUTHORIZED_RETRY_MAX = 1;
 const UNAUTHORIZED_RETRY_DELAY_MS = 1500;
+// N'avertit qu'UNE SEULE FOIS par session/onglet si le cache local (offline) échoue à s'écrire —
+// demande de Thomas du 30/09/2026 : "j'ai beaucoup d'echec de l'enregistrement sur l'appareil avec
+// mon mac... ca me soule". Cette écriture est purement un confort hors-ligne (rechargement instantané,
+// résilience si la sauvegarde en ligne échoue aussi) : elle échoue en général parce que le quota de
+// stockage du navigateur est plein (localStorage a une limite fixe, ~5 Mo sur Safari) — l'appli
+// continue de fonctionner et la VRAIE sauvegarde en ligne (juste après, plus bas dans cette fonction)
+// n'est pas du tout affectée par cet échec. Sans ce drapeau, le message revenait à CHAQUE sauvegarde
+// (donc très souvent) sans rien de nouveau à dire ni d'action possible pour la personne.
+let localCacheSaveWarned = false;
 async function saveData(opts){
   try{
     localStorage.setItem('dojo-data', JSON.stringify(data));
   }catch(e){
-    showToast("Échec de l'enregistrement sur cet appareil");
+    if(!localCacheSaveWarned){
+      localCacheSaveWarned = true;
+      showToast("Copie locale (hors-ligne) impossible sur cet appareil — la sauvegarde en ligne, elle, continue normalement.");
+    }
   }
   const session = getSession();
   if(!session || !session.sessionToken) return;
@@ -5263,17 +5275,29 @@ async function saveData(opts){
     // réussi, faisant disparaître la modification au prochain chargement sans le moindre message
     // (constat le plus sérieux de l'audit fiabilité du 07/08/2026).
     if(!json || json.ok !== true){
-      // Collision de verrou serveur (voir SAVE_LOCK_BUSY_MESSAGE ci-dessus) : ce cas précis se
-      // résorbe presque toujours en quelques secondes tout seul, donc on réessaie automatiquement
-      // avant d'ennuyer la personne avec une alerte — jusqu'à SAVE_LOCK_RETRY_MAX fois. Les données
-      // à renvoyer sont recalculées au moment du retry (pickChangedById relit `data` à cet instant),
-      // donc toute modification faite PENDANT l'attente est automatiquement incluse, pas perdue.
-      if(json && json.error === SAVE_LOCK_BUSY_MESSAGE && lockRetryCount < SAVE_LOCK_RETRY_MAX){
+      // Élargi le 30/09/2026 (Thomas : échecs de sauvegarde en ligne fréquents) : jusqu'ici, seule
+      // une collision de verrou serveur EXACTE (voir SAVE_LOCK_BUSY_MESSAGE) déclenchait un nouvel
+      // essai automatique — toute AUTRE cause d'échec (hoquet passager d'Apps Script au démarrage
+      // à froid, réponse tronquée/illisible, exception ponctuelle côté script...) tombait tout de
+      // suite en échec définitif, sans le moindre nouvel essai. Ces causes se résorbent elles aussi
+      // très souvent d'elles-mêmes en quelques secondes, donc on réessaie désormais AUTOMATIQUEMENT
+      // sur N'IMPORTE QUEL échec (pas seulement le verrou), jusqu'à SAVE_LOCK_RETRY_MAX fois, avant
+      // d'ennuyer la personne avec une alerte. Les données à renvoyer sont recalculées au moment du
+      // retry (pickChangedById relit `data` à cet instant), donc toute modification faite PENDANT
+      // l'attente est automatiquement incluse, pas perdue.
+      if(lockRetryCount < SAVE_LOCK_RETRY_MAX){
         const nextAttempt = lockRetryCount + 1;
         setTimeout(()=> saveData({ extraPayloadFields, lockRetryCount: nextAttempt }), saveLockRetryDelayMs(nextAttempt));
         return;
       }
-      showSaveFailureAlert('Sauvegarde en ligne échouée — ta dernière modification est gardée en local, nouvel essai à la prochaine sauvegarde.');
+      // Ajouté le 30/09/2026 : la cause exacte renvoyée par le serveur (verrou occupé, exception
+      // Apps Script, etc.) n'apparaît PAS dans le journal "Exécutions" d'Apps Script quand il s'agit
+      // d'une réponse {ok:false} normale (pas une exception non gérée) — le seul endroit où cette
+      // cause est visible est ce message, sur l'appareil de la personne au moment où ça arrive. On
+      // l'inclut donc explicitement pour pouvoir diagnostiquer une prochaine occurrence à partir de
+      // ce qui est affiché, plutôt qu'un message générique qui ne dit rien de plus.
+      const causeSuffix = (json && json.error) ? (' (cause : ' + json.error + ')') : '';
+      showSaveFailureAlert('Sauvegarde en ligne échouée — ta dernière modification est gardée en local, nouvel essai à la prochaine sauvegarde.' + causeSuffix);
       return;
     }
     // Les suppressions qu'on vient d'envoyer ont été appliquées côté classeur : on ne retire QUE
