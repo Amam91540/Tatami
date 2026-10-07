@@ -8786,7 +8786,22 @@ function fmtEuro(v){
 // Nom à afficher pour un paiement : le nom du "propriétaire" du chèque (saisi manuellement quand il
 // diffère de l'adhérent, ex. un chèque signé par un grand-parent) prime toujours sur les noms des
 // personnes concernées par le paiement.
+// Encaissement "hors adhérent" (calendrier, tombola... — demande de Thomas du 07/10/2026) : paiement
+// sans aucune fiche adhérent rattachée (allocations vides), avec un nom de payeur (payerName) et un
+// motif (externalMotif) obligatoires, rattaché au folio « Divers » (section de bordereau à part,
+// jamais Judo/Karate...). Distinct du « Divers » des fiches (kimono...), qui reste rattaché au folio
+// de l'adhérent. Le repli sur (aucune allocation + section Divers) couvre un paiement dont le drapeau
+// isExternal n'aurait pas encore été enregistré côté serveur (Code.gs pas encore redéployé).
+function isExternalPayment(p){
+  if(!p) return false;
+  if(p.isExternal===true || p.isExternal==='true') return true;
+  return (p.allocations||[]).length===0 && p.bordereauSection==='Divers';
+}
 function paymentDisplayName(p){
+  if(isExternalPayment(p)){
+    const who = (p.payerName||'').trim() || 'Payeur inconnu';
+    return p.externalMotif ? `${who} — ${p.externalMotif}` : who;
+  }
   if(p.payerName && p.payerName.trim()) return p.payerName.trim();
   return (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?om.name:'?'; }).join(', ');
 }
@@ -9175,8 +9190,8 @@ function openPaymentFormOverlay(opts){
     // est actif — le Divers en sera déduit automatiquement pour la répartition. En édition, on
     // reconstitue donc ce montant global à partir de la part cotisation enregistrée (editing.amountTotal,
     // qui elle reste toujours la part cotisation seule côté stockage) + le Divers déjà enregistré.
-    ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(Math.round(((Number(editing.amountTotal)||0) + (editing.diversEnabled ? (Number(editing.diversAmount)||0) : 0))*100)/100) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '', diversEnabled: !!editing.diversEnabled, diversMotif: editing.diversMotif || '', diversAmount: editing.diversAmount!==undefined && editing.diversAmount!==null && editing.diversAmount!=='' ? String(editing.diversAmount) : '', bordereauSectionChoice: editing.bordereauSectionChoice || null }
-    : { method: 'especes', status: 'encaisse', allocations: opts.presetMemberId ? [{ memberId: opts.presetMemberId, amount: null }] : [], payerNameOverride: false, payerName: '', amountTotal: '', cashDate: '', chequeNumber: '', chequeBank: '', note: '', diversEnabled: false, diversMotif: '', diversAmount: '', bordereauSectionChoice: null };
+    ? { method: editing.method, status: editing.status, allocations: editing.allocations.map(a=>({...a})), payerNameOverride: !!(editing.payerName && editing.payerName.trim()), payerName: editing.payerName || '', amountTotal: editing.amountTotal!==undefined && editing.amountTotal!==null ? String(Math.round(((Number(editing.amountTotal)||0) + (editing.diversEnabled ? (Number(editing.diversAmount)||0) : 0))*100)/100) : '', cashDate: editing.cashDate || '', chequeNumber: editing.chequeNumber || '', chequeBank: editing.chequeBank || '', note: editing.note || '', diversEnabled: !!editing.diversEnabled, diversMotif: editing.diversMotif || '', diversAmount: editing.diversAmount!==undefined && editing.diversAmount!==null && editing.diversAmount!=='' ? String(editing.diversAmount) : '', bordereauSectionChoice: editing.bordereauSectionChoice || null, external: isExternalPayment(editing), externalMotif: editing.externalMotif || '' }
+    : { external: !!opts.external, externalMotif: '', method: 'especes', status: 'encaisse', allocations: opts.presetMemberId ? [{ memberId: opts.presetMemberId, amount: null }] : [], payerNameOverride: false, payerName: '', amountTotal: '', cashDate: '', chequeNumber: '', chequeBank: '', note: '', diversEnabled: false, diversMotif: '', diversAmount: '', bordereauSectionChoice: null };
   // Ne propose que les fiches de la vue actuellement affichée (saison en cours / saison à venir) —
   // une fiche "saison à venir" étant un enregistrement distinct (member.forNextSeason), un paiement ne
   // doit jamais pouvoir mélanger un destinataire des deux saisons.
@@ -9233,9 +9248,15 @@ function openPaymentFormOverlay(opts){
         <button type="button" class="ghost icon-btn" data-action="remove-alloc" data-idx="${idx}" style="padding:4px 8px;">✕</button>
       </div>`;
     }).join('') || '<div class="empty" style="font-size:12.5px;">Aucun destinataire — ajoute au moins une personne.</div>';
+    const ext = !!draft.external;
     overlay.innerHTML = `
       <div class="rio-card">
-        <h2 style="margin-top:0;">${editing ? 'Modifier le paiement' : 'Ajouter un paiement'}</h2>
+        <h2 style="margin-top:0;">${ext ? (editing ? 'Modifier l’encaissement hors adhérent' : 'Encaissement hors adhérent') : (editing ? 'Modifier le paiement' : 'Ajouter un paiement')}</h2>
+        ${ext ? `<p style="font-size:12px; color:var(--ink-dim); margin:-4px 0 8px;">Calendrier, tombola… — rattaché au folio « Divers », sans fiche adhérent.</p>
+        <div class="row">
+          <div style="flex:1;"><span class="field-label">Nom du payeur *</span><input type="text" id="pf-ext-payer" value="${escapeHtml(draft.payerName||'')}" placeholder="Nom et prénom du payeur"></div>
+          <div style="flex:1;"><span class="field-label">Motif *</span><input type="text" id="pf-ext-motif" value="${escapeHtml(draft.externalMotif||'')}" placeholder="Ex: Calendrier, tombola"></div>
+        </div>` : ''}
         <div class="row">
           <div style="flex:1;">
             <span class="field-label">Méthode</span>
@@ -9266,16 +9287,16 @@ function openPaymentFormOverlay(opts){
           const fg = st==='encaisse' ? 'var(--tatami)' : ((st==='rejete'||st==='annule') ? 'var(--clay)' : '#888');
           return `<div><span class="field-label">Statut</span><div><span class="tag" style="background:${bg}; color:${fg};">${escapeHtml(PAYMENT_STATUS_LABELS[st]||st)}</span>${st==='attente' ? ` <span style="font-size:11.5px; color:var(--ink-dim);">— à valider depuis « Chèques à encaisser »</span>` : ''}</div></div>`;
         })() : ''}
-        <div class="row" style="align-items:center; gap:6px; margin-top:8px;">
+        ${ext ? '' : `<div class="row" style="align-items:center; gap:6px; margin-top:8px;">
           <input type="checkbox" id="pf-payername-toggle" ${draft.payerNameOverride?'checked':''} style="width:auto;">
           <label for="pf-payername-toggle" style="font-size:12.5px; cursor:pointer; margin:0;">Le chèque n'est pas au nom de l'adhérent</label>
         </div>
-        ${draft.payerNameOverride ? `<div><span class="field-label">Nom sur le chèque</span><input type="text" id="pf-payername" value="${escapeHtml(draft.payerName||'')}" placeholder="Nom exact figurant sur le chèque"></div>` : ''}` : ''}
-        <div class="row" style="align-items:center; gap:6px; margin-top:8px;">
+        ${draft.payerNameOverride ? `<div><span class="field-label">Nom sur le chèque</span><input type="text" id="pf-payername" value="${escapeHtml(draft.payerName||'')}" placeholder="Nom exact figurant sur le chèque"></div>` : ''}`}` : ''}
+        ${ext ? '' : `<div class="row" style="align-items:center; gap:6px; margin-top:8px;">
           <input type="checkbox" id="pf-divers-toggle" ${draft.diversEnabled?'checked':''} style="width:auto;">
           <label for="pf-divers-toggle" style="font-size:12.5px; cursor:pointer; margin:0;">Encaissement "Divers" en plus (ex: kimono)</label>
-        </div>
-        ${draft.diversEnabled ? `<div class="row">
+        </div>`}
+        ${(!ext && draft.diversEnabled) ? `<div class="row">
           <div style="flex:2;"><span class="field-label">Motif</span><input type="text" id="pf-divers-motif" value="${escapeHtml(draft.diversMotif||'')}" placeholder="Ex: Kimono"></div>
           <div style="flex:1;"><span class="field-label">Montant (€)</span><input type="number" step="0.01" id="pf-divers-amount" value="${escapeHtml(draft.diversAmount||'')}"></div>
         </div>
@@ -9284,7 +9305,7 @@ function openPaymentFormOverlay(opts){
           <span class="field-label">Note (optionnel)</span>
           <input type="text" id="pf-note" value="${escapeHtml(draft.note||'')}">
         </div>
-        <div style="margin-top:6px;">
+        ${ext ? '' : `<div style="margin-top:6px;">
           <span class="field-label">Réparti entre</span>
           ${draft.allocations.length>0 ? `<div class="row" style="align-items:center; justify-content:space-between; gap:8px; font-size:12.5px; margin:2px 0 6px; color:var(--ink-dim);">
             <span>Total dû pour ces personnes : <strong style="color:var(--clay);">${fmtEuro(totalDueSelected)}</strong></span>
@@ -9300,8 +9321,8 @@ function openPaymentFormOverlay(opts){
               ${memberOptionsHtml(allocIds)}
             </select>
           </div>
-        </div>
-        ${showSectionChoice ? `<div style="margin-top:6px;">
+        </div>`}
+        ${(!ext && showSectionChoice) ? `<div style="margin-top:6px;">
           <span class="field-label">Folio (plusieurs sections concernées)</span>
           <select id="pf-bordereau-section">
             ${involvedSections.map(s=>`<option value="${s}" ${draft.bordereauSectionChoice===s?'selected':''}>Folio ${escapeHtml(s)}</option>`).join('')}
@@ -9340,7 +9361,12 @@ function openPaymentFormOverlay(opts){
     if(diversMotifInput) diversMotifInput.addEventListener('input', e=>{ draft.diversMotif = e.target.value; });
     const diversAmountInput = document.getElementById('pf-divers-amount');
     if(diversAmountInput) diversAmountInput.addEventListener('input', e=>{ draft.diversAmount = e.target.value; });
-    document.getElementById('pf-add-member').addEventListener('change', e=>{
+    const extPayerInput = document.getElementById('pf-ext-payer');
+    if(extPayerInput) extPayerInput.addEventListener('input', e=>{ draft.payerName = e.target.value; });
+    const extMotifInput = document.getElementById('pf-ext-motif');
+    if(extMotifInput) extMotifInput.addEventListener('input', e=>{ draft.externalMotif = e.target.value; });
+    const addMemberSelect = document.getElementById('pf-add-member');
+    if(addMemberSelect) addMemberSelect.addEventListener('change', e=>{
       const id = e.target.value;
       if(id){ draft.allocations.push({ memberId:id, amount:null }); render(); }
     });
@@ -9407,6 +9433,53 @@ function openPaymentFormOverlay(opts){
       if(!(data.payments||[]).find(p=>p.id===editing.id)) closePaymentFormOverlay();
     });
     document.getElementById('pf-save').addEventListener('click', ()=>{
+      if(draft.external){
+        // Encaissement hors adhérent (calendrier, tombola...) : pas de fiche, pas de répartition —
+        // nom du payeur + motif obligatoires, rattaché au folio « Divers ».
+        const extPayerEl = document.getElementById('pf-ext-payer');
+        const extMotifEl = document.getElementById('pf-ext-motif');
+        const extPayer = ((extPayerEl && extPayerEl.value) || draft.payerName || '').trim();
+        const extMotif = ((extMotifEl && extMotifEl.value) || draft.externalMotif || '').trim();
+        const extAmount = Math.round((Number(document.getElementById('pf-amount').value)||0)*100)/100;
+        if(!extPayer){ showToast('Indique le nom du payeur'); return; }
+        if(!extMotif){ showToast('Indique le motif de l’encaissement'); return; }
+        if(!(extAmount>0)){ showToast('Montant invalide'); return; }
+        const extStatus = draft.method==='cheque' ? (editing ? editing.status : 'attente') : 'encaisse';
+        let extEncaissedAt = editing ? (editing.encaissedAt || null) : null;
+        if(extStatus==='encaisse' && !(editing && editing.status==='encaisse')) extEncaissedAt = todayStr();
+        const extPayload = {
+          id: editing ? editing.id : uid(),
+          method: draft.method,
+          amountTotal: extAmount,
+          cashDate: document.getElementById('pf-date').value || '',
+          chequeNumber: draft.method==='cheque' ? document.getElementById('pf-chequenumber').value.trim() : '',
+          chequeBank: draft.method==='cheque' ? document.getElementById('pf-chequebank').value.trim() : '',
+          payerName: extPayer,
+          status: extStatus,
+          encaissedAt: extEncaissedAt,
+          note: document.getElementById('pf-note').value.trim(),
+          diversEnabled: false, diversMotif: '', diversAmount: 0,
+          isExternal: true,
+          externalMotif: extMotif,
+          bordereauFolio: editing ? (editing.bordereauFolio || null) : null,
+          bordereauSection: editing ? (editing.bordereauSection || null) : null,
+          bordereauSectionChoice: null,
+          allocations: [],
+          season: editing ? editing.season : (data.settings.seasonStartYear || autoSeasonStartYear()),
+          createdAt: editing ? editing.createdAt : new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        if(!data.payments) data.payments = [];
+        const extIdx = data.payments.findIndex(p=>p.id===extPayload.id);
+        if(extIdx>=0) data.payments[extIdx] = extPayload; else data.payments.push(extPayload);
+        autoAssignPaymentToBordereau(extPayload);
+        saveData();
+        closePaymentFormOverlay();
+        renderActiveTab();
+        if(typeof opts.onSaved === 'function') opts.onSaved();
+        showToast('Encaissement enregistré');
+        return;
+      }
       const grossAmount = Number(document.getElementById('pf-amount').value) || 0;
       const diversEnabledNow = !!(document.getElementById('pf-divers-toggle') && document.getElementById('pf-divers-toggle').checked);
       const diversAmountNow = diversEnabledNow ? (Math.round((Number(document.getElementById('pf-divers-amount').value)||0)*100)/100) : 0;
@@ -13776,8 +13849,15 @@ function renderCotisationsCard(){
     if(due.expected.amount!==null) totalExpected += due.expected.amount;
     if(due.remaining!==null && due.remaining>0.01){ totalRemaining += due.remaining; dueList.push({ m, remaining: due.remaining }); }
   });
+  // Les encaissements hors adhérent (calendrier, tombola...) ne font pas partie des cotisations : ils
+  // sont exclus de Attendu/Encaissé/En attente/méthodes ci-dessous et totalisés à part.
+  let totalExternal = 0;
   scopedPayments.forEach(p=>{
     const gross = paymentGrossAmount(p);
+    if(isExternalPayment(p)){
+      if(p.status==='encaisse' || p.status==='attente') totalExternal += gross;
+      return;
+    }
     if(p.status==='encaisse') totalEncaisse += gross;
     else if(p.status==='attente') totalAttente += gross;
     if(p.status==='encaisse' || p.status==='attente') byMethod[p.method] = (byMethod[p.method]||0) + gross;
@@ -13837,8 +13917,13 @@ function renderCotisationsCard(){
       // saisi (case "Le chèque n'est pas au nom de l'adhérent" cochée), sinon on ne le répète pas.
       const parts = [];
       if(p.payerName && p.payerName.trim()) parts.push(`<strong>${escapeHtml(p.payerName.trim())}</strong>`);
-      parts.push(escapeHtml(memberNames));
-      if(groupLabel) parts.push(escapeHtml(groupLabel));
+      if(isExternalPayment(p)){
+        // Hors adhérent : pas d'adhérent ni de cours, le motif prend leur place.
+        parts.push(escapeHtml(p.externalMotif || 'Hors adhérent'));
+      } else {
+        parts.push(escapeHtml(memberNames));
+        if(groupLabel) parts.push(escapeHtml(groupLabel));
+      }
       const lineHtml = parts.join(' <span style="color:var(--ink-dim);">–</span> ');
       // Cliquer sur la ligne ouvre le détail/édition du paiement (comme dans "Paiements encaissés") ;
       // le bouton ✅ reste cliquable indépendamment (stopPropagation) pour marquer encaissé sans ouvrir
@@ -13982,6 +14067,10 @@ function renderCotisationsCard(){
         <div><div style="font-size:11px; color:var(--ink-dim); text-transform:uppercase;">Reste dû</div><div style="font-size:18px; font-weight:700; color:var(--clay);">${fmtEuro(totalRemaining)}</div></div>
       </div>
       ${methodRowsHtml ? `<div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--line);">${methodRowsHtml}</div>` : ''}
+      <div class="row" style="align-items:center; justify-content:space-between; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid var(--line);">
+        <span style="font-size:12.5px; color:var(--ink-dim);">${totalExternal>0.009 ? `Hors adhérents (folio Divers) : <strong style="color:var(--ink);">${fmtEuro(totalExternal)}</strong>` : 'Calendrier, tombola… (hors adhérents)'}</span>
+        <button class="ghost" id="addExternalPaymentBtn" style="padding:5px 10px; font-size:12.5px; white-space:nowrap;">+ Encaissement hors adhérent</button>
+      </div>
     </div>
     <div class="card">
       <div class="row" style="align-items:center; justify-content:space-between;">
@@ -14055,6 +14144,8 @@ function renderCotisationsCard(){
   if(exportChequesBtn) exportChequesBtn.addEventListener('click', generateChequesToCashPdf);
   const exportEncaissedBtn = document.getElementById('exportEncaissedPdfBtn');
   if(exportEncaissedBtn) exportEncaissedBtn.addEventListener('click', generateEncaissedPaymentsPdf);
+  const addExternalPaymentBtn = document.getElementById('addExternalPaymentBtn');
+  if(addExternalPaymentBtn) addExternalPaymentBtn.addEventListener('click', ()=> openPaymentFormOverlay({ external:true, onSaved: renderCotisationsCard }));
   const toggleEncaissedBtn = document.getElementById('toggleEncaissedListHidden');
   if(toggleEncaissedBtn) toggleEncaissedBtn.addEventListener('click', ()=>{ encaissedListVisibility.set(!encaissedHidden); renderCotisationsCard(); });
   const toggleEncaissedSearchBtn = document.getElementById('toggleEncaissedSearch');
@@ -14238,7 +14329,7 @@ async function generateChequesToCashPdf(){
       const firstMember = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
       const group = firstMember ? data.groups.find(x=>x.id===firstMember.groupId) : null;
       const discipline = group ? (courseToDiscipline(group.name) || group.name) : null;
-      const key = discipline || 'Autres';
+      const key = isExternalPayment(p) ? 'Divers (hors adhérents)' : (discipline || 'Autres');
       (byDiscipline[key] ||= []).push(p);
     });
     const order = [...DISCIPLINE_GROUPS, 'Autres'];
@@ -14266,7 +14357,7 @@ async function generateChequesToCashPdf(){
       // Nom de famille en premier (demande de Thomas du 04/09/2026, "dans les pdf generés, mets tout
       // le temps le nom de famille en premiere avant le prenom") — displayNameOrder inverse chaque nom
       // individuellement avant de les rejoindre (une allocation peut couvrir plusieurs adhérents).
-      const memberNames = (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?displayNameOrder(om.name):'?'; }).join(', ');
+      const memberNames = isExternalPayment(p) ? (p.externalMotif || 'Hors adhérent') : (p.allocations||[]).map(a=>{ const om=data.members.find(x=>x.id===a.memberId); return om?displayNameOrder(om.name):'?'; }).join(', ');
       const groupNames = [...new Set((p.allocations||[]).map(a=>{
         const om = data.members.find(x=>x.id===a.memberId);
         const g = om ? data.groups.find(x=>x.id===om.groupId) : null;
@@ -14343,7 +14434,7 @@ async function generateEncaissedPaymentsPdf(){
       const chequeName = paymentChequeFamilyLabel(p);
       const allocs = p.allocations||[];
       if(allocs.length===0){
-        if(p.amountTotal>0.009) rows.push({ name: paymentDisplayName(p), group:'—', chequeName, chequeNumber:p.chequeNumber, chequeBank:p.chequeBank, dateLabel, amount:p.amountTotal });
+        if(p.amountTotal>0.009) rows.push({ name: paymentDisplayName(p), group: isExternalPayment(p) ? 'Divers' : '—', chequeName, chequeNumber:p.chequeNumber, chequeBank:p.chequeBank, dateLabel, amount:p.amountTotal });
         return;
       }
       allocs.forEach(a=>{
@@ -14407,7 +14498,9 @@ async function generateEncaissedPaymentsPdf(){
 // leur discipline "adulte". Le Kobudo a sa propre section, distincte de l'Aïkibudo (demande de Thomas :
 // "ajoute le kobudo, c'est different de l'aikibudo" — un regroupement Kobudo->Aïkibudo avait été mis en
 // place ici avant, à tort).
-const BORDEREAU_SECTIONS = ['Judo', 'Karate', 'Aikibudo', 'Kobudo', 'Taiso'];
+// « Divers » = encaissements hors adhérent (calendrier, tombola... voir isExternalPayment) — jamais
+// déduit d'un cours, uniquement posé explicitement par paymentBordereauSection.
+const BORDEREAU_SECTIONS = ['Judo', 'Karate', 'Aikibudo', 'Kobudo', 'Taiso', 'Divers'];
 // Section bordereau d'un adhérent donné, selon son propre cours — même regroupement Baby->discipline
 // "adulte" que pour le paiement dans son ensemble. Réutilisé à la fois pour déterminer la section du
 // bordereau (1ère personne du paiement) et pour repérer, ligne par ligne dans un bordereau familial,
@@ -14435,6 +14528,7 @@ function memberBordereauSection(m){
   return BORDEREAU_SECTIONS.includes(disc) ? disc : null;
 }
 function paymentBordereauSection(p){
+  if(isExternalPayment(p)) return 'Divers';
   // Choix explicite fait dans le formulaire de paiement (voir openPaymentFormOverlay) quand les
   // personnes réparties sur ce paiement relèvent de plusieurs sections différentes (ex : la maman en
   // Taiso + l'enfant en Judo, payés en un seul chèque) — demande de Thomas du 30/09/2026. Prioritaire
@@ -14449,6 +14543,8 @@ function paymentBordereauSection(p){
 // personne concernée par le paiement — pour que 2 chèques de la même famille (ex: 2 enfants) fusionnent
 // bien sur une seule ligne du bordereau, même sans famille formellement validée dans l'app.
 function paymentBordereauFamilyKey(p){
+  // Hors adhérent : une ligne par PAYEUR (même nom -> même ligne), jamais fusionné avec une famille.
+  if(isExternalPayment(p)) return 'ext:'+(normalizeForMatch(p.payerName||'')||p.id);
   const first = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
   if(!first) return 'inconnu:'+p.id;
   if(first.familyId) return 'fam:'+first.familyId;
@@ -14456,6 +14552,7 @@ function paymentBordereauFamilyKey(p){
   return 'nom:'+ln;
 }
 function paymentBordereauFamilySurname(p){
+  if(isExternalPayment(p)) return ((p.payerName||'').trim() || '—');
   const first = (p.allocations||[]).map(a=>data.members.find(x=>x.id===a.memberId)).find(Boolean);
   if(!first) return '—';
   const ln = memberLastName(first);
@@ -14850,8 +14947,19 @@ function computeBordereauData(section, paymentsForDoc){
     // Une ligne par adhérent distinct concerné par au moins un paiement de cette famille — Inscription =
     // somme de sa part (allocation.amount). Le "Divers" d'un paiement est rattaché à la ligne du 1er
     // adhérent de ce paiement (un divers ne concerne en pratique qu'une seule personne, ex: kimono).
-    const memberIds = [...new Set(g.payments.flatMap(p=>(p.allocations||[]).map(a=>a.memberId)))];
-    const memberRows = memberIds.map(id=>data.members.find(x=>x.id===id)).filter(Boolean)
+    // Encaissement hors adhérent (voir isExternalPayment) : aucune fiche, donc UNE ligne par payeur —
+    // le montant va dans la colonne « Divers » (Inscription reste vide), le motif dans Observations.
+    const isExternalGroup = g.payments.length>0 && g.payments.every(isExternalPayment);
+    const memberIds = isExternalGroup ? [] : [...new Set(g.payments.flatMap(p=>(p.allocations||[]).map(a=>a.memberId)))];
+    const externalRows = isExternalGroup ? [{
+      member: { id: key, name: g.surname },
+      displayName: g.surname,
+      inscription: 0,
+      divers: Math.round(g.payments.reduce((s,p)=> s+(Number(p.amountTotal)||0), 0)*100)/100,
+      motifsDefault: [...new Set(g.payments.flatMap(p=>[p.externalMotif, p.note]).filter(Boolean))],
+      external: true
+    }] : null;
+    const memberRows = externalRows || memberIds.map(id=>data.members.find(x=>x.id===id)).filter(Boolean)
       .sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'))
       .map(m=>{
         let inscription=0, divers=0;
@@ -14917,8 +15025,8 @@ function buildBordereauTableHtml(computed, overrides){
     return fam.memberRows.map((r,idx)=>{
       const obsValue = ovObservations[r.member.id]!==undefined ? ovObservations[r.member.id] : r.motifsDefault.join(', ');
       return `<tr>
-        <td>${escapeHtml(displayNameOrder(r.member.name))}</td>
-        <td>${fmtEuro(r.inscription)}</td>
+        <td>${escapeHtml(r.displayName || displayNameOrder(r.member.name))}</td>
+        <td>${r.external ? '—' : fmtEuro(r.inscription)}</td>
         <td>${r.divers>0 ? fmtEuro(r.divers) : '—'}</td>
         ${idx===0 ? mergedCellsHtml : ''}
         <td>${obsValue ? escapeHtml(obsValue) : '—'}</td>
@@ -15015,11 +15123,11 @@ function openBordereauPreviewOverlay(section, folio, generatedAt, paymentsForDoc
     return fam.memberRows.map((r,idx)=>{
       const obsValue = overrides.observations[r.member.id]!==undefined ? overrides.observations[r.member.id] : r.motifsDefault.join(', ');
       return `<tr>
-        <td>${escapeHtml(displayNameOrder(r.member.name))}</td>
-        <td>${fmtEuro(r.inscription)}</td>
+        <td>${escapeHtml(r.displayName || displayNameOrder(r.member.name))}</td>
+        <td>${r.external ? '—' : fmtEuro(r.inscription)}</td>
         <td>${r.divers>0 ? fmtEuro(r.divers) : '—'}</td>
         ${idx===0 ? mergedCellsHtml : ''}
-        <td><input type="text" class="bordereau-edit-input" data-member-id="${r.member.id}" value="${escapeHtml(obsValue)}" placeholder="—"></td>
+        <td><input type="text" class="bordereau-edit-input" data-member-id="${escapeHtml(r.member.id)}" value="${escapeHtml(obsValue)}" placeholder="—"></td>
       </tr>`;
     }).join('');
   }).join('');
