@@ -13720,46 +13720,57 @@ async function generateBirthdaysPdf(){
     });
     const introNames = names.length<=1 ? names.join('') : names.slice(0,-1).join(', ')+' et '+names.slice(-1);
 
-    const rows = birthdays.map(m=>{
+    // Tous les anniversaires du mois sur UNE SEULE page (demande de Thomas, 07/10/2026) : cartes
+    // compactes en grille (2 colonnes, 3 au-delà de 16 anniversaires), puis le rendu est réduit
+    // au besoin pour tenir dans la hauteur d'une page A4.
+    const cols = birthdays.length>16 ? 3 : 2;
+    const compact = birthdays.length>10;
+    const cardsHtml = birthdays.map(m=>{
       const day = parseInt(m.birthDate.slice(8,10),10);
       const turns = curYear - parseInt(m.birthDate.slice(0,4),10);
       const weekday = DAY_ABBR_FR[new Date(curYear, parseInt(m.birthDate.slice(5,7),10)-1, day).getDay()];
       const g = data.groups.find(x=>x.id===m.groupId);
-      const cardHtml = `
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-radius:12px; background:#FDF3E7; border-left:5px solid #E8A33D;">
-          <div>
-            <div style="font-size:15px;">🎂 ${nameWithBoldSurname(m.name)}</div>
-            ${g ? `<div style="font-size:12px; color:#8A7A63; margin-top:3px;">${escapeHtml(g.name)}</div>` : ''}
+      return `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:${compact?'9px 11px':'13px 14px'}; border-radius:10px; background:#FDF3E7; border-left:5px solid #E8A33D; break-inside:avoid;">
+          <div style="min-width:0;">
+            <div style="font-size:${compact?13:14.5}px;">🎂 ${nameWithBoldSurname(m.name)}</div>
+            ${g ? `<div style="font-size:11px; color:#8A7A63; margin-top:2px;">${escapeHtml(g.name)}</div>` : ''}
           </div>
           <div style="text-align:right; flex-shrink:0;">
-            <div style="font-weight:800; color:#C9791A; font-size:14px;">${weekday} ${day}</div>
-            <div style="font-size:12px; color:#8A7A63; margin-top:2px;">${turns} ans</div>
+            <div style="font-weight:800; color:#C9791A; font-size:${compact?13:14}px;">${weekday} ${day}</div>
+            <div style="font-size:11px; color:#8A7A63; margin-top:1px;">${turns} ans</div>
           </div>
         </div>`;
-      return { html: `<td style="padding:5px 0; border:none;">${cardHtml}</td>`, isDivider:false, categoryLabel:null };
-    });
+    }).join('');
 
-    const buildContextHtml = (isFirst)=> !isFirst ? '' : `
-      <div class="recap-header">
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    const margin = 24;
+    const pageW = pdf.internal.pageSize.getWidth(), pageH = pdf.internal.pageSize.getHeight();
+    const holder = document.createElement('div');
+    holder.style.position = 'absolute'; holder.style.left = '-9999px'; holder.style.top = '0';
+    holder.className = 'recap-doc';
+    holder.style.width = '700px';
+    holder.innerHTML = `
+      <div class="recap-header" style="margin-bottom:14px;">
         ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
         <div>
           <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
           <div class="rh-sub">🎂 Anniversaires du mois — ${MONTH_NAMES_FR[curMonth-1]} ${curYear}</div>
         </div>
       </div>
-      <p style="text-align:center; font-size:14.5px; margin:18px 0 20px; color:#333;">Ce mois-ci, souhaitons l'anniversaire à ${escapeHtml(introNames)} !</p>`;
-
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ unit:'pt', format:'a4' });
-    const margin = 24;
-    await paginateRowsIntoPdf(pdf, {
-      rows,
-      tableHeadHtml: '<th style="border:none; padding:0;"></th>',
-      buildContextHtml,
-      containerClass: 'recap-doc',
-      containerWidthPx: 700,
-      margin
-    });
+      <p style="text-align:center; font-size:14px; margin:0 0 14px; color:#333;">Ce mois-ci, souhaitons l'anniversaire à ${escapeHtml(introNames)} !</p>
+      <div style="display:grid; grid-template-columns:repeat(${cols}, 1fr); gap:8px;">${cardsHtml}</div>`;
+    document.body.appendChild(holder);
+    let canvas;
+    try{
+      await waitForImages(holder);
+      canvas = await html2canvas(holder, { scale:2, backgroundColor:'#ffffff', useCORS:true });
+    } finally { document.body.removeChild(holder); }
+    const maxW = pageW - margin*2, maxH = pageH - margin*2;
+    let w = maxW, h = canvas.height * (w / canvas.width);
+    if(h > maxH){ h = maxH; w = canvas.width * (h / canvas.height); }
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', (pageW - w)/2, margin, w, h);
 
     pdf.save(`anniversaires-${MONTH_NAMES_FR[curMonth-1]}-${curYear}.pdf`);
     showToast('PDF généré');
