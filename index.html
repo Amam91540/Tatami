@@ -8049,14 +8049,20 @@ function beltHistoryCardHtml(){
       <h2 style="margin:0 0 4px;">🗂️ Historique des passages de grade</h2>
       <p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 10px;">Chaque PDF généré est conservé ici (par sécurité) : tu peux le télécharger à nouveau à tout moment.</p>
       ${batches.length===0 ? '<div class="empty">Aucun PDF généré pour le moment.</div>' : batches.map(b=>`
-        <div class="member-chip" style="align-items:flex-start;">
-          <div style="min-width:0;">
-            <div style="font-weight:600;">${escapeHtml(beltBatchLabel(b.items))} · ${b.items.length} passage${b.items.length>1?'s':''}</div>
-            <div style="font-size:11.5px; color:var(--ink-dim); margin-top:2px;">PDF du ${fmtDate(String(b.generatedAt).slice(0,10))}</div>
-            <div style="font-size:12px; color:var(--ink-dim); margin-top:3px;">${b.items.slice().sort((x,y)=>memberSurname(x.memberName).localeCompare(memberSurname(y.memberName),'fr')).map(p=>`${escapeHtml(p.memberName)} (${escapeHtml(beltLabelFor(p.belt))})`).join(' · ')}</div>
+        <details style="border:1px solid var(--line); border-radius:10px; padding:8px 10px; margin-top:6px;">
+          <summary style="cursor:pointer; font-size:13px;">
+            <strong>${escapeHtml(beltBatchLabel(b.items))}</strong> · ${b.items.length} passage${b.items.length>1?'s':''}
+            <span style="color:var(--ink-dim); font-size:11.5px;"> — PDF du ${fmtDate(String(b.generatedAt).slice(0,10))}</span>
+          </summary>
+          <div style="margin-top:8px;">
+            ${b.items.slice().sort((x,y)=>memberSurname(x.memberName).localeCompare(memberSurname(y.memberName),'fr')).map(p=>`
+              <div class="row" style="align-items:center; justify-content:space-between; font-size:12.5px; padding:3px 0;">
+                <span>${escapeHtml(p.memberName)}</span>
+                <span style="display:flex; align-items:center; gap:6px; flex-shrink:0;">${beltSwatchHtml(p.belt, true)} ${escapeHtml(beltLabelFor(p.belt))}</span>
+              </div>`).join('')}
+            <button class="ghost" data-action="redownload-belt-batch" data-batch="${escapeHtml(b.id)}" style="width:100%; margin-top:8px; padding:6px 10px; font-size:12px;">📄 Télécharger le PDF</button>
           </div>
-          <button class="ghost" data-action="redownload-belt-batch" data-batch="${escapeHtml(b.id)}" style="flex-shrink:0; padding:6px 10px; font-size:12px;">📄 Télécharger</button>
-        </div>`).join('')}
+        </details>`).join('')}
     </div>`;
 }
 async function buildBeltPassagesPdf(list, titleSuffix){
