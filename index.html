@@ -3442,7 +3442,6 @@ function familyPortalInscriptionHtml(){
     let rowsHtml = staticRow('Date de naissance', m.birthDate ? fmtDate(m.birthDate) : '—');
     rowsHtml += staticRow('Sexe', m.gender ? (m.gender==='F'?'Fille':'Garçon') : '—');
     if(!groupHasNoBelt(curGroup) && m.belt) rowsHtml += staticRow('Ceinture', beltLabelFor(m.belt));
-    if(memberWeightCategoryEligible(m) && m.weightCategory) rowsHtml += staticRow('Catégorie de poids', `${m.weightCategory} kg`);
     if(isEditing){
       rowsHtml += editRow('Email (pour convocations)', 'email', m.email, 'email');
       rowsHtml += editRow('Téléphone', 'phone', m.phone, 'tel');
@@ -5201,6 +5200,9 @@ const UNAUTHORIZED_RETRY_DELAY_MS = 1500;
 // (donc très souvent) sans rien de nouveau à dire ni d'action possible pour la personne.
 let localCacheSaveWarned = false;
 async function saveData(opts){
+  // Cases « Feuille d'inscription » et « Cotisation » : automatiques (voir AUTO_DOC_KEYS) — recalculées
+  // à chaque sauvegarde pour rester toujours cohérentes avec le cours attribué et le solde.
+  try{ if(!isProfSession()) syncAutoMemberDocuments(); }catch(e){}
   try{
     localStorage.setItem('dojo-data', JSON.stringify(data));
   }catch(e){
@@ -5789,6 +5791,7 @@ function renderGroupsTab(){
     if(el) el.style.display = nextSeasonView ? 'none' : '';
   });
   stripBeltForNoBeltCourses();
+  try{ if(!isProfSession() && syncAutoMemberDocuments()) saveData(); }catch(e){}
   const wrap = document.getElementById('groups-list');
   if(data.groups.length===0){
     wrap.innerHTML = `<div class="empty">Aucun cours pour l'instant. Ajoutez votre premier cours ci-dessus — par exemple « Judo débutants » ou « Karaté ados ».</div>`;
@@ -5875,7 +5878,6 @@ function renderGroupsTab(){
                 <div><span class="field-label">Date de naissance</span><div>${m.birthDate ? fmtDate(m.birthDate) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Sexe</span><div>${m.gender ? (m.gender==='F'?'Fille':'Garçon') : '—'}</div></div>
                 ${groupHasNoBelt(curGroup) ? '' : `<div style="margin-top:8px;"><span class="field-label">Ceinture</span><div style="display:flex; align-items:center; gap:8px;">${m.belt ? beltSwatchHtml(m.belt, true) : ''}<span>${m.belt ? escapeHtml(beltLabelFor(m.belt)) : 'Non renseignée'}</span></div></div>`}
-                ${memberWeightCategoryEligible(m) ? `<div style="margin-top:8px;"><span class="field-label">Catégorie de poids</span><div>${m.weightCategory ? escapeHtml(m.weightCategory)+' kg' : 'Non renseignée'}</div></div>` : ''}
                 <div style="margin-top:8px;"><span class="field-label">Email (pour convocations)</span><div>${m.email ? `<a href="mailto:${escapeHtml(m.email)}" onclick="event.stopPropagation();" style="color:inherit; text-decoration:underline dotted; text-decoration-color:var(--ink-dim);" title="Écrire un email à ${escapeHtml(m.email)}">✉️ ${escapeHtml(m.email)}</a>` : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Téléphone</span><div>${m.phone ? escapeHtml(m.phone) : '—'}</div></div>
                 <div style="margin-top:8px;"><span class="field-label">Adresse</span><div>${(m.address || m.postalCode || m.city) ? escapeHtml([m.address, [m.postalCode, m.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '—'}</div></div>
@@ -5959,11 +5961,6 @@ function renderGroupsTab(){
               ${m.belt ? beltSwatchHtml(m.belt, true) : ''}
             </div>
           </div>`}
-          ${memberWeightCategoryEligible(m) ? `
-          <div>
-            <span class="field-label">Catégorie de poids</span>
-            ${buildMemberWeightCategorySelectHtml(m)}
-          </div>` : ''}
           <div>
             <span class="field-label">Email (pour convocations)</span>
             <input type="text" data-action="edit-email" data-id="${m.id}" value="${escapeHtml(m.email||'')}">
@@ -6101,6 +6098,31 @@ const MEMBER_DOCUMENT_ITEMS = [
 // c'est un paiement suivi indépendamment sur CHAQUE fiche (y compris la jumelle « saison
 // prochaine », qui démarre volontairement à zéro), jamais un document à rediriger.
 const FAMILY_UPLOADABLE_DOC_KEYS = ['docMedicalCert', 'docCharte', 'docDroitImage', 'docFeuilleInscription'];
+// Demande de Thomas du 07/10/2026 : côté admin/secrétaire, ces deux cases ne se cochent plus à la main.
+// - Feuille d'inscription : cochée d'office dès que la fiche est attribuée à un cours.
+// - Cotisation : cochée dès que le solde de l'adhérent est à 0 (et décochée s'il repasse au-dessus).
+const AUTO_DOC_KEYS = ['docFeuilleInscription', 'docCotisation'];
+function autoDocState(m, key){
+  if(key==='docFeuilleInscription') return !!m.groupId;
+  if(key==='docCotisation'){
+    const due = memberRemainingDue(m);
+    return (due && due.remaining!==null && due.remaining!==undefined) ? due.remaining<=0.009 : null;
+  }
+  return null;
+}
+function syncAutoMemberDocuments(){
+  let changed = false;
+  (data.members||[]).forEach(m=>{
+    if(m.archived) return;
+    AUTO_DOC_KEYS.forEach(key=>{
+      let state = null;
+      try{ state = autoDocState(m, key); }catch(e){ state = null; }
+      if(state===null) return; // solde incalculable : on ne touche pas
+      if(!!m[key]!==state){ m[key] = state; touchMemberInfo(m); changed = true; }
+    });
+  });
+  return changed;
+}
 // Bug critique remonté par Thomas (2026-08) : "un document déposé sur le compte famille apparaît
 // puis disparaît côté admin, ça passe d'une saison à l'autre, aucune fiabilité". Cause : quand un
 // élève est passé par « Préparer la saison », il a DEUX fiches (l'origine + une jumelle
@@ -6806,7 +6828,6 @@ const INCOMPLETE_FICHE_FIELDS = [
   { key:'address', label:'Adresse' },
   { key:'postalCode', label:'Code postal' },
   { key:'city', label:'Ville' },
-  { key:'weightCategory', label:'Catégorie de poids' },
   ...MEMBER_DOCUMENT_ITEMS
 ];
 // La ceinture n'existe pas en Taïso (pas de système de grade dans cette discipline) : elle ne
@@ -6881,6 +6902,7 @@ function incompleteFieldInputHtml(m, key){
     // memberDocOwner : la case doit refléter l'état de la fiche qui porte RÉELLEMENT le document
     // (voir resolveDocumentTargetMember) — jamais celui de `m` si c'est en fait sa jumelle qui l'a reçu.
     const checked = !!memberDocOwner(m, key)[key];
+    if(AUTO_DOC_KEYS.includes(key)) return `<div style="grid-column:1 / -1; font-size:13px;">${m[key]?'✅':'⬜'} ${escapeHtml(label)} <span style="color:var(--ink-dim); font-size:11.5px;">(automatique)</span></div>`;
     // Demande de Thomas du 30/08/2026 : "enleve 'Rendu' sur les documents car ca prend vraiment trop
     // de place, liste juste les documents a rendre... avec une croix a cocher si c'est ok" — un seul
     // <label> compact (coche + nom du document, comme le fait déjà le bloc "Documents à rendre" de la
@@ -9789,6 +9811,10 @@ function renderMemberCotisationOverlay(memberId){
           // fiche jumelle « saison prochaine » qui l'a reçu (bug remonté par Thomas : un document
           // bien déposé restait invisible/inactionnable depuis la fiche d'origine).
           const checked = !!memberDocOwner(m, it.key)[it.key];
+          if(AUTO_DOC_KEYS.includes(it.key)){
+            const autoOn = !!m[it.key];
+            return `<div style="display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0;">${autoOn?'✅':'⬜'} ${escapeHtml(it.label)} <span style="color:var(--ink-dim); font-size:11.5px;">(automatique${it.key==='docCotisation' ? ' — solde à 0' : ' — fiche attribuée à un cours'})</span></div>`;
+          }
           return `
           <label style="display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; cursor:pointer;">
             <input type="checkbox" data-action="toggle-member-document" data-key="${it.key}" ${checked?'checked':''}>
@@ -12856,9 +12882,6 @@ function quickAddFieldsHtml(v){
         ${BELT_RANKS.map(r=>`<option value="${r.key}" ${v.belt===r.key?'selected':''}>${escapeHtml(r.label)}</option>`).join('')}
       </select>
     </label>`}
-    ${(!noBelt && weightEligible) ? `<label>Catégorie de poids
-      ${buildMemberWeightCategorySelectHtml(draftMember)}
-    </label>` : ''}
     ${committee ? `<label>Fonction
       <select data-field="committeeRole">
         <option value="" ${!v.committeeRole?'selected':''}>Non renseignée</option>
@@ -15678,7 +15701,7 @@ function renderExportCard(){
       const parts = String(m.name||'').trim().split(/\s+/);
       const prenom = parts[0]||'';
       const nom = parts.slice(1).join(' ');
-      return [nom, prenom, m.email||'', m.phone||'', m.gender==='F'?'F':(m.gender==='M'?'M':''), m.birthDate||'', m.address||'', m.postalCode||'', m.city||'', m.belt?beltRankLabel(m.belt):'', (memberWeightCategoryEligible(m) && m.weightCategory) ? `${m.weightCategory} kg` : '', m.medicalCertDate||'', m.licenseNumber||'', m.committeeRole||'', m.note||''];
+      return [nom, prenom, m.email||'', m.phone||'', m.gender==='F'?'F':(m.gender==='M'?'M':''), m.birthDate||'', m.address||'', m.postalCode||'', m.city||'', m.belt?beltRankLabel(m.belt):'', '', m.medicalCertDate||'', m.licenseNumber||'', m.committeeRole||'', m.note||''];
     };
     const usedSheetNames = new Set(['Général']);
     const safeSheetName = (name)=>{
@@ -16327,7 +16350,7 @@ function renderConvocTab(){
       <div class="convoc-row"${alreadyInvited?' style="opacity:.6;"':''}>
         <input type="checkbox" data-member="${m.id}" ${checked?'checked':''} ${alreadyInvited?'disabled':''}>
         <div class="info">
-<div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender, m))}</span>` : ''}${(memberWeightCategoryEligible(m) && m.weightCategory) ? `<span class="tag">${escapeHtml(m.weightCategory)} kg</span>` : ''}${alreadyInvited ? `<span class="tag">✓ Déjà convoqué(e)</span>` : ''}</div>          <div class="e">${m.email ? escapeHtml(m.email) : 'Pas d’email renseigné'}</div>
+<div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(categoryYearLabelWithVeteran(m.birthDate, m.gender, m))}</span>` : ''}${alreadyInvited ? `<span class="tag">✓ Déjà convoqué(e)</span>` : ''}</div>          <div class="e">${m.email ? escapeHtml(m.email) : 'Pas d’email renseigné'}</div>
         </div>
       </div>`;
     }, m=>m)) : ''}
