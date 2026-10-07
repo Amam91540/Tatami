@@ -7855,7 +7855,7 @@ function renderBeltDiplomasSection(){
   const hidden = loadBeltDiplomasHidden();
   if(!ui.beltDiplomasGroupFilter) ui.beltDiplomasGroupFilter = 'all';
   const pending = (data.beltPassages||[]).filter(p=>!p.printed)
-    .filter(p=> ui.beltDiplomasGroupFilter==='all' || p.groupId===ui.beltDiplomasGroupFilter)
+    .filter(p=> beltPassageInGroupFilter(p, ui.beltDiplomasGroupFilter))
     .sort((a,b)=> a.date.localeCompare(b.date));
   wrap.innerHTML = `
     <div class="card">
@@ -7870,6 +7870,7 @@ function renderBeltDiplomasSection(){
           <select id="beltDiplomasGroupSelect">
             <option value="all" ${ui.beltDiplomasGroupFilter==='all'?'selected':''}>Tous les cours</option>
             ${data.groups.map(g=>`<option value="${g.id}" ${ui.beltDiplomasGroupFilter===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}
+            ${beltPassageOrphanOptionHtml((data.beltPassages||[]).filter(p=>!p.printed), ui.beltDiplomasGroupFilter)}
           </select>
         </div>
       </div>
@@ -7909,6 +7910,32 @@ function renderBeltDiplomasSection(){
   const genBtn = document.getElementById('generateBeltDiplomasBtn');
   if(genBtn) genBtn.addEventListener('click', generateBeltDiplomasPdf);
 }
+// Cours « effectif » d'un passage de grade : son groupId d'origine s'il existe encore ; sinon (cours
+// supprimé/recréé, id périmé après un reset...) on retrouve le cours par son nom, puis par le cours
+// actuel de l'élève. Sans ça, un passage dont le groupId ne correspond plus à aucun cours restait
+// visible sous « Tous les cours » mais introuvable dès qu'on choisissait un cours (donc dans aucun PDF).
+function beltPassageEffectiveGroupId(p){
+  if(!p) return '';
+  const groups = data.groups||[];
+  if(p.groupId && groups.some(g=>g.id===p.groupId)) return p.groupId;
+  if(p.groupName){
+    const key = normalizeForMatch(p.groupName);
+    const byName = groups.find(g=>normalizeForMatch(g.name)===key);
+    if(byName) return byName.id;
+  }
+  const m = (data.members||[]).find(x=>x.id===p.memberId);
+  if(m && m.groupId && groups.some(g=>g.id===m.groupId)) return m.groupId;
+  return p.groupId || '';
+}
+function beltPassageInGroupFilter(p, filter){
+  if(filter==='all') return true;
+  if(filter==='__orphan__') return !(data.groups||[]).some(g=>g.id===beltPassageEffectiveGroupId(p));
+  return beltPassageEffectiveGroupId(p)===filter;
+}
+function beltPassageOrphanOptionHtml(list, selected){
+  return list.some(p=>beltPassageInGroupFilter(p,'__orphan__'))
+    ? `<option value="__orphan__" ${selected==='__orphan__'?'selected':''}>Cours introuvable</option>` : '';
+}
 const beltValidatedVisibility = cardVisibility('belt-validated', true);
 function loadBeltValidatedHidden(){ return beltValidatedVisibility.get(); }
 function saveBeltValidatedHidden(val){ beltValidatedVisibility.set(val); }
@@ -7918,7 +7945,7 @@ function renderBeltValidatedSection(){
   const hidden = loadBeltValidatedHidden();
   if(!ui.beltValidatedGroupFilter) ui.beltValidatedGroupFilter = 'all';
   const validated = (data.beltPassages||[]).filter(p=>p.printed)
-    .filter(p=> ui.beltValidatedGroupFilter==='all' || p.groupId===ui.beltValidatedGroupFilter)
+    .filter(p=> beltPassageInGroupFilter(p, ui.beltValidatedGroupFilter))
     .sort((a,b)=> b.date.localeCompare(a.date));
   wrap.innerHTML = `
     <div class="card">
@@ -7933,6 +7960,7 @@ function renderBeltValidatedSection(){
           <select id="beltValidatedGroupSelect">
             <option value="all" ${ui.beltValidatedGroupFilter==='all'?'selected':''}>Tous les cours</option>
             ${data.groups.map(g=>`<option value="${g.id}" ${ui.beltValidatedGroupFilter===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}
+            ${beltPassageOrphanOptionHtml((data.beltPassages||[]).filter(p=>p.printed), ui.beltValidatedGroupFilter)}
           </select>
         </div>
       </div>
@@ -7993,7 +8021,7 @@ async function generateValidatedBeltDiplomasPdf(){
   }
   const groupId = ui.beltValidatedGroupFilter;
   const group = data.groups.find(g=>g.id===groupId);
-  const list = (data.beltPassages||[]).filter(p=>p.printed && p.groupId===groupId)
+  const list = (data.beltPassages||[]).filter(p=>p.printed && beltPassageInGroupFilter(p, groupId))
     .sort((a,b)=>{
       const ra = beltIndex(a.belt), rb = beltIndex(b.belt);
       if(ra!==rb) return ra-rb;
@@ -8069,7 +8097,7 @@ async function generateBeltDiplomasPdf(){
   }
   if(!ui.beltDiplomasGroupFilter) ui.beltDiplomasGroupFilter = 'all';
   const pending = (data.beltPassages||[]).filter(p=>!p.printed)
-    .filter(p=> ui.beltDiplomasGroupFilter==='all' || p.groupId===ui.beltDiplomasGroupFilter)
+    .filter(p=> beltPassageInGroupFilter(p, ui.beltDiplomasGroupFilter))
     .sort((a,b)=> a.date.localeCompare(b.date));
   if(pending.length===0){ showToast('Aucun diplôme à générer'); return; }
   const btn = document.getElementById('generateBeltDiplomasBtn');
