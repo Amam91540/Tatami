@@ -7944,7 +7944,9 @@ function renderBeltValidatedSection(){
   if(!wrap) return;
   const hidden = loadBeltValidatedHidden();
   if(!ui.beltValidatedGroupFilter) ui.beltValidatedGroupFilter = 'all';
-  const validated = (data.beltPassages||[]).filter(p=>p.printed)
+  // « Passage validé » = passages dont le diplôme est imprimé mais dont le PDF de ce cours n'a pas
+  // encore été généré. Une fois le PDF généré, ils partent dans l'historique (pdfBatch posé).
+  const validated = (data.beltPassages||[]).filter(p=>p.printed && !p.pdfBatch)
     .filter(p=> beltPassageInGroupFilter(p, ui.beltValidatedGroupFilter))
     .sort((a,b)=> b.date.localeCompare(a.date));
   wrap.innerHTML = `
@@ -7960,7 +7962,7 @@ function renderBeltValidatedSection(){
           <select id="beltValidatedGroupSelect">
             <option value="all" ${ui.beltValidatedGroupFilter==='all'?'selected':''}>Tous les cours</option>
             ${data.groups.map(g=>`<option value="${g.id}" ${ui.beltValidatedGroupFilter===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}
-            ${beltPassageOrphanOptionHtml((data.beltPassages||[]).filter(p=>p.printed), ui.beltValidatedGroupFilter)}
+            ${beltPassageOrphanOptionHtml((data.beltPassages||[]).filter(p=>p.printed && !p.pdfBatch), ui.beltValidatedGroupFilter)}
           </select>
         </div>
       </div>
@@ -7980,7 +7982,11 @@ function renderBeltValidatedSection(){
         </div>`).join('')}
       ` : ''}
     </div>
+    ${beltHistoryCardHtml()}
   `;
+  wrap.querySelectorAll('[data-action="redownload-belt-batch"]').forEach(btn=>{
+    btn.addEventListener('click', ()=> regenerateBeltBatchPdf(btn.dataset.batch));
+  });
   const toggleBtn = document.getElementById('toggleBeltValidatedHidden');
   if(toggleBtn) toggleBtn.addEventListener('click', ()=>{ saveBeltValidatedHidden(!hidden); renderBeltValidatedSection(); });
   const groupSelect = document.getElementById('beltValidatedGroupSelect');
@@ -7989,6 +7995,84 @@ function renderBeltValidatedSection(){
   if(genValidatedBtn) genValidatedBtn.addEventListener('click', generateValidatedBeltDiplomasPdf);
   // Volontairement pas de bouton de suppression ici : une fois un passage validé et imprimé,
   // il doit rester définitivement dans cette liste et ne jamais repasser dans « Passage de grade à passer ».
+}
+// Applique (ou ré-applique, par sécurité) la ceinture d'un passage de grade à la fiche de l'élève :
+// ne fait jamais reculer une ceinture déjà plus haute, et n'ajoute pas deux fois le même historique.
+function applyBeltPassageToMember(p){
+  const m = (data.members||[]).find(x=>x.id===p.memberId);
+  if(!m || !p.belt) return false;
+  let changed = false;
+  if(beltIndex(p.belt) > beltIndex(m.belt)){ m.belt = p.belt; changed = true; }
+  if(!m.beltHistory) m.beltHistory = [];
+  if(!m.beltHistory.some(h=>h.belt===p.belt)){ m.beltHistory.push({ belt: p.belt, date: p.date }); changed = true; }
+  if(changed) touchMemberInfo(m);
+  return changed;
+}
+const beltBatchLabel = items=>{
+  const names = [...new Set(items.map(p=>{ const g = (data.groups||[]).find(x=>x.id===beltPassageEffectiveGroupId(p)); return g ? g.name : (p.groupName||'Cours'); }))];
+  return names.join(', ');
+};
+function beltHistoryBatches(){
+  const map = new Map();
+  (data.beltPassages||[]).filter(p=>p.printed && p.pdfBatch).forEach(p=>{
+    if(!map.has(p.pdfBatch)) map.set(p.pdfBatch, { id:p.pdfBatch, generatedAt:p.pdfGeneratedAt||p.date||'', items:[] });
+    map.get(p.pdfBatch).items.push(p);
+  });
+  return [...map.values()].sort((a,b)=> String(b.generatedAt).localeCompare(String(a.generatedAt)));
+}
+function beltHistoryCardHtml(){
+  const batches = beltHistoryBatches();
+  return `
+    <div class="card">
+      <h2 style="margin:0 0 4px;">🗂️ Historique des passages de grade</h2>
+      <p style="font-size:12.5px; color:var(--ink-dim); margin:0 0 10px;">Chaque PDF généré est conservé ici (par sécurité) : tu peux le télécharger à nouveau à tout moment.</p>
+      ${batches.length===0 ? '<div class="empty">Aucun PDF généré pour le moment.</div>' : batches.map(b=>`
+        <div class="member-chip" style="align-items:flex-start;">
+          <div style="min-width:0;">
+            <div style="font-weight:600;">${escapeHtml(beltBatchLabel(b.items))} · ${b.items.length} passage${b.items.length>1?'s':''}</div>
+            <div style="font-size:11.5px; color:var(--ink-dim); margin-top:2px;">PDF du ${fmtDate(String(b.generatedAt).slice(0,10))}</div>
+            <div style="font-size:12px; color:var(--ink-dim); margin-top:3px;">${b.items.slice().sort((x,y)=>memberSurname(x.memberName).localeCompare(memberSurname(y.memberName),'fr')).map(p=>`${escapeHtml(p.memberName)} (${escapeHtml(beltLabelFor(p.belt))})`).join(' · ')}</div>
+          </div>
+          <button class="ghost" data-action="redownload-belt-batch" data-batch="${escapeHtml(b.id)}" style="flex-shrink:0; padding:6px 10px; font-size:12px;">📄 Télécharger</button>
+        </div>`).join('')}
+    </div>`;
+}
+async function buildBeltPassagesPdf(list, titleSuffix){
+  const logoImg = document.querySelector('header.topbar .club-logo-light');
+  const logoSrc = logoImg ? logoImg.src : '';
+  const rows = buildValidatedBeltDiplomasPdfRows(list);
+  const buildContextHtml = (isFirst)=> !isFirst ? '' : `
+    <div class="recap-header">
+      ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
+      <div>
+        <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
+        <div class="rh-sub">✅ Passages de grade validés — ${escapeHtml(titleSuffix||'')}</div>
+      </div>
+    </div>`;
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit:'pt', format:'a4' });
+  await paginateRowsIntoPdf(pdf, { rows, tableHeadHtml: `<th>Nom</th><th>Date</th>`, buildContextHtml, containerClass: 'recap-doc', containerWidthPx: 700, margin: 24 });
+  return pdf;
+}
+async function regenerateBeltBatchPdf(batchId){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const items = (data.beltPassages||[]).filter(p=>p.pdfBatch===batchId).sort((a,b)=>{
+    const ra = beltIndex(a.belt), rb = beltIndex(b.belt);
+    if(ra!==rb) return ra-rb;
+    return memberSurname(a.memberName).localeCompare(memberSurname(b.memberName), 'fr');
+  });
+  if(items.length===0){ showToast('Aucun passage dans ce PDF'); return; }
+  try{
+    const label = beltBatchLabel(items);
+    const pdf = await buildBeltPassagesPdf(items, label);
+    pdf.save(`passages-valides-${label.replace(/[^\w-]+/g,'-')}-${String(items[0].pdfGeneratedAt||'').slice(0,10)}.pdf`);
+    showToast('PDF généré');
+  } catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  }
 }
 function buildValidatedBeltDiplomasPdfRows(list){
   const rows = [];
@@ -8021,7 +8105,7 @@ async function generateValidatedBeltDiplomasPdf(){
   }
   const groupId = ui.beltValidatedGroupFilter;
   const group = data.groups.find(g=>g.id===groupId);
-  const list = (data.beltPassages||[]).filter(p=>p.printed && beltPassageInGroupFilter(p, groupId))
+  const list = (data.beltPassages||[]).filter(p=>p.printed && !p.pdfBatch && beltPassageInGroupFilter(p, groupId))
     .sort((a,b)=>{
       const ra = beltIndex(a.belt), rb = beltIndex(b.belt);
       if(ra!==rb) return ra-rb;
@@ -8032,31 +8116,27 @@ async function generateValidatedBeltDiplomasPdf(){
   const originalLabel = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
   try{
-    const logoImg = document.querySelector('header.topbar .club-logo-light');
-    const logoSrc = logoImg ? logoImg.src : '';
-    const rows = buildValidatedBeltDiplomasPdfRows(list);
-    const buildContextHtml = (isFirst)=> !isFirst ? '' : `
-      <div class="recap-header">
-        ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
-        <div>
-          <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
-          <div class="rh-sub">✅ Passages de grade validés — ${escapeHtml(group ? group.name : '')}</div>
-        </div>
-      </div>`;
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ unit:'pt', format:'a4' });
-    const margin = 24;
-    await paginateRowsIntoPdf(pdf, {
-      rows,
-      tableHeadHtml: `<th>Nom</th><th>Date</th>`,
-      buildContextHtml,
-      containerClass: 'recap-doc',
-      containerWidthPx: 700,
-      margin
-    });
+    const pdf = await buildBeltPassagesPdf(list, group ? group.name : beltBatchLabel(list));
     const safeName = (group ? group.name : 'cours').replace(/[^\w-]+/g,'-');
     pdf.save(`passages-valides-${safeName}.pdf`);
-    showToast('PDF généré');
+    // Le PDF est généré : ces passages quittent « Passage validé » pour l'historique (où le PDF
+    // reste re-téléchargeable), et on s'assure par sécurité que chaque fiche porte bien la nouvelle
+    // ceinture.
+    const batchId = uid();
+    const nowIso = new Date().toISOString();
+    list.forEach(item=>{
+      const live = (data.beltPassages||[]).find(x=>x.id===item.id);
+      if(!live) return;
+      live.pdfBatch = batchId;
+      live.pdfGeneratedAt = nowIso;
+      touchRow(live);
+      applyBeltPassageToMember(live);
+    });
+    saveData();
+    renderBeltValidatedSection();
+    renderBeltPassageSection();
+    renderGroupsTab();
+    showToast('PDF généré — passages déplacés dans l’historique');
   } catch(err){
     showToast('Échec de la génération : ' + (err.message||err));
   } finally {
@@ -8115,7 +8195,7 @@ async function generateBeltDiplomasPdf(){
     }
     pdf.save(`diplomes-passage-de-grade-${new Date().toISOString().slice(0,10)}.pdf`);
     const printedIds = new Set(pending.map(p=>p.id));
-    (data.beltPassages||[]).forEach(p=>{ if(printedIds.has(p.id)){ p.printed = true; touchRow(p); } });
+    (data.beltPassages||[]).forEach(p=>{ if(printedIds.has(p.id)){ p.printed = true; touchRow(p); applyBeltPassageToMember(p); } });
     saveData();
     renderBeltDiplomasSection();
     renderBeltValidatedSection();
