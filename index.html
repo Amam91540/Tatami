@@ -12990,8 +12990,10 @@ function renderPresencesTab(){
     document.getElementById('presence-history').innerHTML='';
     return;
   }
-  if(!ui.presenceGroup || !data.groups.find(g=>g.id===ui.presenceGroup)){
-    ui.presenceGroup = data.groups[0].id;
+  // Aucun cours présélectionné (demande de Thomas du 11/10/2026) : évite d'ouvrir par erreur l'appel
+  // du premier cours de la liste.
+  if(ui.presenceGroup && !data.groups.find(g=>g.id===ui.presenceGroup)){
+    ui.presenceGroup = null;
   }
   const currentGroup = data.groups.find(g=>g.id===ui.presenceGroup);
   setup.innerHTML = `
@@ -13001,6 +13003,7 @@ function renderPresencesTab(){
       <div style="flex:1">
         <label class="small">Cours</label>
         <select id="presenceGroupSel">
+          <option value="" ${ui.presenceGroup?'':'selected'}>— Sélectionner le cours —</option>
           ${data.groups.map(g=>`<option value="${g.id}" ${g.id===ui.presenceGroup?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}
         </select>
       </div>
@@ -13014,12 +13017,13 @@ function renderPresencesTab(){
   const presenceBackBtn = setup.querySelector('[data-action="back-to-current-season"]');
   if(presenceBackBtn) presenceBackBtn.addEventListener('click', ()=>{ setViewingSeasonId(null); renderActiveTab(); });
   document.getElementById('presenceGroupSel').addEventListener('change', e=>{
-    ui.presenceGroup = e.target.value; ui.presenceSessionId = null;
+    ui.presenceGroup = e.target.value || null; ui.presenceSessionId = null;
     document.getElementById('presence-sheet').style.display='none';
     renderPresenceHistory();
     renderPresencesTab();
   });
   document.getElementById('openSessionBtn').addEventListener('click', async ()=>{
+    if(!ui.presenceGroup){ showToast('Sélectionne d’abord le cours'); return; }
     const date = document.getElementById('presenceDate').value || todayStr();
     let session = data.sessions.find(s=>s.groupId===ui.presenceGroup && s.date===date);
     if(!session && !(await confirmIfSeasonMismatch(date))) return;
@@ -13707,8 +13711,15 @@ function computeAtRiskMembers(){
     if(sessions.length<3) return;
     const lastThree = sessions.slice(0,3);
     const mostRecentSessionId = sessions[0].id;
-    data.members.filter(m=>m.groupId===g.id).forEach(m=>{
-      const absentAllThree = lastThree.every(s=> !isPresent((data.attendance[s.id]||{})[m.id]));
+    // Élèves archivés ou de la saison à venir : jamais d'alerte. Une absence « excusée » ne compte pas
+    // comme absence répétée, et une séance antérieure à l'arrivée de l'élève (createdAt) non plus.
+    data.members.filter(m=>m.groupId===g.id && !m.archived && !m.forNextSeason).forEach(m=>{
+      const joined = m.createdAt ? String(m.createdAt).slice(0,10) : '';
+      const absentAllThree = lastThree.every(s=>{
+        if(joined && s.date < joined) return false;
+        const v = (data.attendance[s.id]||{})[m.id];
+        return !isPresent(v) && !isExcused(v);
+      });
       if(absentAllThree && dismissed[m.id]!==mostRecentSessionId) atRisk.push({ member:m, group:g, mostRecentSessionId });
     });
   });
