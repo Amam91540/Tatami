@@ -22216,7 +22216,24 @@ function initGlobalSearch(){
     // Cloisonnement par saison (voir memberMatchesSeasonView) : la recherche globale ne doit jamais
     // faire remonter une fiche de l'autre saison — on ne cherche que parmi les fiches de la vue
     // actuellement affichée (saison en cours, ou saison à venir si ce bandeau est sélectionné).
-    const matches = data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,10);
+    // Recherche aussi par email et par téléphone (demande de Thomas du 11/10/2026) : le téléphone est
+    // comparé chiffres seuls (espaces, points, tirets, +33 ignorés), à partir de 3 chiffres saisis.
+    const qDigits = q.replace(/\D/g,'');
+    const phoneKey = v=> String(v||'').replace(/\D/g,'');
+    const matchesQuery = m=>{
+      if((m.name||'').toLowerCase().includes(q)) return true;
+      if(q.includes('@') || /[a-z]/.test(q)){ if((m.email||'').toLowerCase().includes(q)) return true; }
+      if(qDigits.length>=3 && /^[\d\s.+\-()]+$/.test(q)){
+        const norm = s=> s.replace(/^33/, '0');
+        const target = norm(qDigits);
+        return [m.phone, m.whatsappPhone1, m.whatsappPhone2].some(p=>{
+          const k = phoneKey(p);
+          return k && (k.includes(qDigits) || norm(k).includes(target));
+        });
+      }
+      return false;
+    };
+    const matches = data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && matchesQuery(m)).slice(0,10);
     if(matches.length===0){
       wrap.innerHTML = '<div class="empty" style="padding:12px;">Aucun élève trouvé.</div>';
     } else {
@@ -22227,7 +22244,7 @@ function initGlobalSearch(){
         <div class="convoc-row" data-action="goto-member" data-id="${m.id}" data-group="${m.groupId||''}" style="cursor:pointer;">
           <div class="info">
             <div class="n">${nameWithBoldSurname(m.name)}${m.belt ? beltSwatchHtml(m.belt, true) : ''}${cat ? `<span class="tag">${escapeHtml(cat)}</span>` : ''}</div>
-            <div class="e">${g ? escapeHtml(g.name) : 'Sans cours'}${m.email ? ' · '+escapeHtml(m.email) : ''}</div>
+            <div class="e">${g ? escapeHtml(g.name) : 'Sans cours'}${m.email ? ' · '+escapeHtml(m.email) : ''}${(qDigits.length>=3 && /^[\d\s.+\-()]+$/.test(q)) ? ' · '+escapeHtml([m.phone, m.whatsappPhone1, m.whatsappPhone2].filter(p=>phoneKey(p).includes(qDigits) || phoneKey(p).replace(/^33/,'0').includes(qDigits.replace(/^33/,'0')))[0]||'') : ''}</div>
           </div>
         </div>`;
       }).join('');
