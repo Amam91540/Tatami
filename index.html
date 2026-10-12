@@ -878,6 +878,10 @@
       <button id="logoutBtn" class="icon-btn ghost" style="flex-shrink:0; font-size:16px;" aria-label="Se déconnecter" title="Se déconnecter">🚪</button>
     </div>
   </div>
+  <div class="header-search-wrap" style="position:relative; margin-top:8px; max-width:200px;">
+    <input type="text" id="navSearchInput" placeholder="🧭 Aller à… (folio, attestation…)" autocomplete="off" style="width:100%; font-size:11.5px; padding:6px 10px; border-radius:20px; background:var(--surface-2); border:1px solid var(--line); color:var(--ink);">
+    <div id="navSearchResults" class="global-search-results" style="left:0; right:auto; width:280px;"></div>
+  </div>
   <div class="eyebrow">Tatami</div>
   <input class="club-name" id="clubName" placeholder="Nom du club" maxlength="60">
   <div class="header-bottom-row" style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:2px; position:relative;">
@@ -22278,6 +22282,143 @@ function initGlobalSearch(){
     goToMemberFiche(row.dataset.id, row.dataset.group);
   });
 }
+/* ---------------- RECHERCHE DE RUBRIQUES (« Aller à… ») ---------------- */
+// Demande de Thomas du 12/10/2026 : une 2e barre de recherche, sous le logo, pour retrouver une partie
+// de l'appli (Folio, Attestation...) et y aller directement, quel que soit l'onglet où elle se trouve.
+// Un clic sur un résultat : change d'onglet, déplie la rubrique concernée, fait défiler jusqu'à
+// l'élément visé et le met brièvement en évidence.
+const NAV_SEARCH_ENTRIES = [
+  { label:'Faire l\'appel', tab:'presences', selector:'#presence-setup', kw:'presence appel seance' },
+  { label:'Absences répétées', tab:'presences', selector:'#presences-alerts', kw:'decrochage absent alerte' },
+  { label:'Historique des séances', tab:'presences', selector:'#presence-history', kw:'seances appel passe' },
+  { label:'Groupes / liste des élèves', tab:'groupes', group:'groupes-cours', selector:'#groups-list', kw:'cours eleves fiches adherents' },
+  { label:'Fiches incomplètes', tab:'groupes', group:'groupes-cours', selector:'#incomplete-fiches-section', kw:'manquant documents' },
+  { label:'Passage de grade', tab:'groupes', group:'groupes-beltpassage', selector:'#belt-passage-section', kw:'ceinture grade' },
+  { label:'Diplômes à imprimer', tab:'groupes', group:'groupes-beltpassage', selector:'#belt-diplomas-section', kw:'diplome ceinture pdf' },
+  { label:'Passage validé', tab:'groupes', group:'groupes-beltpassage', selector:'#belt-validated-section', kw:'ceinture grade pdf valide' },
+  { label:'Historique des passages de grade', tab:'groupes', group:'groupes-beltpassage', text:'Historique des passages de grade', kw:'ceinture pdf archive' },
+  { label:'Taux de présence', tab:'suivi', group:'suivi-taux', selector:'#suivi-content', kw:'assiduite statistiques' },
+  { label:'Cotisations — vue d\'ensemble', tab:'suivi', group:'suivi-cotisations', text:'Vue d\'ensemble', kw:'paiements argent encaissements total' },
+  { label:'Encaissement hors adhérent', tab:'suivi', group:'suivi-cotisations', selector:'#addExternalPaymentBtn', kw:'calendrier tombola divers exterieur' },
+  { label:'Chèques à encaisser', tab:'suivi', group:'suivi-cotisations', text:'Chèques à encaisser', kw:'cheque banque' },
+  { label:'Paiements encaissés', tab:'suivi', group:'suivi-cotisations', text:'Paiements encaissés', kw:'recus especes virement' },
+  { label:'Folio — Bordereau d\'encaissement', tab:'suivi', group:'suivi-cotisations', text:'Bordereau d\'encaissement', kw:'folio bordereau banque remise pdf' },
+  { label:'Historique des folios', tab:'suivi', group:'suivi-cotisations', text:'Bordereau d\'encaissement', kw:'folio bordereau historique' },
+  { label:'Attestations', tab:'suivi', group:'suivi-cotisations', text:'Attestations', kw:'attestation cheque sport mairie' },
+  { label:'Élèves avec un reste dû', tab:'suivi', group:'suivi-cotisations', text:'reste dû', kw:'impaye solde' },
+  { label:'Calendrier compétitions et stages', tab:'suivi', group:'suivi-calendrier', selector:'#competitions-calendar', kw:'evenements dates' },
+  { label:'Anniversaires', tab:'suivi', group:'suivi-cotisations', text:'Anniversaires', kw:'anniversaire pdf mois' },
+  { label:'Journal d\'activité', tab:'param', text:'Journal d\'activité', kw:'historique modifications comptes' },
+  { label:'Familles probables / validées', tab:'param', group:'param-cotisations', text:'Familles', kw:'famille fratrie' }
+];
+function navSearchNorm(s){
+  return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/<[^>]*>/g,' ').replace(/[^\p{L}\p{N}\s]/gu,' ').toLowerCase().replace(/\s+/g,' ').trim();
+}
+function navSearchTabVisible(tab){
+  const btn = document.querySelector(`nav.tabbar button[data-tab="${tab}"]`);
+  return !btn || btn.style.display!=='none';
+}
+function navSearchBuildIndex(){
+  const entries = NAV_SEARCH_ENTRIES.filter(e=>navSearchTabVisible(e.tab)).map(e=>({ ...e }));
+  const tabLabels = {};
+  document.querySelectorAll('nav.tabbar button[data-tab]').forEach(b=>{ tabLabels[b.dataset.tab] = b.textContent.trim().replace(/\s+/g,' '); });
+  Object.keys(tabLabels).forEach(tab=>{
+    if(!navSearchTabVisible(tab)) return;
+    entries.push({ label:'Onglet ' + tabLabels[tab], tab, kw:'onglet page', isTab:true });
+  });
+  // Rubriques repliables (« section-group ») de chaque onglet, détectées directement dans la page.
+  document.querySelectorAll('main section[id^="tab-"] .section-group[data-group]').forEach(g=>{
+    const tab = g.closest('section').id.replace('tab-','');
+    if(!navSearchTabVisible(tab)) return;
+    const span = g.querySelector('.section-group-header span');
+    const label = span ? span.textContent.trim().replace(/\s+/g,' ') : '';
+    if(!label) return;
+    if(entries.some(e=>navSearchNorm(e.label)===navSearchNorm(label))) return;
+    entries.push({ label, tab, group:g.dataset.group, selector:`.section-group[data-group="${g.dataset.group}"]`, kw:'' });
+  });
+  return entries;
+}
+function navSearchRun(q){
+  const tokens = navSearchNorm(q).split(' ').filter(Boolean);
+  if(!tokens.length) return [];
+  return navSearchBuildIndex().map(e=>{
+    const hay = navSearchNorm(e.label + ' ' + (e.kw||''));
+    if(!tokens.every(t=>hay.includes(t))) return null;
+    const labelNorm = navSearchNorm(e.label);
+    const score = (labelNorm.startsWith(tokens[0]) ? 0 : (labelNorm.includes(tokens[0]) ? 1 : 2)) + (e.isTab ? 3 : 0);
+    return { e, score };
+  }).filter(Boolean).sort((a,b)=>a.score-b.score).slice(0,8).map(x=>x.e);
+}
+function navSearchFlash(el){
+  if(!el) return;
+  try{ el.scrollIntoView({ behavior:'smooth', block:'start' }); }catch(err){ el.scrollIntoView(); }
+  const prev = el.style.outline, prevOff = el.style.outlineOffset;
+  el.style.outline = '3px solid var(--tatami)'; el.style.outlineOffset = '2px';
+  setTimeout(()=>{ el.style.outline = prev; el.style.outlineOffset = prevOff; }, 1800);
+}
+function navSearchFindTarget(entry){
+  const tabEl = document.getElementById('tab-' + entry.tab);
+  if(!tabEl) return null;
+  if(entry.selector){
+    const el = tabEl.querySelector(entry.selector) || document.querySelector(entry.selector);
+    if(el) return el;
+  }
+  if(entry.text){
+    const needle = navSearchNorm(entry.text);
+    const cands = tabEl.querySelectorAll('h2, h3, .section-group-header span, button, summary');
+    for(const c of cands){ if(navSearchNorm(c.textContent).includes(needle)) return c.closest('.card') || c; }
+  }
+  if(entry.group) return tabEl.querySelector(`.section-group[data-group="${entry.group}"]`);
+  return null;
+}
+function navSearchGo(entry){
+  if(ui.activeTab!==entry.tab) switchTab(entry.tab);
+  if(entry.group){
+    const g = document.querySelector(`.section-group[data-group="${entry.group}"]`);
+    if(g){ g.classList.remove('collapsed'); try{ saveSectionGroupOpen(entry.group, true); }catch(err){} }
+  }
+  let tries = 0;
+  const attempt = ()=>{
+    const el = navSearchFindTarget(entry);
+    if(el){ navSearchFlash(el); return; }
+    if(++tries < 4) setTimeout(attempt, 150);
+  };
+  setTimeout(attempt, 60);
+}
+function initNavSearch(){
+  const input = document.getElementById('navSearchInput');
+  const wrap = document.getElementById('navSearchResults');
+  if(!input || !wrap) return;
+  let current = [];
+  const render = ()=>{
+    const q = input.value.trim();
+    if(!q){ wrap.innerHTML=''; wrap.classList.remove('show'); return; }
+    current = navSearchRun(q);
+    wrap.innerHTML = current.length ? current.map((e,i)=>{
+      const tabBtn = document.querySelector(`nav.tabbar button[data-tab="${e.tab}"]`);
+      const tabName = tabBtn ? tabBtn.textContent.trim().replace(/\s+/g,' ') : e.tab;
+      return `<div class="convoc-row" data-action="nav-go" data-i="${i}" style="cursor:pointer;"><div class="info"><div class="n">${escapeHtml(e.label)}</div><div class="e">${escapeHtml(tabName)}</div></div></div>`;
+    }).join('') : '<div class="empty" style="padding:12px;">Aucune rubrique trouvée.</div>';
+    wrap.classList.add('show');
+  };
+  input.addEventListener('input', render);
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter' && current[0]){ navSearchGo(current[0]); input.value=''; wrap.classList.remove('show'); } });
+  wrap.addEventListener('click', e=>{
+    const row = e.target.closest('[data-action="nav-go"]');
+    if(!row) return;
+    const entry = current[Number(row.dataset.i)];
+    input.value = ''; wrap.innerHTML = ''; wrap.classList.remove('show');
+    if(entry) navSearchGo(entry);
+  });
+}
+initNavSearch();
+attachSearchDropdown('navSearchInput', 'navSearchResults', {
+  onFocus: ()=>{
+    const el = document.getElementById('navSearchInput');
+    const wrap = document.getElementById('navSearchResults');
+    if(el && wrap && el.value.trim() && wrap.innerHTML) wrap.classList.add('show');
+  }
+});
 initGlobalSearch();
 attachSearchDropdown('globalSearchInput', 'globalSearchResults', {
   onFocus: ()=>{
