@@ -3949,9 +3949,7 @@ function inscriptionDisciplineChecks(m){
 // l'impression que la fiche "prenait les infos d'un autre élève" alors qu'un champ réellement vide
 // doit rester totalement vide sur la page.
 function buildInscriptionOverlayHtml(m, isMajor){
-  const nameParts = String(m.name||'').trim().split(/\s+/);
-  const prenom = nameParts[0]||'';
-  const nom = nameParts.slice(1).join(' ');
+  const { prenom, nom } = splitMemberName(m.name);
   const curGroup = (data.groups||[]).find(g=>g.id===m.groupId);
   const whatsapp2Block = isMajor ? '' : `
     <label>Tel N°2 pour Groupe WhatsApp
@@ -4065,9 +4063,7 @@ function wireInscriptionOverlay(m, isMajor){
 function buildInscriptionPdfHtml(m, isMajor, fields, sigDataUrl){
   const logoImg = document.querySelector('header.topbar .club-logo-light');
   const logoSrc = logoImg ? logoImg.src : '';
-  const nameParts = String(m.name||'').trim().split(/\s+/);
-  const prenom = nameParts[0]||'';
-  const nom = nameParts.slice(1).join(' ');
+  const { prenom, nom } = splitMemberName(m.name);
   const seasonLabel = schoolYearLabel(data.settings.seasonStartYear || autoSeasonStartYear());
   const checks = inscriptionDisciplineChecks(m);
   // À côté de la discipline cochée automatiquement, indiquer le NIVEAU précis plutôt qu'une simple
@@ -5854,9 +5850,7 @@ function renderGroupsTab(){
       ` : ''}
       ${members.map((m, idx)=>{
         const cat = computeCategory(m.birthDate, m);
-        const nameParts = String(m.name||'').trim().split(/\s+/);
-        const prenom = nameParts[0]||'';
-        const nom = nameParts.slice(1).join(' ');
+        const { prenom, nom } = splitMemberName(m.name);
         const ficheOpen = !!ui.memberFicheExpanded[m.id];
         return `
         <div class="member-chip edit-fiche${idx%2===1?' alt':''}">
@@ -7533,7 +7527,7 @@ document.getElementById('groups-list').addEventListener('change', e=>{
       const full = formatMemberFullName(prenom, nom);
       if(full){
         if(isProfSession()){ submitProfFieldEdit(m.id, 'name', full); return; }
-        m.name = full; touchMemberInfo(m); syncLinkedMember(m); saveData();
+        m.name = full; touchMemberInfo(m); syncLinkedMember(m); saveData(); showToast('Nom enregistré : ' + full);
       }
     }
     return;
@@ -8728,9 +8722,23 @@ function mutualizedFeeDetails(m, group){
 /* ---------------- COTISATIONS : familles, rangs, paiements ---------------- */
 // Nom de famille approximatif d'un élève, déduit du champ "Prénom Nom" (même logique que
 // reverseNameOrder côté Code.gs) : le prénom est le premier mot, le nom de famille tout le reste.
+// Découpe un nom « Prénom NOM » en {prenom, nom}. Le nom de famille est toujours en MAJUSCULES et le
+// prénom en casse « Titre » : le nom commence donc au PREMIER mot entièrement en majuscules (à partir
+// du 2e mot). Cela permet un prénom composé en plusieurs mots (« Marie Claire DUPONT » -> prénom
+// « Marie Claire », nom « DUPONT »). Sans mot en majuscules (anciennes données), on garde l'ancienne
+// règle : 1er mot = prénom, le reste = nom. (Bug du 12/10/2026 : modifier un prénom composé semblait
+// « ne pas s'enregistrer » car le nom était redécoupé après le 1er mot, puis le prénom mis en majuscules.)
+function splitMemberName(fullName){
+  const parts = String(fullName||'').trim().split(/\s+/).filter(Boolean);
+  if(parts.length<=1) return { prenom: parts[0]||'', nom: '' };
+  const isUpperWord = w=> /\p{L}/u.test(w) && w===w.toUpperCase() && w!==w.toLowerCase();
+  let idx = -1;
+  for(let i=1;i<parts.length;i++){ if(isUpperWord(parts[i])){ idx = i; break; } }
+  if(idx<1) idx = 1;
+  return { prenom: parts.slice(0,idx).join(' '), nom: parts.slice(idx).join(' ') };
+}
 function memberLastName(m){
-  const parts = String(m.name||'').trim().split(/\s+/);
-  return parts.length>1 ? parts.slice(1).join(' ') : '';
+  return splitMemberName(m.name).nom;
 }
 // Nom de famille toujours en MAJUSCULES sur la fiche (convention "Prénom NOM" des formulaires
 // officiels) — demande de Thomas du 19/08/2026. Prénom mis en casse "Titre" (1ère lettre en
@@ -8751,11 +8759,9 @@ function formatMemberFullName(prenom, nom){
 // séparés. Même découpage que memberLastName ci-dessus : le premier mot est le prénom (mis en casse
 // "Titre"), tout le reste est le nom de famille (mis en MAJUSCULES).
 function uppercaseLastNameInFullName(fullName){
-  const parts = String(fullName||'').trim().split(/\s+/).filter(Boolean);
-  if(parts.length<=1) return toTitleCase(parts[0]||'');
-  const prenom = toTitleCase(parts[0]);
-  const nom = parts.slice(1).join(' ').toUpperCase();
-  return `${prenom} ${nom}`;
+  const sp = splitMemberName(fullName);
+  if(!sp.nom) return toTitleCase(sp.prenom||'');
+  return `${toTitleCase(sp.prenom)} ${sp.nom.toUpperCase()}`;
 }
 // Demande de Thomas du 30/08/2026 : "mets tout le texte en minuscule automatiquement si jamais des
 // majuscules sont ecrites" pour les emails (fiche élève, ajout rapide, import Excel, espace
@@ -15862,21 +15868,17 @@ function convocResponseLink(token){
 }
 
 function memberSurname(name){
-  const parts = String(name||'').trim().split(/\s+/);
-  return parts.length>1 ? parts.slice(1).join(' ') : (parts[0]||'');
+  const sp = splitMemberName(name);
+  return sp.nom || sp.prenom || '';
 }
 function nameWithBoldSurname(name){
-  const parts = String(name||'').trim().split(/\s+/);
-  if(parts.length<=1) return `<strong>${escapeHtml(parts[0]||'')}</strong>`;
-  const prenom = parts[0];
-  const nom = parts.slice(1).join(' ');
+  const { prenom, nom } = splitMemberName(name);
+  if(!nom) return `<strong>${escapeHtml(prenom||'')}</strong>`;
   return `<strong>${escapeHtml(nom)}</strong> ${escapeHtml(prenom)}`;
 }
 function displayNameOrder(name){
-  const parts = String(name||'').trim().split(/\s+/);
-  if(parts.length<=1) return parts[0]||'';
-  const prenom = parts[0];
-  const nom = parts.slice(1).join(' ');
+  const { prenom, nom } = splitMemberName(name);
+  if(!nom) return prenom||'';
   return `${nom} ${prenom}`;
 }
 function categoryRank(birthDate, member){
@@ -22304,12 +22306,18 @@ const NAV_SEARCH_ENTRIES = [
   { label:'Paiements encaissés', tab:'suivi', group:'suivi-cotisations', text:'Paiements encaissés', kw:'recus especes virement' },
   { label:'Folio — Bordereau d\'encaissement', tab:'suivi', group:'suivi-cotisations', text:'Bordereau d\'encaissement', kw:'folio bordereau banque remise pdf' },
   { label:'Historique des folios', tab:'suivi', group:'suivi-cotisations', text:'Bordereau d\'encaissement', kw:'folio bordereau historique' },
-  { label:'Attestations', tab:'suivi', group:'suivi-cotisations', text:'Attestations', kw:'attestation cheque sport mairie' },
+  { label:'Attestations', tab:'param', group:'param-documents', selector:'#attestation-settings', kw:'attestation cheque sport mairie caf pass sport' },
+  { label:'Tarifs d\'adhésion', tab:'param', group:'param-documents', selector:'#membership-fees-settings', kw:'tarifs prix cotisation grille adhesion' },
   { label:'Élèves avec un reste dû', tab:'suivi', group:'suivi-cotisations', text:'reste dû', kw:'impaye solde' },
   { label:'Calendrier compétitions et stages', tab:'suivi', group:'suivi-calendrier', selector:'#competitions-calendar', kw:'evenements dates' },
-  { label:'Anniversaires', tab:'suivi', group:'suivi-cotisations', text:'Anniversaires', kw:'anniversaire pdf mois' },
-  { label:'Journal d\'activité', tab:'param', text:'Journal d\'activité', kw:'historique modifications comptes' },
-  { label:'Familles probables / validées', tab:'param', group:'param-cotisations', text:'Familles', kw:'famille fratrie' }
+  { label:'Anniversaires', tab:'param', group:'param-saison', selector:'#birthdays-card', kw:'anniversaire pdf mois' },
+  { label:'Catégories d\'âge', tab:'param', group:'param-saison', selector:'#age-settings', kw:'categories age tranches' },
+  { label:'Licences à prendre', tab:'param', group:'param-saison', selector:'#license-pending-card', kw:'licence saison prochaine preparer' },
+  { label:'Archiver la saison', tab:'param', group:'param-saison', selector:'#archive-card', kw:'archive saison nouvelle' },
+  { label:'Comptes (prof, secrétaire…)', tab:'param', group:'param-club', selector:'#accounts-settings', kw:'comptes utilisateurs mot de passe roles' },
+  { label:'Sauvegarde & export', tab:'param', group:'param-importexport', selector:'#export-card', kw:'excel export sauvegarde backup' },
+  { label:'Journal d\'activité', tab:'param', group:'param-club', selector:'#activity-log-card', kw:'historique modifications comptes' },
+  { label:'Familles probables / validées', tab:'param', group:'param-cotisations', selector:'#family-groups-card', kw:'famille fratrie' }
 ];
 function navSearchNorm(s){
   return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/<[^>]*>/g,' ').replace(/[^\p{L}\p{N}\s]/gu,' ').toLowerCase().replace(/\s+/g,' ').trim();
@@ -22319,7 +22327,12 @@ function navSearchTabVisible(tab){
   return !btn || btn.style.display!=='none';
 }
 function navSearchBuildIndex(){
-  const entries = NAV_SEARCH_ENTRIES.filter(e=>navSearchTabVisible(e.tab)).map(e=>({ ...e }));
+  const entries = NAV_SEARCH_ENTRIES.filter(e=>{
+    if(!navSearchTabVisible(e.tab)) return false;
+    // Carte masquée pour ce compte (ex: Comptes/Journal réservés à l'admin) : on ne la propose pas.
+    if(e.selector){ const el = document.querySelector(e.selector); if(el && el.style && el.style.display==='none' && el.id && /accounts-settings|activity-log-card/.test(el.id)) return false; }
+    return true;
+  }).map(e=>({ ...e }));
   const tabLabels = {};
   document.querySelectorAll('nav.tabbar button[data-tab]').forEach(b=>{ tabLabels[b.dataset.tab] = b.textContent.trim().replace(/\s+/g,' '); });
   Object.keys(tabLabels).forEach(tab=>{
