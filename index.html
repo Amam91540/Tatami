@@ -7124,6 +7124,23 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
   }
   const doneFicheBtn = e.target.closest('[data-action="done-member-fiche"]');
   if(doneFicheBtn){
+    // Sous Safari/macOS, cliquer sur un bouton ne retire pas le focus du champ en cours de saisie :
+    // l'évènement « change » (qui enregistre nom, prénom, email...) n'était donc jamais déclenché et la
+    // modification était perdue au re-rendu. On force la validation du champ actif avant de refermer.
+    try{ if(document.activeElement && document.activeElement!==document.body && typeof document.activeElement.blur==='function') document.activeElement.blur(); }catch(err){}
+    // Filet de sécurité pour le nom/prénom : si la valeur affichée diffère encore de la fiche, on l'enregistre.
+    try{
+      const fid = doneFicheBtn.dataset.id;
+      const mm = data.members.find(x=>x.id===fid);
+      const rowEl = groupsListEl_nameRow(fid);
+      if(mm && rowEl){
+        const p = rowEl.querySelector('[data-action="edit-firstname"]'), n = rowEl.querySelector('[data-action="edit-lastname"]');
+        if(p && n){
+          const full = formatMemberFullName(p.value.trim(), n.value.trim());
+          if(full && full!==mm.name && !isProfSession()){ mm.name = full; touchMemberInfo(mm); syncLinkedMember(mm); saveData(); }
+        }
+      }
+    }catch(err){}
     ui.memberFicheEditing[doneFicheBtn.dataset.id] = false;
     renderGroupsTab();
     return;
@@ -7489,6 +7506,10 @@ function reactivateArchivedMember(memberId, newGroupId){
   showToast(`${m.name} retrouvé(e) et rattaché(e) à « ${newGroup.name} » — historique conservé`);
 }
 
+function groupsListEl_nameRow(memberId){
+  const inp = document.querySelector(`#groups-list [data-action="edit-lastname"][data-id="${memberId}"]`);
+  return inp ? inp.closest('.fiche-row1') : null;
+}
 document.getElementById('groups-list').addEventListener('change', e=>{
   // Un compte prof modifiant une fiche ne doit jamais écrire directement dessus (demande de Thomas
   // du 29/08/2026) : chaque champ ci-dessous propose sa valeur via submitProfFieldEdit (revue
