@@ -14226,8 +14226,17 @@ function renderCotisationsCard(){
     // "En attente" = paiements du folio actuellement OUVERT pour cette section (pas encore généré en
     // PDF) — les paiements sont désormais rattachés automatiquement dès leur saisie (voir
     // autoAssignPaymentToBordereau), il n'y a donc quasiment plus de paiement sans folio du tout.
-    const openLogForCount = (data.settings.bordereauLog||[]).filter(l=>l.section===section && !l.pdfGenerated && bordereauLogSeasonMatches(l, nextView)).sort((a,b)=> b.folio-a.folio)[0];
-    const pendingCount = openLogForCount ? (openLogForCount.paymentIds||[]).length : 0;
+    // Demande de Thomas du 12/10/2026 : afficher le nombre de LIGNES (une par adhérent, comme sur le
+    // feuillet de 13 lignes) en attente plutôt que le nombre de paiements. S'il reste plusieurs folios
+    // ouverts (non générés) pour la section, chacun est compté séparément, du plus ancien au plus récent.
+    const openLogsForCount = (data.settings.bordereauLog||[]).filter(l=>l.section===section && !l.pdfGenerated && bordereauLogSeasonMatches(l, nextView)).sort((a,b)=> a.folio-b.folio);
+    const openLineCounts = openLogsForCount.map(l=>{
+      const idSet = new Set(l.paymentIds||[]);
+      const pays = (data.payments||[]).filter(p=>idSet.has(p.id));
+      return pays.length ? computeBordereauData(section, pays).families.reduce((sum,f)=>sum+(f.memberRows.length||1),0) : 0;
+    }).filter(n=>n>0);
+    const pendingCount = openLineCounts.reduce((x,y)=>x+y,0);
+    const pendingLinesLabel = openLineCounts.join(' + ');
     const logsForSection = (data.settings.bordereauLog||[]).filter(l=>l.section===section && bordereauLogSeasonMatches(l, nextView));
     const lastLog = logsForSection.slice().sort((a,b)=> b.folio-a.folio)[0];
     const historyOpen = !!(ui.bordereauHistoryOpen && ui.bordereauHistoryOpen[section]);
@@ -14235,7 +14244,7 @@ function renderCotisationsCard(){
       <div class="row" style="align-items:center; justify-content:space-between;">
         <div>
           <div style="font-weight:600; font-size:13.5px;">${escapeHtml(section)}</div>
-          <div style="font-size:11.5px; color:var(--ink-dim);">${pendingCount ? `${pendingCount} paiement${pendingCount>1?'s':''} en attente` : 'Aucun paiement en attente'}${lastLog ? ` · dernier folio N°${lastLog.folio} (${fmtDateShort(lastLog.generatedAt)})` : ''}</div>
+          <div style="font-size:11.5px; color:var(--ink-dim);">${pendingCount ? `${pendingLinesLabel} ligne${pendingCount>1?'s':''} en attente` : 'Aucune ligne en attente'}${lastLog ? ` · dernier folio N°${lastLog.folio} (${fmtDateShort(lastLog.generatedAt)})` : ''}</div>
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0;">
           <button class="ghost" data-action="toggle-bordereau-history" data-section="${escapeHtml(section)}" title="Retrouver les bordereaux déjà générés pour cette section" style="padding:5px 8px; font-size:12.5px;">🕘${logsForSection.length ? ` ${logsForSection.length}` : ''}</button>
