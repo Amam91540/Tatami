@@ -1121,6 +1121,12 @@
                 <input type="date" id="addResultDate">
               </div>
             </div>
+            <div class="row">
+              <div style="flex:1">
+                <label class="small">Discipline</label>
+                <select id="addResultDiscipline"></select>
+              </div>
+            </div>
             <div id="addResultQualificationWrap"></div>
             <div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--line); position:relative;">
               <label class="small">Élève</label>
@@ -1138,6 +1144,12 @@
             </div>
             <div id="add-result-participants-list" style="margin-top:10px;"></div>
             <button class="ghost" id="cancelAddResultBtn" style="width:100%; margin-top:10px;">Terminé</button>
+          </div>
+          <div class="row">
+            <div style="flex:1">
+              <label class="small">Discipline</label>
+              <select id="resultsDisciplineSel"></select>
+            </div>
           </div>
           <div class="row">
             <div style="flex:1">
@@ -5791,6 +5803,7 @@ function renderGroupsTab(){
     if(el) el.style.display = nextSeasonView ? 'none' : '';
   });
   stripBeltForNoBeltCourses();
+  try{ if(!isProfSession() && backfillConvocEventDisciplines()) saveData(); }catch(e){}
   try{ if(!isProfSession() && syncAutoMemberDocuments()) saveData(); }catch(e){}
   const wrap = document.getElementById('groups-list');
   if(data.groups.length===0){
@@ -8606,6 +8619,33 @@ function courseToCalendarDiscipline(groupName){
   if(d==='Baby Karate') return 'Karate';
   if(d==='Taiso') return null;
   return d;
+}
+// Discipline d'un événement de résultats (Judo, Karaté, Aïkibudo, Kobudo) — demande de Thomas du
+// 13/10/2026. Champ ev.discipline quand il est connu ; sinon déduit du cours du 1er participant, et
+// par défaut Judo (historiquement, seules les compétitions de Judo étaient saisies).
+function convocEventDiscipline(ev){
+  if(!ev) return 'Judo';
+  if(ev.discipline && CALENDAR_DISCIPLINES.includes(ev.discipline)) return ev.discipline;
+  for(const r of (ev.recipients||[])){
+    const m = data.members.find(x=>x.id===r.memberId);
+    const g = m ? data.groups.find(x=>x.id===m.groupId) : null;
+    const d = g ? courseToCalendarDiscipline(g.name) : null;
+    if(d) return d;
+  }
+  return 'Judo';
+}
+function memberCalendarDiscipline(m){
+  const g = m ? data.groups.find(x=>x.id===m.groupId) : null;
+  return g ? courseToCalendarDiscipline(g.name) : null;
+}
+// Pose ev.discipline sur les événements qui n'en ont pas encore (déduite), pour que la colonne
+// « discipline » de l'onglet Convocations du classeur — lue par le site internet — soit toujours remplie.
+function backfillConvocEventDisciplines(){
+  let changed = false;
+  (data.convocEvents||[]).forEach(ev=>{
+    if(!ev.discipline){ ev.discipline = convocEventDiscipline(ev); changed = true; }
+  });
+  return changed;
 }
 function fmtDateLong(s){
   if(!s) return '';
@@ -18463,12 +18503,20 @@ function renderResultsTab(){
   if(!sel) return;
   renderResultsDashboard();
   // Cloisonné par saison (voir eventInSeasonView).
-  const events = [...(data.convocEvents||[])].filter(ev=>!ev.resultsArchived && eventInSeasonView(ev)).sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
+  // Choix de la discipline AVANT l'événement (demande de Thomas du 13/10/2026).
+  if(!ui.resultsDiscipline) ui.resultsDiscipline = 'all';
+  const discSel = document.getElementById('resultsDisciplineSel');
+  if(discSel){
+    discSel.innerHTML = `<option value="all">Toutes les disciplines</option>` + CALENDAR_DISCIPLINES.map(d=>`<option value="${d}">${CALENDAR_DISCIPLINE_LABELS[d]}</option>`).join('');
+    discSel.value = ui.resultsDiscipline;
+    discSel.onchange = ()=>{ ui.resultsDiscipline = discSel.value; ui.resultsEventId = null; renderResultsTab(); };
+  }
+  const events = [...(data.convocEvents||[])].filter(ev=>!ev.resultsArchived && eventInSeasonView(ev) && (ui.resultsDiscipline==='all' || convocEventDiscipline(ev)===ui.resultsDiscipline)).sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
   const prev = ui.resultsEventId;
   if(events.length===0){
     sel.innerHTML = '<option value="">Aucun événement pour l’instant</option>';
   } else {
-    sel.innerHTML = `<option value="">— Choisir un événement —</option>` + events.map(ev=>`<option value="${ev.id}">${eventHasMissingResults(ev)?'⚠️ ':''}${escapeHtml(ev.name)}${ev.date?' — '+fmtDate(ev.date):''}</option>`).join('');
+    sel.innerHTML = `<option value="">— Choisir un événement —</option>` + events.map(ev=>`<option value="${ev.id}">${eventHasMissingResults(ev)?'⚠️ ':''}${ui.resultsDiscipline==='all' ? '['+escapeHtml(CALENDAR_DISCIPLINE_LABELS[convocEventDiscipline(ev)]||'')+'] ' : ''}${escapeHtml(ev.name)}${ev.date?' — '+fmtDate(ev.date):''}</option>`).join('');
     if(events.some(ev=>ev.id===prev)) sel.value = prev;
   }
   ui.resultsEventId = sel.value || null;
@@ -18791,6 +18839,13 @@ function initAddResultForm(){
       ui.addResultDraftEventId = null;
       ui.addResultQualificationChecked = false;
       ui.addResultQualificationFor = '';
+      const addDiscSel = document.getElementById('addResultDiscipline');
+      if(addDiscSel){
+        addDiscSel.innerHTML = CALENDAR_DISCIPLINES.map(d=>`<option value="${d}">${CALENDAR_DISCIPLINE_LABELS[d]}</option>`).join('');
+        addDiscSel.value = (ui.resultsDiscipline && ui.resultsDiscipline!=='all') ? ui.resultsDiscipline : 'Judo';
+        addDiscSel.disabled = false;
+        addDiscSel.onchange = ()=>{ document.getElementById('addResultMemberInput').value = ''; ui.addResultMatchedMemberId = null; document.getElementById('addResultMemberSuggestions').classList.remove('show'); };
+      }
       refreshAddResultField();
       refreshAddResultWeightField();
       renderAddResultParticipantsList(null);
@@ -18820,6 +18875,8 @@ function initAddResultForm(){
     const resultVal = resultInput ? resultInput.value.trim() : '';
 
     const ev = findOrCreateConvocEvent(nameVal, dateVal);
+    const chosenDisc = (document.getElementById('addResultDiscipline')||{}).value || '';
+    if(chosenDisc && !ev.discipline) ev.discipline = chosenDisc;
     const recipient = getOrCreateRecipientToken(ev, member);
     recipient.response = 'present';
     recipient.result = resultVal;
@@ -18838,6 +18895,7 @@ function initAddResultForm(){
 
     ui.addResultDraftEventId = ev.id;
     ui.resultsEventId = ev.id;
+    if(ui.resultsDiscipline && ui.resultsDiscipline!=='all' && convocEventDiscipline(ev)!==ui.resultsDiscipline) ui.resultsDiscipline = convocEventDiscipline(ev);
     document.getElementById('addResultMemberInput').value = '';
     ui.addResultMatchedMemberId = null;
     ui.addResultQualificationChecked = false;
@@ -18857,13 +18915,14 @@ function initAddResultMemberAutocomplete(){
     ui.addResultMatchedMemberId = null;
     const q = input.value.trim().toLowerCase();
     if(!q){ wrap.innerHTML=''; wrap.classList.remove('show'); refreshAddResultWeightField(); refreshAddResultQualification(); return; }
-    const matches = data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q)).slice(0,8);
+    const discPick = (document.getElementById('addResultDiscipline')||{}).value || '';
+    const matches = data.members.filter(m=>!m.archived && !!m.forNextSeason===isViewingNextSeason() && m.name.toLowerCase().includes(q) && (!discPick || memberCalendarDiscipline(m)===discPick)).slice(0,8);
     wrap.innerHTML = matches.map(m=>{
       const g = data.groups.find(x=>x.id===m.groupId);
       return `<div class="convoc-row" data-action="pick-add-result-member" data-id="${m.id}" style="cursor:pointer;">
         <div class="info"><div class="n">${nameWithBoldSurname(m.name)}</div><div class="e">${g?escapeHtml(g.name):''}</div></div>
       </div>`;
-    }).join('') || '<div class="empty" style="padding:10px;">Aucun élève trouvé — vérifie l’orthographe.</div>';
+    }).join('') || '<div class="empty" style="padding:10px;">Aucun élève trouvé dans cette discipline — vérifie l’orthographe.</div>';
     wrap.classList.add('show');
     refreshAddResultWeightField();
     refreshAddResultQualification();
