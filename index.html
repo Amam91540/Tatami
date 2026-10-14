@@ -5787,6 +5787,47 @@ function renderDisciplineStatsCardForGroupsTab(){
   if(!el) return;
   el.innerHTML = typeof renderDisciplineStatsCard === 'function' ? renderDisciplineStatsCard(suiviActiveYear()) : '';
 }
+function courseNameTaken(name, exceptId){
+  const n = normalizeCategoryKey(name);
+  return data.groups.some(g=>g.id!==exceptId && normalizeCategoryKey(g.name)===n);
+}
+function addCourse(rawName){
+  const name = toTitleCase(String(rawName||'').trim().replace(/\s+/g,' '));
+  if(!name) return { error:'Donne un nom au cours' };
+  if(courseNameTaken(name)) return { error:'Un cours porte déjà ce nom' };
+  const group = { id: uid(), name, recurrence:[] };
+  touchRow(group);
+  data.groups.push(group);
+  return { group };
+}
+function renameCourse(groupId, rawName){
+  const g = data.groups.find(x=>x.id===groupId);
+  if(!g) return { error:'Cours introuvable' };
+  const name = toTitleCase(String(rawName||'').trim().replace(/\s+/g,' '));
+  if(!name) return { error:'Donne un nom au cours' };
+  if(courseNameTaken(name, groupId)) return { error:'Un cours porte déjà ce nom' };
+  g.name = name;
+  touchRow(g);
+  return { group:g };
+}
+function addCourseFromUi(){
+  const v = prompt('Nom du nouveau cours (ex. Baby Karaté 2) :', '');
+  if(v===null) return;
+  const r = addCourse(v);
+  if(r.error){ showToast(r.error); return; }
+  saveData(); renderActiveTab();
+  showToast(`Cours « ${r.group.name} » créé`);
+}
+function renameCourseFromUi(groupId){
+  const g = data.groups.find(x=>x.id===groupId);
+  if(!g) return;
+  const v = prompt('Nouveau nom du cours :', g.name);
+  if(v===null) return;
+  const r = renameCourse(groupId, v);
+  if(r.error){ showToast(r.error); return; }
+  saveData(); renderActiveTab();
+  showToast(`Cours renommé en « ${r.group.name} »`);
+}
 function renderGroupsTab(){
   const archive = getViewingArchive();
   const nextSeasonView = isViewingNextSeason();
@@ -5806,8 +5847,13 @@ function renderGroupsTab(){
   try{ if(!isProfSession() && backfillConvocEventDisciplines()) saveData(); }catch(e){}
   try{ if(!isProfSession() && syncAutoMemberDocuments()) saveData(); }catch(e){}
   const wrap = document.getElementById('groups-list');
+  // Ajout / renommage d'un cours depuis l'appli (demande de Thomas du 14/10/2026 : créer « Baby
+  // Karaté 2 » et renommer l'actuel en « Baby Karaté 1 ») — avant, les cours n'existaient que via
+  // l'import Excel. Réservé aux comptes non-prof.
+  const canManageCourses = !isProfSession();
+  const addCourseBarHtml = canManageCourses ? `<div style="margin-bottom:10px;"><button type="button" class="ghost icon-btn" data-action="add-course">➕ Ajouter un cours</button></div>` : '';
   if(data.groups.length===0){
-    wrap.innerHTML = `<div class="empty">Aucun cours pour l'instant. Ajoutez votre premier cours ci-dessus — par exemple « Judo débutants » ou « Karaté ados ».</div>`;
+    wrap.innerHTML = addCourseBarHtml + `<div class="empty">Aucun cours pour l'instant. Ajoutez votre premier cours — par exemple « Judo débutants » ou « Karaté ados ».</div>`;
     return;
   }
   // « Licence à prendre » : historiquement TOUS ses membres avaient forNextSeason=true (en attente
@@ -5837,7 +5883,7 @@ function renderGroupsTab(){
       🆕 ${pendingDocMembers.length} document${pendingDocMembers.length>1?'s':''} à vérifier${pendingFilterActive ? ' — vue filtrée, cliquer pour tout revoir' : ' — cliquer pour filtrer'}
     </div>` : '';
   const groupsToRender = pendingFilterActive ? visibleGroups.filter(g=>pendingDocMembers.some(m=>m.groupId===g.id)) : visibleGroups;
-  wrap.innerHTML = (nextSeasonView ? nextSeasonBannerHtml() : '') + pendingFilterBadgeHtml + groupsToRender.map(g=>{
+  wrap.innerHTML = (nextSeasonView ? nextSeasonBannerHtml() : '') + addCourseBarHtml + pendingFilterBadgeHtml + groupsToRender.map(g=>{
     const members = data.members.filter(m=>m.groupId===g.id && inSeasonView(m) && (!pendingFilterActive || memberHasPendingDocuments(m))).sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr'));
     const draftId = 'draft-'+g.id;
     const expanded = pendingFilterActive || !!ui.groupsExpanded[g.id];
@@ -5854,6 +5900,7 @@ function renderGroupsTab(){
         </div>
       </div>
       ${expanded ? `
+      ${(canManageCourses && !committee && !isLicensePendingGroup(g)) ? `<div style="margin-top:8px;"><button type="button" class="ghost icon-btn" data-action="rename-course" data-id="${g.id}" style="font-size:12px; padding:5px 10px;">✏️ Renommer ce cours</button></div>` : ''}
       ${committee ? `
       <div class="row" style="margin-top:10px; position:relative;">
         <input type="text" id="committee-search-${g.id}" placeholder="Rechercher une fiche existante (nom)" autocomplete="off" data-action="committee-search-input" data-group="${g.id}">
@@ -7106,6 +7153,10 @@ document.getElementById('groups-list').addEventListener('click', async e=>{
     }
     return;
   }
+  const addCourseBtn = e.target.closest('[data-action="add-course"]');
+  if(addCourseBtn){ addCourseFromUi(); return; }
+  const renameCourseBtn = e.target.closest('[data-action="rename-course"]');
+  if(renameCourseBtn){ renameCourseFromUi(renameCourseBtn.dataset.id); return; }
   const toggleEl = e.target.closest('[data-action="toggle-group"]');
   if(toggleEl){
     const gid = toggleEl.dataset.id;
