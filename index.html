@@ -7846,17 +7846,17 @@ function renderBeltPassageSection(){
       ${eligible.length===0 ? '<div class="empty" style="margin-top:10px;">Aucun pratiquant concerné pour cette sélection.</div>' : eligible.map(m=>{
         const options = higherBeltOptions(m.belt);
         return `
-        <div class="member-chip">
-          <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-            ${m.belt ? beltSwatchHtml(m.belt, true) : ''}
-            <span style="min-width:0;">${nameWithBoldSurname(m.name)}</span>
-          </div>
-          <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
-            <select data-action="belt-passage-select" data-id="${m.id}" style="width:auto; min-width:150px;">
+        <div class="member-chip" style="align-items:center; gap:8px;">
+          <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;">
+            <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+              ${m.belt ? beltSwatchHtml(m.belt, true) : ''}
+              <span style="min-width:0; overflow-wrap:anywhere;">${nameWithBoldSurname(m.name)}</span>
+            </div>
+            <select data-action="belt-passage-select" data-id="${m.id}" style="width:100%; min-width:0;">
               ${options.map(b=>`<option value="${b.key}">${escapeHtml(b.label)}</option>`).join('')}
             </select>
-            <button class="primary" data-action="validate-belt-passage" data-id="${m.id}" style="padding:8px 12px; font-size:12.5px; flex-shrink:0;">✓ Valider</button>
           </div>
+          <button class="primary" data-action="validate-belt-passage" data-id="${m.id}" style="padding:8px 12px; font-size:12.5px; flex-shrink:0;">✓ Valider</button>
         </div>`;
       }).join('')}
       ` : ''}
