@@ -15962,10 +15962,11 @@ function groupedCategoryLabel(birthDate, member){
 // désormais à CHAQUE site qui modifie rec.result (voir les appels à applyResultAgeCategory dans tout
 // le fichier), plus le rattrapage refreshResultAgeCategories() ci-dessous pour les résultats déjà en
 // base avant ce correctif.
-function applyResultAgeCategory(rec){
+function applyResultAgeCategory(rec, ev){
   if(!rec) return;
   const member = data.members.find(m=>m.id===rec.memberId);
-  rec.ageCategory = rec.viaVeterans ? 'Vétérans' : (member ? groupedCategoryLabel(member.birthDate, member) : 'Sans catégorie');
+  const disc = ev ? convocEventDiscipline(ev) : 'Judo';
+  rec.ageCategory = rec.viaVeterans ? 'Vétérans' : (member ? weightBandLabelFor(member.birthDate, member, disc) : 'Sans catégorie');
 }
 // Rattrapage : recalcule r.ageCategory sur CHAQUE destinataire de convocation ayant un résultat —
 // couvre les résultats déjà en base avant ce correctif (ou saisis pendant la fenêtre où seul
@@ -15980,7 +15981,7 @@ function refreshResultAgeCategories(){
     (ev.recipients||[]).forEach(r=>{
       if(!r.result) return; // pas de résultat saisi : rien à catégoriser
       const member = data.members.find(m=>m.id===r.memberId);
-      const label = r.viaVeterans ? 'Vétérans' : (member ? groupedCategoryLabel(member.birthDate, member) : '');
+      const label = r.viaVeterans ? 'Vétérans' : (member ? weightBandLabelFor(member.birthDate, member, convocEventDiscipline(ev)) : '');
       if(label && r.ageCategory !== label){ r.ageCategory = label; changed = true; }
     });
   });
@@ -17806,15 +17807,69 @@ const QUALIFICATION_COMPETITIONS = {
     'Championnat de France par équipes mixte de club amateur 1D (national)'
   ]
 };
-function isQualifyingCompetitionName(name){
+// KARATÉ (FFK) — demande de Thomas du 14/10/2026. Compétitions pouvant donner lieu à une
+// qualification, d'après le règlement des compétitions FFK 2026-2027 (ffkarate.fr) : championnats
+// départementaux → régionaux (Île-de-France) → Championnat de France ; Pupilles/Benjamins : coupes
+// départementales → coupes régionales ; équipes (Juniors/Seniors combat) via le championnat régional.
+// Coupe de France, Open de France, Coupe de France des Corporations... ne sont PAS qualificatives.
+const KARATE_QUALIFICATION_COMPETITIONS = {
+  'Pupilles': [
+    'Coupe départementale Essonne Pupilles (départemental)',
+    'Coupe régionale Île-de-France Pupilles (régional)'
+  ],
+  'Benjamins': [
+    'Coupe départementale Essonne Benjamins (départemental)',
+    'Coupe régionale Île-de-France Benjamins (régional)',
+    'Coupe de France Zones Nord & Sud Benjamins (national, non qualificative)'
+  ],
+  'Minimes': [
+    'Championnat départemental Essonne Minimes (départemental)',
+    'Championnat régional Île-de-France Minimes (régional)',
+    'Championnat de France Minimes combat (national)',
+    'Coupe de France Minimes combat (national, non qualificative)',
+    'Coupe de France Zones Nord & Sud Minimes (national, non qualificative)'
+  ],
+  'Cadets': [
+    'Championnat départemental Essonne Cadets (départemental)',
+    'Championnat régional Île-de-France Cadets (régional)',
+    'Championnat de France Cadets combat (national)',
+    'Coupe de France Cadets combat (national, non qualificative)',
+    'Open de France combat (national, non qualificatif)'
+  ],
+  'Juniors': [
+    'Championnat départemental Essonne Juniors (départemental)',
+    'Championnat régional Île-de-France Juniors (régional)',
+    'Championnat régional par équipes Juniors combat (régional)',
+    'Championnat de France Juniors combat (national)',
+    'Championnat de France par équipes Juniors combat (national)',
+    'Coupe de France Juniors combat (national, non qualificative)',
+    'Open de France combat (national, non qualificatif)'
+  ],
+  'Seniors': [
+    'Championnat départemental Essonne Seniors (départemental)',
+    'Championnat régional Île-de-France Seniors (régional)',
+    'Championnat régional par équipes Seniors combat (régional)',
+    'Championnat de France Seniors combat (national)',
+    'Championnat de France par équipes Seniors combat (national)',
+    'Coupe de France Seniors combat (national, non qualificative)',
+    'Open de France combat (national, non qualificatif)'
+  ],
+  'Vétérans': [
+    'Championnat régional Île-de-France Vétérans (régional)',
+    'Championnat de France Vétérans combat (national, sans phase qualificative)'
+  ]
+};
+function isQualifyingCompetitionName(name, discipline){
   const n = String(name||'').toLowerCase();
+  if(discipline==='Karate' && /coupe\s+(d[ée]partementale|r[ée]gionale|des ligues)/.test(n)) return true;
   return n.includes('championnat') || n.includes('critérium') || n.includes('criterium');
 }
-function qualificationOptionsForCategory(categoryLabel){
+function qualificationOptionsForCategory(categoryLabel, discipline){
+  if(discipline==='Karate') return KARATE_QUALIFICATION_COMPETITIONS[categoryLabel] || [];
   return QUALIFICATION_COMPETITIONS[categoryLabel] || [];
 }
-function qualificationSelectHtml(attrs, selectedValue, categoryLabel){
-  const options = qualificationOptionsForCategory(categoryLabel);
+function qualificationSelectHtml(attrs, selectedValue, categoryLabel, discipline){
+  const options = qualificationOptionsForCategory(categoryLabel, discipline);
   if(options.length===0){
     return `<div style="font-size:12px; color:var(--ink-dim); font-style:italic;">Aucune compétition de qualification connue pour cette catégorie${categoryLabel?' ('+escapeHtml(categoryLabel)+')':''}.</div>`;
   }
@@ -17834,21 +17889,55 @@ const WEIGHT_CATEGORIES_BY_BAND = {
  'seniors':   { g:['-60','-66','-73','-81','-90','-100','+100'], f:['-48','-52','-57','-63','-70','-78','+78'] },
   'veterans':  { g:['-60','-66','-73','-81','-90','-100','+100'], f:['-48','-52','-57','-63','-70','-78','+78'] }
 };
+// Catégories de poids KARATÉ (combat/kumite) — grille FFK « Catégories d'âge et de poids » saison
+// 2025-2026 (ffkarate.fr, Service Compétitions, août 2025), à revérifier à chaque rentrée. Pas de
+// kumite en dessous de Pupilles. Âges FFK : Pupilles 8-9, Benjamins 10-11, Minimes 12-13, Cadets
+// 14-15, Juniors 16-17, Seniors 18+ (Vétérans 35+, mêmes poids que les Seniors adultes).
+const KARATE_WEIGHT_CATEGORIES_BY_BAND = {
+  'pupilles':  { g:['-25','-30','-35','-40','-45','-50','+50'], f:['-25','-30','-35','-40','-45','+45'] },
+  'benjamins': { g:['-30','-35','-40','-45','-50','-55','+55'], f:['-30','-35','-40','-45','-50','+50'] },
+  'minimes':   { g:['-35','-40','-45','-50','-55','-60','-65','+65'], f:['-35','-40','-45','-50','-55','+55'] },
+  'cadets':    { g:['-52','-57','-63','-70','+70'], f:['-47','-54','-61','+61'] },
+  'juniors':   { g:['-55','-61','-68','-76','+76'], f:['-48','-53','-59','-66','+66'] },
+  'seniors':   { g:['-60','-67','-75','-84','+84'], f:['-50','-55','-61','-68','+68'] },
+  'veterans':  { g:['-67','-75','-84','+84'], f:['-55','-61','-68','+68'] }
+};
+// Tranche d'âge KARATÉ (FFK) d'une date de naissance — distincte des tranches Judo de
+// data.settings.ageBands (ex. Cadets 14-16 en Judo, 14-15 en Karaté).
+function karateBandLabelForBirthDate(birthDate){
+  const y = parseInt(String(birthDate||'').slice(0,4),10);
+  if(!y) return null;
+  const age = (data.settings.seasonStartYear||autoSeasonStartYear()) - y;
+  if(age<8) return null;
+  if(age<=9) return 'Pupilles';
+  if(age<=11) return 'Benjamins';
+  if(age<=13) return 'Minimes';
+  if(age<=15) return 'Cadets';
+  if(age<=17) return 'Juniors';
+  if(age>=35) return 'Vétérans';
+  return 'Seniors';
+}
+// Libellé de tranche à utiliser pour la grille de poids / la qualification selon la discipline.
+function weightBandLabelFor(birthDate, member, discipline){
+  if(discipline==='Karate') return karateBandLabelForBirthDate(birthDate) || 'Sans catégorie';
+  return groupedCategoryLabel(birthDate, member);
+}
 function normalizeCategoryKey(s){
   return String(s||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 }
-function weightOptionsForBandLabel(bandLabel){
+function weightOptionsForBandLabel(bandLabel, discipline){
   const key = normalizeCategoryKey(bandLabel);
+  if(discipline==='Karate') return KARATE_WEIGHT_CATEGORIES_BY_BAND[key] || null;
   return WEIGHT_CATEGORIES_BY_BAND[key] || null;
 }
-function buildWeightFieldHtml(birthDate, currentValue, dataAttrs, forceMorphological){
+function buildWeightFieldHtml(birthDate, currentValue, dataAttrs, forceMorphological, discipline){
   if(forceMorphological){
     return `<span style="font-size:12px; color:var(--ink-dim); flex-shrink:0; padding:9px 4px;">Poule morphologique</span>`;
   }
-  const bandLabel = groupedCategoryLabel(birthDate);
-  const cats = weightOptionsForBandLabel(bandLabel);
+  const bandLabel = weightBandLabelFor(birthDate, null, discipline);
+  const cats = weightOptionsForBandLabel(bandLabel, discipline);
   if(!cats){
-    return `<span style="font-size:12px; color:var(--ink-dim); flex-shrink:0; padding:9px 4px;">Poule morphologique</span>`;
+    return `<span style="font-size:12px; color:var(--ink-dim); flex-shrink:0; padding:9px 4px;">${discipline==='Karate' ? 'Catégorie de poids —' : 'Poule morphologique'}</span>`;
   }
   return `<select ${dataAttrs} style="flex:1;">
     <option value="">Poids —</option>
@@ -17877,11 +17966,11 @@ function buildResultPhotoHtml(r, eventId){
       <input type="file" accept="image/*" data-action="upload-result-photo" data-event="${eventId}" data-member="${r.memberId}" style="display:none;">
     </label>`;
 }
-function weightDisplayValue(birthDate, weight, forceMorphological){
+function weightDisplayValue(birthDate, weight, forceMorphological, discipline){
   if(forceMorphological) return 'Poule morphologique';
   if(weight==='Poule morphologique') return weight;
   if(weight) return `${weight} kg`;
-  return weightOptionsForBandLabel(groupedCategoryLabel(birthDate)) ? '—' : 'Poule morphologique';
+  return weightOptionsForBandLabel(weightBandLabelFor(birthDate, null, discipline), discipline) ? '—' : (discipline==='Karate' ? '—' : 'Poule morphologique');
 }
 /* ---------------- CATÉGORIE DE POIDS DE RÉFÉRENCE (fiche élève) ---------------- */
 // Champ permanent sur la fiche élève (comme la ceinture), distinct du poids saisi ÉVÉNEMENT PAR
@@ -17910,10 +17999,12 @@ function memberWeightCategoryEligible(m){
   const group = data.groups.find(g=>g.id===m.groupId);
   const disc = group ? courseToDiscipline(group.name) : null;
   if(disc==='Aikibudo' || disc==='Kobudo') return false;
-  return !!weightOptionsForBandLabel(groupedCategoryLabel(m.birthDate, m));
+  const md = memberCalendarDiscipline(m);
+  return !!weightOptionsForBandLabel(weightBandLabelFor(m.birthDate, m, md), md);
 }
 function buildMemberWeightCategorySelectHtml(m, extraAttrs){
-  const cats = weightOptionsForBandLabel(groupedCategoryLabel(m.birthDate, m));
+  const md = memberCalendarDiscipline(m);
+  const cats = weightOptionsForBandLabel(weightBandLabelFor(m.birthDate, m, md), md);
   if(!cats) return '';
   const currentValue = m.weightCategory||'';
   return `<select data-action="edit-weight-category" data-id="${m.id}" ${extraAttrs||''} style="flex:1;">
@@ -18844,7 +18935,7 @@ function initAddResultForm(){
         addDiscSel.innerHTML = CALENDAR_DISCIPLINES.map(d=>`<option value="${d}">${CALENDAR_DISCIPLINE_LABELS[d]}</option>`).join('');
         addDiscSel.value = (ui.resultsDiscipline && ui.resultsDiscipline!=='all') ? ui.resultsDiscipline : 'Judo';
         addDiscSel.disabled = false;
-        addDiscSel.onchange = ()=>{ document.getElementById('addResultMemberInput').value = ''; ui.addResultMatchedMemberId = null; document.getElementById('addResultMemberSuggestions').classList.remove('show'); };
+        addDiscSel.onchange = ()=>{ document.getElementById('addResultMemberInput').value = ''; ui.addResultMatchedMemberId = null; document.getElementById('addResultMemberSuggestions').classList.remove('show'); refreshAddResultWeightField(); refreshAddResultQualification(); };
       }
       refreshAddResultField();
       refreshAddResultWeightField();
@@ -18890,7 +18981,7 @@ function initAddResultForm(){
     // Sheets, voir CONVOC_COLUMNS côté Code.gs) SANS jamais exposer la date de naissance elle-même.
     // Voir applyResultAgeCategory (doit être appelé APRÈS recipient.viaVeterans, déjà à jour juste
     // au-dessus).
-    applyResultAgeCategory(recipient);
+    applyResultAgeCategory(recipient, ev);
     saveData();
 
     ui.addResultDraftEventId = ev.id;
@@ -18951,8 +19042,9 @@ function refreshAddResultWeightField(){
     return;
   }
   const member = ui.addResultMatchedMemberId ? data.members.find(m=>m.id===ui.addResultMatchedMemberId) : null;
-  const bandLabel = member ? groupedCategoryLabel(member.birthDate, member) : null;
-  const cats = bandLabel ? weightOptionsForBandLabel(bandLabel) : null;
+  const addDisc = (document.getElementById('addResultDiscipline')||{}).value || 'Judo';
+  const bandLabel = member ? weightBandLabelFor(member.birthDate, member, addDisc) : null;
+  const cats = bandLabel ? weightOptionsForBandLabel(bandLabel, addDisc) : null;
   const dateInput = document.getElementById('addResultDate');
   // À défaut d'un poids déjà saisi lors d'une compétition précédente (getMemberLastWeight), on
   // retombe sur la catégorie de poids de référence de la fiche élève (voir
@@ -18989,16 +19081,17 @@ function refreshAddResultQualification(){
   const nameInput = document.getElementById('addResultEventName');
   const wrap = document.getElementById('addResultQualificationWrap');
   if(!nameInput || !wrap) return;
-  if(!isQualifyingCompetitionName(nameInput.value)){ wrap.innerHTML = ''; return; }
+  const addDisc = (document.getElementById('addResultDiscipline')||{}).value || 'Judo';
+  if(!isQualifyingCompetitionName(nameInput.value, addDisc)){ wrap.innerHTML = ''; return; }
   const checked = !!ui.addResultQualificationChecked;
   const member = ui.addResultMatchedMemberId ? data.members.find(m=>m.id===ui.addResultMatchedMemberId) : null;
-  const categoryLabel = member ? groupedCategoryLabel(member.birthDate, member) : null;
+  const categoryLabel = member ? weightBandLabelFor(member.birthDate, member, addDisc) : null;
   wrap.innerHTML = `
     <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13.5px; cursor:pointer;">
       <input type="checkbox" id="addResultQualifCheck" ${checked?'checked':''}> Qualification
     </label>
     ${checked ? `<div style="margin-top:6px;">${
-      member ? qualificationSelectHtml('id="addResultQualifSelect"', ui.addResultQualificationFor||'', categoryLabel)
+      member ? qualificationSelectHtml('id="addResultQualifSelect"', ui.addResultQualificationFor||'', categoryLabel, addDisc)
              : `<div style="font-size:12px; color:var(--ink-dim); font-style:italic;">Choisis d’abord l’élève ci-dessous pour voir les compétitions de sa catégorie.</div>`
     }</div>` : ''}
   `;
@@ -19174,7 +19267,8 @@ function renderResultsList(){
     return;
   }
   const presents = recipientsInSeasonView(ev.recipients).filter(r=>r.response==='present');
-  const showQualif = isQualifyingCompetitionName(ev.name);
+  const evDisc = convocEventDiscipline(ev);
+  const showQualif = isQualifyingCompetitionName(ev.name, evDisc);
   if(!ui.qualifCheckedRows) ui.qualifCheckedRows = {};
   const missingBanner = eventHasMissingResults(ev)
     ? `<div style="display:flex; align-items:center; gap:8px; background:#FFF6DA; border:1px solid #E8C547; border-radius:8px; padding:9px 12px; margin-bottom:10px; font-size:13px; color:#6B5300;">⚠️ <strong>Résultats manquants</strong> pour un ou plusieurs présents à cet événement.</div>`
@@ -19221,7 +19315,7 @@ function renderResultsList(){
         <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; cursor:pointer;">
           <input type="checkbox" data-action="qualif-check" data-event="${ev.id}" data-member="${r.memberId}" ${qualifChecked?'checked':''}> Qualification
         </label>
-        ${qualifChecked ? `<div style="margin-top:5px;">${qualificationSelectHtml(`data-action="qualif-select" data-event="${ev.id}" data-member="${r.memberId}"`, r.qualificationFor||'', groupedCategoryLabel(birthDateOf(r), memberOf(r)))}</div>` : ''}
+        ${qualifChecked ? `<div style="margin-top:5px;">${qualificationSelectHtml(`data-action="qualif-select" data-event="${ev.id}" data-member="${r.memberId}"`, r.qualificationFor||'', weightBandLabelFor(birthDateOf(r), memberOf(r), evDisc), evDisc)}</div>` : ''}
       </div>` : '';
     return `
     <div class="convoc-row" style="flex-direction:column; align-items:stretch; gap:6px;">
@@ -19229,7 +19323,7 @@ function renderResultsList(){
         <div class="n">${nameWithBoldSurname(r.name)}</div>
       </div>
       <div class="row" style="margin:0; align-items:center;">
-        ${buildWeightFieldHtml(birthDateOf(r), r.weight||'', `data-action="edit-weight" data-event="${ev.id}" data-member="${r.memberId}"`, shiai)}
+        ${buildWeightFieldHtml(birthDateOf(r), r.weight||'', `data-action="edit-weight" data-event="${ev.id}" data-member="${r.memberId}"`, shiai, evDisc)}
         ${shiai
           ? `<div style="display:flex; align-items:center; gap:6px; flex-shrink:0;"><input type="text" inputmode="numeric" data-action="edit-result" data-event="${ev.id}" data-member="${r.memberId}" value="${escapeHtml(r.result||'')}" placeholder="0" style="max-width:70px;"><span style="font-size:13px; color:var(--ink-dim);">Points</span></div>`
           : `<select data-action="edit-result" data-event="${ev.id}" data-member="${r.memberId}" style="max-width:100px; flex-shrink:0; ${medalStyle(r.result)}">
@@ -19254,7 +19348,7 @@ function renderResultsList(){
       const rec = evObj && evObj.recipients.find(x=>x.memberId===inp.dataset.member);
       if(!rec) return;
       rec.result = inp.value.trim();
-      applyResultAgeCategory(rec);
+      applyResultAgeCategory(rec, evObj);
       saveData();
       if(inp.tagName==='SELECT') inp.setAttribute('style', `max-width:100px; flex-shrink:0; ${medalStyle(rec.result)}`);
       if(ui.resultsSelectedMemberId===rec.memberId) renderPalmares();
@@ -19418,7 +19512,7 @@ function renderCompetitionDayMode(){
         bodyHtml += `
         <div class="compday-row ${done?'done':''}" data-row-member="${r.memberId}">
           <div class="compday-name"><span class="compday-check">${done?'✅ ':''}</span>${nameWithBoldSurname(r.name)}</div>
-          <div class="compday-weight">${buildWeightFieldHtml(birthDateOf(r), r.weight||'', `data-action="compday-edit-weight" data-event="${ev.id}" data-member="${r.memberId}"`, shiai)}</div>
+          <div class="compday-weight">${buildWeightFieldHtml(birthDateOf(r), r.weight||'', `data-action="compday-edit-weight" data-event="${ev.id}" data-member="${r.memberId}"`, shiai, convocEventDiscipline(ev))}</div>
           ${resultHtml}
         </div>`;
       });
@@ -19452,7 +19546,7 @@ function renderCompetitionDayMode(){
       const rec = evObj && evObj.recipients.find(x=>x.memberId===btn.dataset.member);
       if(!rec) return;
       rec.result = (rec.result===btn.dataset.value) ? '' : btn.dataset.value;
-      applyResultAgeCategory(rec);
+      applyResultAgeCategory(rec, evObj);
       saveData();
       const row = btn.closest('.compday-row');
       if(row){
@@ -19478,7 +19572,7 @@ function renderCompetitionDayMode(){
       const rec = evObj && evObj.recipients.find(x=>x.memberId===inp.dataset.member);
       if(!rec) return;
       rec.result = inp.value.trim();
-      applyResultAgeCategory(rec);
+      applyResultAgeCategory(rec, evObj);
       saveData();
       const row = inp.closest('.compday-row');
       if(row){
@@ -19499,7 +19593,7 @@ function renderCompetitionDayMode(){
       const current = parseInt(rec.result,10) || 0;
       const next = Math.max(0, current + (Number(btn.dataset.dir)||0));
       rec.result = String(next);
-      applyResultAgeCategory(rec);
+      applyResultAgeCategory(rec, evObj);
       saveData();
       const row = btn.closest('.compday-row');
       if(row){
@@ -20480,7 +20574,7 @@ function buildResultRowsHtml(presents, birthDateOf, shiai, memberOf){
       }
       const memberForCat = data.members.find(x=>x.id===r.memberId);
       const cat = categoryLabelForResultsPdf(birthDateOf(r), memberForCat ? memberForCat.gender : '', r.viaVeterans, memberForCat);
-      const weightLabel = weightDisplayValue(birthDateOf(r), r.weight);
+      const weightLabel = weightDisplayValue(birthDateOf(r), r.weight, false, convocEventDiscipline(ev));
       let resultCell;
       if(!r.result){
         resultCell = `<span style="color:#999;">—</span>`;
