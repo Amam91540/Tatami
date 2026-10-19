@@ -5752,6 +5752,7 @@ const TAB_RENDER_FNS = {
 };
 function renderActiveTab(){
   if(!ready) return;
+  sortDataGroupsInPlace();
   syncSeasonStartYearFromDate();
   renderHeaderSeasonSwitch();
   (TAB_RENDER_FNS[ui.activeTab] || []).forEach(fn=>fn());
@@ -18194,7 +18195,7 @@ function renderArchivedEventResultsHtml(ev){
   const presents = recipientsInSeasonView(ev.recipients).filter(r=>r.response==='present');
   if(presents.length===0) return '<div class="empty">Aucun participant présent.</div>';
   const shiai = isShiaiEvent(ev.name);
-  const { rows } = buildResultRowsHtml(presents, birthDateOf, shiai);
+  const { rows } = buildResultRowsHtml(presents, birthDateOf, shiai, undefined, convocEventDiscipline(ev));
   return `<div style="overflow-x:auto; margin-top:8px;"><table class="recap-table" style="min-width:480px;"><tr><th>Élève</th><th>Catégorie</th><th>Poids</th><th>Résultat</th></tr>${rows.map(r=>`<tr>${r.html}</tr>`).join('')}</table></div>`;
 }
 const resultsHistoryVisibility = cardVisibility('results-history', false);
@@ -20554,7 +20555,7 @@ function rankOrderIndex(result){
   const idx = RESULT_PLACEMENT_OPTIONS.indexOf(String(result||''));
   return idx===-1 ? 999 : idx;
 }
-function buildResultRowsHtml(presents, birthDateOf, shiai, memberOf){
+function buildResultRowsHtml(presents, birthDateOf, shiai, memberOf, discipline){
   memberOf = memberOf || (r => data.members.find(x=>x.id===r.memberId));
   const groups = {};
   const order = [];
@@ -20591,7 +20592,7 @@ function buildResultRowsHtml(presents, birthDateOf, shiai, memberOf){
       }
       const memberForCat = data.members.find(x=>x.id===r.memberId);
       const cat = categoryLabelForResultsPdf(birthDateOf(r), memberForCat ? memberForCat.gender : '', r.viaVeterans, memberForCat);
-      const weightLabel = weightDisplayValue(birthDateOf(r), r.weight, false, convocEventDiscipline(ev));
+      const weightLabel = weightDisplayValue(birthDateOf(r), r.weight, false, discipline);
       let resultCell;
       if(!r.result){
         resultCell = `<span style="color:#999;">—</span>`;
@@ -20805,7 +20806,7 @@ async function generateEventResultsPdfForId(eventId){
     // fois AVANT de construire le HTML du PDF — html2canvas capture une image statique, il ne peut
     // pas attendre qu'une <img src="..."> distante finisse de charger pendant la capture.
     await fetchPhotosBase64([...presents.map(r=>r.photoFileId).filter(Boolean), ...(ev.photoFileIds||[])]);
-    const { rows, gold, silver, bronze, categoryLabels } = buildResultRowsHtml(presents, birthDateOf, shiaiEvent);
+    const { rows, gold, silver, bronze, categoryLabels } = buildResultRowsHtml(presents, birthDateOf, shiaiEvent, undefined, convocEventDiscipline(ev));
 
     const totalMedals = gold+silver+bronze;
     const logoImg = document.querySelector('header.topbar .club-logo-light');
@@ -20901,7 +20902,7 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
     events.forEach(({ev, presents})=>{
       totalParticipants += presents.length;
       const birthDateOf = birthDateOfRecipient;
-      const { rows, gold:g, silver:s, bronze:b, categoryLabels } = buildResultRowsHtml(presents, birthDateOf, isShiaiEvent(ev.name));
+      const { rows, gold:g, silver:s, bronze:b, categoryLabels } = buildResultRowsHtml(presents, birthDateOf, isShiaiEvent(ev.name), undefined, convocEventDiscipline(ev));
       gold+=g; silver+=s; bronze+=b;
       categoryLabels.forEach(c=>allCategoryLabels.add(c));
       combinedRows.push({
