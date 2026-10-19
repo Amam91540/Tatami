@@ -19663,6 +19663,16 @@ function memberStages(memberId){
   return (data.stages||[]).filter(s=> s.validated && (s.participants||[]).some(p=>p.memberId===memberId))
     .sort((a,b)=> (b.dateStart||'').localeCompare(a.dateStart||''));
 }
+// Discipline d'un stage (les stages n'ont pas de champ discipline) : déduite du cours de ses participants.
+function stageDisciplineLabel(stage){
+  const set = [];
+  (stage.participants||[]).forEach(pt=>{
+    const m = data.members.find(x=>x.id===pt.memberId);
+    const d = memberCalendarDiscipline(m);
+    if(d && !set.includes(d)) set.push(d);
+  });
+  return set.map(d=>CALENDAR_DISCIPLINE_LABELS[d]||d).join(' / ');
+}
 function stageDateRangeLabel(stage){
   if(stage.dateStart && stage.dateEnd && stage.dateStart!==stage.dateEnd) return `${fmtDate(stage.dateStart)} au ${fmtDate(stage.dateEnd)}`;
   if(stage.dateStart) return fmtDate(stage.dateStart);
@@ -20410,7 +20420,7 @@ function addCanvasFitOrTop(pdf, canvas, margin){
 // Rend un tableau (contexte + en-tête + lignes) sur une ou plusieurs pages PDF, en garantissant
 // qu'aucune ligne n'est jamais coupée entre deux pages : on mesure la hauteur réelle de chaque
 // ligne au préalable, puis on répartit les lignes en pages entières avant de générer les images.
-async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml, containerClass, containerWidthPx, margin, scale, dividerSafetyPx }){
+async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml, containerClass, containerWidthPx, margin, scale, dividerSafetyPx, fitOnePageMinShrink }){
   const probe = document.createElement('div');
   probe.style.position = 'absolute';
   probe.style.left = '-9999px';
@@ -20446,27 +20456,60 @@ async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml,
   // en tout début de saison, n'affichait que 4 élèves par page — cette marge fixe de 170px, une
   // fois reconvertie via ptPerPx pour un tableau très étroit à ce stade de l'année, dévorait la
   // quasi-totalité de la hauteur utile).
+  // Option « tenir sur une seule page si possible » (demande de Thomas du 19/10/2026, récap PDF) :
+  // si le contenu complet rentre en le réduisant d'au plus (1 - fitOnePageMinShrink), on le rend en
+  // UNE page réduite plutôt qu'en plusieurs ; sinon pagination habituelle.
+  if(fitOnePageMinShrink){
+    const totalPx = preTableHeight + theadHeight + rowHeights.reduce((a,b)=>a+b,0);
+    const fullPx = (pageHeight - margin*2) / ptPerPx;
+    if(totalPx * fitOnePageMinShrink <= fullPx){
+      const onePageHtml = `${buildContextHtml(true)}<table class="recap-table"><tr>${tableHeadHtml}</tr>${rows.map(r=>`<tr>${r.html}</tr>`).join('')}</table>`;
+      const canvas = await captureOffscreenSection(onePageHtml, containerClass, containerWidthPx, scale);
+      addCanvasFitOrTop(pdf, canvas, margin);
+      return;
+    }
+  }
   const DIVIDER_SAFETY_PX = (typeof dividerSafetyPx === 'number') ? dividerSafetyPx : 170;
   const usableHeightPx = (pageHeight - margin*2) / ptPerPx - DIVIDER_SAFETY_PX;
 
-  let curEventLabel = null, curEventDate = null, curCategoryLabel = null;
+  // Contexte (événement/catégorie en cours) AVANT chaque ligne.
+  const ctxBefore = [];
+  { let ce = null, cd = null, cc = null;
+    for(let i=0;i<rows.length;i++){
+      ctxBefore[i] = { eventLabel:ce, eventDate:cd, categoryLabel:cc };
+      const t = rows[i].dividerType;
+      if(t==='event'){ ce = rows[i].eventLabel; cd = rows[i].eventDate; cc = null; }
+      else if(t==='category'){ cc = rows[i].categoryLabel; }
+    }
+  }
+  // Contexte « (suite) » d'une page qui démarre à la ligne s : si elle démarre justement sur le
+  // bandeau d'un nouvel événement (ou d'une nouvelle catégorie), il n'y a rien à reprendre — sinon
+  // on obtenait un « (suite) » parasite juste avant le vrai titre (bug signalé par Thomas, 19/10/2026).
+  const contextForPageStartingAt = (sIdx)=>{
+    const c = Object.assign({}, ctxBefore[sIdx] || { eventLabel:null, eventDate:null, categoryLabel:null });
+    const t = rows[sIdx] && rows[sIdx].dividerType;
+    if(t==='event'){ c.eventLabel = null; c.eventDate = null; c.categoryLabel = null; }
+    else if(t==='category'){ c.categoryLabel = null; }
+    return c;
+  };
   let pageContext = { eventLabel:null, eventDate:null, categoryLabel:null };
   const pages = [];
   let current = [];
   let curHeight = preTableHeight + theadHeight;
   for(let i=0;i<rowHeights.length;i++){
-    const row = rows[i];
     const h = rowHeights[i];
     if(current.length>0 && curHeight+h > usableHeightPx){
+      // Un bandeau (événement/catégorie) ne reste jamais seul en bas de page : on le reporte avec ses lignes.
+      let cut = current.length;
+      while(cut>1 && rows[current[cut-1]].dividerType) cut--;
+      const moved = current.splice(cut);
       pages.push({ indices: current, context: pageContext });
-      current = [];
-      curHeight = theadHeight;
-      pageContext = { eventLabel: curEventLabel, eventDate: curEventDate, categoryLabel: curCategoryLabel };
+      current = moved;
+      curHeight = theadHeight + moved.reduce((acc,idx)=>acc+rowHeights[idx],0);
+      pageContext = contextForPageStartingAt(moved.length ? moved[0] : i);
     }
     current.push(i);
     curHeight += h;
-    if(row.dividerType==='event'){ curEventLabel = row.eventLabel; curEventDate = row.eventDate; curCategoryLabel = null; }
-    else if(row.dividerType==='category'){ curCategoryLabel = row.categoryLabel; }
   }
   if(current.length) pages.push({ indices: current, context: pageContext });
   if(pages.length===0) pages.push({ indices: [], context:{} });
@@ -20880,8 +20923,13 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
     .map(ev => ({ ev, presents: recipientsInSeasonView(ev.recipients).filter(r=> r.response==='present' && activeCats.includes(groupedCategoryLabel(birthDateOfRecipient(r), memberOfRecipient(r)))) }))
     .filter(({presents}) => presents.length>0)
     .sort((a,b)=> (a.ev.date||'').localeCompare(b.ev.date||''));
+  // Stages validés de la période (demande de Thomas du 19/10/2026) : ajoutés au récap avec leurs participants.
+  const recapStages = (data.stages||[]).filter(st => st.validated && stageInSeasonView(st) && matchesDate(st.dateStart||''))
+    .map(st => ({ st, parts: (st.participants||[]).filter(pt=>{ const m = data.members.find(x=>x.id===pt.memberId); return !m || activeCats.includes(groupedCategoryLabel(m.birthDate, m)); }) }))
+    .filter(({parts}) => parts.length>0)
+    .sort((a,b)=> (a.st.dateStart||'').localeCompare(b.st.dateStart||''));
 
-  if(events.length===0){
+  if(events.length===0 && recapStages.length===0){
     showToast(`Aucun résultat correspondant pour ${periodLabel}`);
     return;
   }
@@ -20905,11 +20953,26 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
       const { rows, gold:g, silver:s, bronze:b, categoryLabels } = buildResultRowsHtml(presents, birthDateOf, isShiaiEvent(ev.name), undefined, convocEventDiscipline(ev));
       gold+=g; silver+=s; bronze+=b;
       categoryLabels.forEach(c=>allCategoryLabels.add(c));
+      const evDiscLabel = CALENDAR_DISCIPLINE_LABELS[convocEventDiscipline(ev)] || '';
       combinedRows.push({
-        html: `<td colspan="5" style="background:#2A2F26; color:#fff; font-weight:800; font-size:12.5px; padding:9px 10px;">${escapeHtml(ev.name)}${ev.date?' — '+escapeHtml(fmtDate(ev.date)):''} — ${presents.length} participant${presents.length===1?'':'s'}</td>`,
-        isDivider: true, dividerType: 'event', eventLabel: ev.name, eventDate: ev.date?fmtDate(ev.date):''
+        html: `<td colspan="5" style="background:#2A2F26; color:#fff; font-weight:800; font-size:12.5px; padding:9px 10px;">${escapeHtml(ev.name)}${evDiscLabel?' ['+escapeHtml(evDiscLabel)+']':''}${ev.date?' — '+escapeHtml(fmtDate(ev.date)):''} — ${presents.length} participant${presents.length===1?'':'s'}</td>`,
+        isDivider: true, dividerType: 'event', eventLabel: ev.name + (evDiscLabel?' ['+evDiscLabel+']':''), eventDate: ev.date?fmtDate(ev.date):''
       });
       combinedRows.push(...(rows.length ? rows : [{ html:'<td colspan="5" style="color:#999; padding:10px;">Aucun participant présent</td>', isDivider:false, categoryLabel:null }]));
+    });
+
+    recapStages.forEach(({st, parts})=>{
+      const stDisc = stageDisciplineLabel(st);
+      const stLabel = 'Stage — ' + st.name + (stDisc?' ['+stDisc+']':'');
+      const range = stageDateRangeLabel(st);
+      combinedRows.push({
+        html: `<td colspan="5" style="background:#3A4A6B; color:#fff; font-weight:800; font-size:12.5px; padding:9px 10px;">${escapeHtml(stLabel)}${range?' — '+escapeHtml(range):''} — ${parts.length} participant${parts.length===1?'':'s'}</td>`,
+        isDivider: true, dividerType: 'event', eventLabel: stLabel, eventDate: range
+      });
+      [...parts].sort((a,b)=> memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr')).forEach(pt=>{
+        const m = data.members.find(x=>x.id===pt.memberId);
+        combinedRows.push({ html: `<td>${nameWithBoldSurname(pt.name)}</td><td>${m ? escapeHtml(groupedCategoryLabel(m.birthDate, m)) : ''}</td><td>—</td><td>Participation</td><td></td>`, isDivider:false, categoryLabel:null });
+      });
     });
 
     const totalMedals = gold+silver+bronze;
@@ -20928,6 +20991,7 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
       </div>
       <div class="recap-summary">
         <div class="box"><div class="n">${events.length}</div><div class="l">Compétitions</div></div>
+        ${recapStages.length ? `<div class="box"><div class="n">${recapStages.length}</div><div class="l">Stages</div></div>` : ''}
         <div class="box"><div class="n">${totalParticipants}</div><div class="l">Participations</div></div>
         <div class="box"><div class="n">${totalMedals}</div><div class="l">Médailles</div></div>
       </div>
@@ -20948,6 +21012,7 @@ async function generateRecapPdf(periodLabel, matchesDate, filenameSuffix, btnId)
       containerClass: 'recap-doc',
       containerWidthPx: 700,
       margin,
+      fitOnePageMinShrink: 0.5,
       // Voir le même réglage dans generateEventResultsPdfForId : nécessaire pour que les photos de
       // podium insérées dans ce récap combiné restent nettes.
       scale: 2.5
