@@ -21070,17 +21070,38 @@ function newsletterFirstLast(name){
   return `${prenom||''} ${(nom||'').toUpperCase()}`.trim();
 }
 function newsletterPlural(n, one, many){ return `${n} ${n>1 ? many : one}`; }
-function newsletterEventArticle(ev, presents){
+// Plusieurs formulations par type d'article (demande de Thomas du 23/10/2026 : éviter des textes
+// toujours identiques). La formulation par défaut dépend de l'événement ; le bouton « 🔀 Autre
+// formulation » de chaque article passe à la suivante.
+const NL_VARIANTS = 4;
+function newsletterHash(s){ let h = 0; String(s||'').split('').forEach(c=>{ h = (h*31 + c.charCodeAt(0)) >>> 0; }); return h; }
+function newsletterPick(arr, variant){ return arr[((variant||0) % arr.length + arr.length) % arr.length]; }
+function newsletterEventArticle(ev, presents, variant){
+  variant = variant || 0;
   const shiai = isShiaiEvent(ev.name);
   const disc = CALENDAR_DISCIPLINE_LABELS[convocEventDiscipline(ev)] || '';
   const by = res => presents.filter(r=>String(r.result)===res);
   const gold = by('1'), silver = by('2'), bronze = by('3');
   const memberOf = r => data.members.find(x=>x.id===r.memberId);
   const catOf = r => { const m = memberOf(r); return r.ageCategory || (m ? weightBandLabelFor(m.birthDate, m, convocEventDiscipline(ev)) : ''); };
-  const lines = [];
-  lines.push(`${ev.date ? 'Le '+fmtDate(ev.date)+', ' : ''}${newsletterPlural(presents.length, 'licencié(e) de l’AMAM a participé', 'licencié(e)s de l’AMAM ont participé')} à « ${ev.name} »${ev.ville ? ' à '+ev.ville : ''}${disc ? ' ('+disc+')' : ''}.`);
+  const n = presents.length;
+  const dateTxt = ev.date ? fmtDate(ev.date) : '';
+  const ville = ev.ville ? ' à '+ev.ville : '';
+  const discTxt = disc ? ' ('+disc+')' : '';
+  const intro = newsletterPick([
+    `${dateTxt ? 'Le '+dateTxt+', ' : ''}${newsletterPlural(n, 'licencié(e) de l’AMAM a participé', 'licencié(e)s de l’AMAM ont participé')} à « ${ev.name} »${ville}${discTxt}.`,
+    `Direction ${ev.ville ? ev.ville : 'la compétition'} pour « ${ev.name} »${discTxt} : ${newsletterPlural(n, 'représentant du club', 'représentants du club')} sur les tatamis${dateTxt ? ' le '+dateTxt : ''}.`,
+    `Belle journée sportive pour l’AMAM à « ${ev.name} »${ville}${discTxt} : ${newsletterPlural(n, 'participation', 'participations')} à l’actif du club.`,
+    `Les couleurs de l’AMAM étaient portées par ${newsletterPlural(n, 'licencié(e)', 'licencié(e)s')} lors de « ${ev.name} »${ville}${dateTxt ? ', le '+dateTxt : ''}.`
+  ], variant);
+  const lines = [intro];
   if(shiai){
-    lines.push('Compétition par points : bravo à tous les participants pour leur engagement !');
+    lines.push(newsletterPick([
+      'Compétition par points : bravo à tous les participants pour leur engagement !',
+      'Ici, ce sont les points qui comptent : chacun a donné le meilleur de lui-même, bravo !',
+      'Un format par points où tout le monde a pu combattre : félicitations à tous !',
+      'Pas de podium sur cette formule par points, mais de l’engagement à revendre. Bravo !'
+    ], variant));
   } else {
     const medals = gold.length+silver.length+bronze.length;
     if(medals>0){
@@ -21088,19 +21109,94 @@ function newsletterEventArticle(ev, presents){
       if(gold.length) parts.push(newsletterPlural(gold.length, 'médaille d’or', 'médailles d’or'));
       if(silver.length) parts.push(newsletterPlural(silver.length, 'médaille d’argent', 'médailles d’argent'));
       if(bronze.length) parts.push(newsletterPlural(bronze.length, 'médaille de bronze', 'médailles de bronze'));
-      lines.push(`Belle moisson pour le club : ${parts.join(', ')} !`);
+      const p = parts.join(', ');
+      lines.push(newsletterPick([
+        `Belle moisson pour le club : ${p} !`,
+        `Au final, le club repart avec ${p}. Félicitations !`,
+        `Le bilan sourit à l’AMAM : ${p} !`,
+        `${p.charAt(0).toUpperCase()+p.slice(1)} : de quoi être fiers de nos sportifs !`
+      ], variant));
       const pod = [];
       gold.forEach(r=>pod.push(`🥇 ${newsletterFirstLast(r.name)}${catOf(r)?' ('+catOf(r)+')':''}`));
       silver.forEach(r=>pod.push(`🥈 ${newsletterFirstLast(r.name)}${catOf(r)?' ('+catOf(r)+')':''}`));
       bronze.forEach(r=>pod.push(`🥉 ${newsletterFirstLast(r.name)}${catOf(r)?' ('+catOf(r)+')':''}`));
       lines.push(pod.join('\n'));
     } else {
-      lines.push('Pas de médaille cette fois, mais beaucoup d’expérience acquise et de belles prestations.');
+      lines.push(newsletterPick([
+        'Pas de médaille cette fois, mais beaucoup d’expérience acquise et de belles prestations.',
+        'Le podium n’était pas au rendez-vous, mais l’engagement et les progrès, eux, l’étaient.',
+        'Pas de médaille aujourd’hui, mais chaque combat fait grandir : on continue !',
+        'Une journée formatrice : l’essentiel est de progresser, et ça, c’est réussi.'
+      ], variant));
     }
     const others = presents.filter(r=>!['1','2','3'].includes(String(r.result)));
-    if(others.length) lines.push(`Bravo aussi à ${others.map(r=>splitMemberName(r.name).prenom).filter(Boolean).join(', ')} pour leur participation.`);
+    if(others.length){
+      const names = others.map(r=>splitMemberName(r.name).prenom).filter(Boolean).join(', ');
+      lines.push(newsletterPick([
+        `Bravo aussi à ${names} pour leur participation.`,
+        `Un grand bravo également à ${names}.`,
+        `Mention spéciale à ${names} pour leur engagement.`,
+        `Merci et bravo à ${names}, qui ont défendu nos couleurs.`
+      ], variant));
+    }
   }
   return lines.join('\n');
+}
+function newsletterEventTitle(ev, hasMedals, variant){
+  return hasMedals
+    ? newsletterPick([ev.name, `${ev.name} : le club sur le podium !`, `Podiums à ${ev.name}`, `${ev.name} : de belles médailles pour l’AMAM`], variant)
+    : newsletterPick([ev.name, `${ev.name} : l’AMAM était présente !`, `Sur les tatamis : ${ev.name}`, `${ev.name} : une belle expérience`], variant);
+}
+function newsletterStageText(st, variant){
+  const disc = stageDisciplineLabel(st);
+  const names = (st.participants||[]).map(p=>splitMemberName(p.name).prenom).filter(Boolean);
+  const range = stageDateRangeLabel(st);
+  const n = st.participants.length;
+  return [
+    `${range ? range+' : ' : ''}${newsletterPlural(n, 'adhérent a participé', 'adhérents ont participé')} au stage « ${st.name} »${disc?' ('+disc+')':''}.`,
+    newsletterPick([
+      `Au programme : travail technique, progression et bonne humeur. Merci à tous les participants : ${names.join(', ')}.`,
+      `Une belle occasion de progresser ensemble. Bravo à ${names.join(', ')} pour leur assiduité !`,
+      `Du travail sérieux dans une ambiance conviviale : merci à ${names.join(', ')}.`,
+      `Le stage « ${st.name} » a rassemblé ${names.join(', ')} : une réussite !`
+    ], variant)
+  ].join('\n');
+}
+function newsletterBeltIntro(variant){
+  return newsletterPick([
+    'Félicitations à ceux qui ont franchi un nouveau cap ce mois-ci !',
+    'De nouvelles ceintures sont arrivées : bravo pour ce travail récompensé !',
+    'Le travail paie : voici ceux qui montent d’un grade ce mois-ci.',
+    'Un nouveau grade, de nouveaux objectifs : félicitations à nos pratiquants !'
+  ], variant);
+}
+function newsletterBirthdayIntro(variant){
+  return newsletterPick([
+    'Toute l’équipe du club souhaite un très joyeux anniversaire à :',
+    'Un petit gâteau, des bougies… et un grand bravo à nos anniversaires du mois :',
+    'Ils ont soufflé leurs bougies ce mois-ci, joyeux anniversaire à :',
+    'Tous nos vœux de bonheur et de santé à :'
+  ], variant);
+}
+// Recalcule le texte (et le titre) d'un article automatique avec sa formulation courante.
+function newsletterRebuildBlockText(b){
+  const v = b.variant || 0;
+  if(b.kind==='event'){
+    const ev = (data.convocEvents||[]).find(e=>e.id===b.refId);
+    if(!ev) return false;
+    const presents = recipientsInSeasonView(ev.recipients||[]).filter(r=>r.response==='present');
+    b.text = newsletterEventArticle(ev, presents, v);
+    b.title = newsletterEventTitle(ev, presents.some(r=>['1','2','3'].includes(String(r.result))), v);
+    return true;
+  }
+  if(b.kind==='stage'){
+    const st = (data.stages||[]).find(s=>s.id===b.refId);
+    if(!st) return false;
+    b.text = newsletterStageText(st, v); return true;
+  }
+  if(b.kind==='belt'){ b.text = newsletterBeltIntro(v); return true; }
+  if(b.kind==='birthday'){ b.text = newsletterBirthdayIntro(v); return true; }
+  return false;
 }
 function newsletterPhotoIdsForEvent(ev, presents){
   const ids = [];
@@ -21120,30 +21216,32 @@ function buildNewsletterAutoBlocks(prefix){
     .filter(x=>x.presents.length>0)
     .sort((a,b)=>(a.ev.date||'').localeCompare(b.ev.date||''));
   events.forEach(({ev, presents})=>{
-    blocks.push({ id: uid(), kind:'event', include:true, title: ev.name, text: newsletterEventArticle(ev, presents), photoIds: newsletterPhotoIdsForEvent(ev, presents), customPhotos: [],
+    const variant = newsletterHash(ev.id) % NL_VARIANTS;
+    const hasMedals = presents.some(r=>['1','2','3'].includes(String(r.result)));
+    blocks.push({ id: uid(), kind:'event', refId: ev.id, variant, include:true, title: newsletterEventTitle(ev, hasMedals, variant), text: newsletterEventArticle(ev, presents, variant), photoIds: newsletterPhotoIdsForEvent(ev, presents), customPhotos: [],
       subtitle: [ev.date ? fmtDate(ev.date) : '', ev.ville || '', CALENDAR_DISCIPLINE_LABELS[convocEventDiscipline(ev)] || ''].filter(Boolean).join(' · '),
       gold: presents.filter(r=>String(r.result)==='1').length, silver: presents.filter(r=>String(r.result)==='2').length, bronze: presents.filter(r=>String(r.result)==='3').length,
       medals: presents.filter(r=>['1','2','3'].includes(String(r.result))).length, participations: presents.length });
   });
   (data.stages||[]).filter(st=>st.validated && stageInSeasonView(st) && (st.dateStart||'').startsWith(prefix) && (st.participants||[]).length>0).forEach(st=>{
-    const disc = stageDisciplineLabel(st);
-    const names = (st.participants||[]).map(p=>splitMemberName(p.name).prenom).filter(Boolean);
-    blocks.push({ id: uid(), kind:'stage', include:true, title: 'Stage — '+st.name,
-      text: `${stageDateRangeLabel(st) ? stageDateRangeLabel(st)+' : ' : ''}${newsletterPlural(st.participants.length, 'adhérent a participé', 'adhérents ont participé')} au stage « ${st.name} »${disc?' ('+disc+')':''}.\nAu programme : travail technique, progression et bonne humeur. Merci à tous les participants : ${names.join(', ')}.`,
-      photoIds: [], customPhotos: [], medals:0, participations:0 });
+    const variant = newsletterHash(st.id) % NL_VARIANTS;
+    blocks.push({ id: uid(), kind:'stage', refId: st.id, variant, include:true, title: 'Stage — '+st.name,
+      text: newsletterStageText(st, variant), photoIds: [], customPhotos: [], medals:0, participations:0 });
   });
   const passages = (data.beltPassages||[]).filter(p=>(p.date||'').startsWith(prefix));
   if(passages.length){
-    blocks.push({ id: uid(), kind:'belt', include:true, title:'Passages de grade',
-      text: 'Félicitations à ceux qui ont franchi un nouveau cap ce mois-ci !',
+    const variant = newsletterHash(prefix) % NL_VARIANTS;
+    blocks.push({ id: uid(), kind:'belt', variant, include:true, title:'Passages de grade',
+      text: newsletterBeltIntro(variant),
       items: passages.map(p=>({ name: newsletterFirstLast(p.memberName), belt: p.belt })),
       photoIds: [], customPhotos: [], medals:0, participations:0 });
   }
   const monthNum = parseInt(prefix.slice(5,7),10);
   const bdays = data.members.filter(m=>!m.archived && !m.forNextSeason && m.birthDate && parseInt(m.birthDate.slice(5,7),10)===monthNum);
   if(bdays.length){
-    blocks.push({ id: uid(), kind:'birthday', include:false, title:'Joyeux anniversaire !',
-      text: 'Toute l’équipe du club souhaite un très joyeux anniversaire à :',
+    const variant = newsletterHash(prefix+'b') % NL_VARIANTS;
+    blocks.push({ id: uid(), kind:'birthday', variant, include:false, title:'Joyeux anniversaire !',
+      text: newsletterBirthdayIntro(variant),
       names: bdays.map(m=>splitMemberName(m.name).prenom).filter(Boolean),
       photoIds: [], customPhotos: [], medals:0, participations:0 });
   }
@@ -21246,7 +21344,7 @@ function renderNewsletterBuilder(){
         <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
           <input type="checkbox" data-nl-include="${b.id}" ${b.include?'checked':''}>
           <input type="text" data-nl-title="${b.id}" value="${escapeHtml(b.title)}" style="flex:1; font-weight:700;">
-          ${b.kind==='custom' ? `<button type="button" class="ghost icon-btn" data-nl-del="${b.id}" style="padding:4px 8px;">🗑</button>` : ''}
+          ${b.kind==='custom' ? `<button type="button" class="ghost icon-btn" data-nl-del="${b.id}" style="padding:4px 8px;">🗑</button>` : `<button type="button" class="ghost icon-btn" data-nl-variant="${b.id}" title="Réécrire l’article avec une autre formulation (remplace le texte actuel)" style="padding:4px 8px; font-size:12px; white-space:nowrap;">🔀 Autre formulation</button>`}
         </label>
         <textarea data-nl-text="${b.id}" rows="${Math.min(10, 3 + Math.floor((b.text||'').length/90))}" style="width:100%; margin-top:6px;">${escapeHtml(b.text||'')}</textarea>
         <div class="small" style="color:var(--ink-dim); margin-top:4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -21276,6 +21374,13 @@ function renderNewsletterBuilder(){
   q('[data-nl-include]').forEach(el=> el.onchange = ()=>{ const b = find(el.dataset.nlInclude); if(b){ b.include = el.checked; scheduleNewsletterAutoSave(); } });
   q('[data-nl-title]').forEach(el=> el.oninput = ()=>{ const b = find(el.dataset.nlTitle); if(b){ b.title = el.value; scheduleNewsletterAutoSave(); } });
   q('[data-nl-text]').forEach(el=> el.oninput = ()=>{ const b = find(el.dataset.nlText); if(b){ b.text = el.value; scheduleNewsletterAutoSave(); } });
+  q('[data-nl-variant]').forEach(el=> el.onclick = ()=>{
+    const b = find(el.dataset.nlVariant);
+    if(!b) return;
+    b.variant = ((b.variant||0) + 1) % NL_VARIANTS;
+    if(newsletterRebuildBlockText(b)){ saveNewsletterDraft(true); renderNewsletterBuilder(); }
+    else showToast('Cet article ne peut plus être réécrit automatiquement');
+  });
   q('[data-nl-del]').forEach(el=> el.onclick = ()=>{ st.custom = st.custom.filter(b=>b.id!==el.dataset.nlDel); saveNewsletterDraft(true); renderNewsletterBuilder(); });
   q('[data-nl-clearphotos]').forEach(el=> el.onclick = ()=>{ const b = find(el.dataset.nlClearphotos); if(b) b.customPhotos = []; saveNewsletterDraft(true); renderNewsletterBuilder(); });
   q('[data-nl-photo]').forEach(el=> el.onchange = async ()=>{
