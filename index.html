@@ -21431,7 +21431,7 @@ async function newsletterCropPhoto(uri, outW, ratioHW, focusY){
   const scale = Math.max(outW/img.width, outH/img.height);
   const sw = outW/scale, sh = outH/scale;
   const sx = (img.width - sw)/2;
-  const sy = Math.max(0, Math.min(img.height - sh, (img.height - sh) * (focusY==null ? 0.35 : focusY)));
+  const sy = Math.max(0, Math.min(img.height - sh, (img.height - sh) * (focusY==null ? 0.5 : focusY)));
   const c = document.createElement('canvas'); c.width = outW; c.height = outH;
   c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
   const out = c.toDataURL('image/jpeg', 0.88);
@@ -21457,7 +21457,7 @@ async function newsletterPhotosHtml(uris, availW, d){
   for(const u of uris){ try{ cropped.push(await newsletterCropPhoto(u, w*2, ratio)); }catch(e){} }
   if(!cropped.length) return '';
   // Cadre fixe (taille exacte, overflow masqué, jamais réduit par le flex) autour d'une image à la taille exacte.
-  return `<div style="display:flex; flex-wrap:wrap; gap:${gap}px; margin-top:5px;">${cropped.map(u=>`<div style="flex:none; width:${w}px; height:${h}px; overflow:hidden; border-radius:3px; border:1px solid ${NL_LINE}; box-sizing:border-box;"><img src="${u}" width="${w}" height="${h}" style="display:block; flex:none; width:${w}px; height:${h}px; max-width:none;"></div>`).join('')}</div>`;
+  return `<div style="display:flex; flex-wrap:wrap; justify-content:center; gap:${gap}px; margin-top:5px;">${cropped.map(u=>`<div style="flex:none; width:${w}px; height:${h}px; overflow:hidden; border-radius:3px; border:1px solid ${NL_LINE}; box-sizing:border-box;"><img src="${u}" width="${w}" height="${h}" style="display:block; flex:none; width:${w}px; height:${h}px; max-width:none;"></div>`).join('')}</div>`;
 }
 function newsletterTextHtml(text, color, fs){
   const f = n => (n*fs).toFixed(1)+'px';
@@ -21465,8 +21465,7 @@ function newsletterTextHtml(text, color, fs){
     const t = line.trim();
     if(!t) return '';
     if(/^(🥇|🥈|🥉)/.test(t)){
-      const bg = t.startsWith('🥇') ? '#FFF9E0' : (t.startsWith('🥈') ? '#F1F4F8' : '#FBF1E8');
-      return `<div style="display:inline-block; margin:1px 3px 1px 0; padding:1px 6px; border-radius:9px; background:${bg}; border:1px solid ${NL_LINE}; font-size:${f(9.5)}; font-weight:600;">${escapeHtml(t)}</div>`;
+      return `<div style="display:inline-block; margin:1px 3px 1px 0; padding:1px 6px; border-radius:9px; background:#fff; border:1px solid ${NL_LINE}; font-size:${f(9.5)}; font-weight:600;">${escapeHtml(t)}</div>`;
     }
     if(t.startsWith('•')) return `<div style="font-size:${f(10)};"><span style="color:${NL_YELLOW}; font-weight:800;">▪</span> ${escapeHtml(t.replace(/^•\s*/,''))}</div>`;
     return `<div style="font-size:${f(10)}; line-height:1.35; margin-top:2px; color:#333;">${escapeHtml(t)}</div>`;
@@ -21564,7 +21563,7 @@ async function generateNewsletterPdf(){
     const stats = [`🏆 <strong>${nbEvents}</strong> compétition${nbEvents>1?'s':''}`, `🥇 <strong>${nbMedals}</strong> médaille${nbMedals>1?'s':''}`, nbStages ? `🥋 <strong>${nbStages}</strong> stage${nbStages>1?'s':''}` : ''].filter(Boolean).join(sep);
     // Filigrane : grand logo très pâle à droite du bandeau + fins traits jaune/bleu.
     const headerHtml = `
-      <div style="position:relative; overflow:hidden; border:1px solid ${NL_LINE}; border-left:4px solid ${NL_YELLOW}; border-radius:4px; margin-bottom:8px; background:${NL_SOFT}; padding:8px 14px 6px;">
+      <div style="position:relative; overflow:hidden; border:1px solid ${NL_LINE}; border-left:4px solid ${NL_YELLOW}; border-radius:4px; margin-bottom:8px; background:#fff; padding:8px 14px 6px;">
         ${logoSrc ? `<img src="${logoSrc}" alt="" width="${Math.round(logoW*3)}" height="162" style="position:absolute; right:-20px; top:-30px; height:162px; width:${Math.round(logoW*3)}px; max-width:none; opacity:0.06;">` : ''}
         <div style="position:relative; display:flex; align-items:center; gap:14px;">
           ${logoSrc ? `<img src="${logoSrc}" alt="Logo" width="${logoW}" height="54" style="display:block; flex:none; height:54px; width:${logoW}px; max-width:none;">` : ''}
