@@ -20544,7 +20544,7 @@ async function paginateRowsIntoPdf(pdf, { rows, tableHeadHtml, buildContextHtml,
 // chaque bloc (titre+chiffres, ou un tableau) est un élément indivisible, mesuré au préalable puis
 // réparti en pages entières avant capture — contrairement à un découpage brut au pixel qui coupe le
 // contenu n'importe où. headerHtml (logo + nom du club) n'apparaît que sur la première page.
-async function paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass, containerWidthPx, margin }){
+async function paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass, containerWidthPx, margin, runningHeaderHtml, fitOnePageMinShrink }){
   const probe = document.createElement('div');
   probe.style.position = 'absolute';
   probe.style.left = '-9999px';
@@ -20553,6 +20553,7 @@ async function paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass, 
   if(containerWidthPx) probe.style.width = containerWidthPx+'px';
   probe.innerHTML = `
     <div id="probe-header">${headerHtml||''}</div>
+    <div id="probe-running">${runningHeaderHtml||''}</div>
     ${blocks.map((b,i)=>`<div data-bi="${i}">${b}</div>`).join('')}`;
   document.body.appendChild(probe);
   await waitForImages(probe);
@@ -20560,6 +20561,7 @@ async function paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass, 
   const containerTop = probe.getBoundingClientRect().top;
   const headerEl = probe.querySelector('#probe-header');
   const headerHeight = headerEl.getBoundingClientRect().height;
+  const runningHeight = runningHeaderHtml ? probe.querySelector('#probe-running').getBoundingClientRect().height : 0;
   const blockEls = Array.from(probe.querySelectorAll('[data-bi]'));
   const blockHeights = blockEls.map(el=>el.getBoundingClientRect().height);
   document.body.removeChild(probe);
@@ -20573,6 +20575,17 @@ async function paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass, 
   const SAFETY_PX = 14;
   const usableHeightPx = (pageHeight - margin*2) / ptPerPx - SAFETY_PX;
 
+  // Option « tout sur une seule page si possible » : le contenu complet est réduit (au plus de
+  // (1 - fitOnePageMinShrink)) pour tenir sur une page ; sinon pagination par blocs (parties).
+  if(fitOnePageMinShrink){
+    const totalPx = headerHeight + blockHeights.reduce((a,b)=>a+b,0);
+    if(totalPx * fitOnePageMinShrink <= (pageHeight - margin*2) / ptPerPx){
+      const canvas = await captureOffscreenSection((headerHtml||'') + blocks.map(b=>`<div>${b}</div>`).join(''), containerClass, containerWidthPx, 2);
+      addCanvasFitOrTop(pdf, canvas, margin);
+      return;
+    }
+  }
+
   const pages = [];
   let current = [];
   let curHeight = headerHeight; // le logo/en-tête ne compte que sur la première page
@@ -20581,7 +20594,7 @@ async function paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass, 
     if(current.length>0 && curHeight+h > usableHeightPx){
       pages.push(current);
       current = [];
-      curHeight = 0;
+      curHeight = runningHeight;
     }
     current.push(i);
     curHeight += h;
@@ -20592,8 +20605,8 @@ async function paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass, 
   for(let p=0;p<pages.length;p++){
     if(p>0) pdf.addPage();
     const indices = pages[p];
-    const html = (p===0 ? (headerHtml||'') : '') + indices.map(i=>blocks[i]).join('');
-    const canvas = await captureOffscreenSection(html, containerClass, containerWidthPx);
+    const html = (p===0 ? (headerHtml||'') : (runningHeaderHtml||'')) + indices.map(i=>blocks[i]).join('');
+    const canvas = await captureOffscreenSection(html, containerClass, containerWidthPx, runningHeaderHtml ? 2 : undefined);
     const imgHeightPt = canvas.height * imgWidthPt / canvas.width;
     const imgData = canvas.toDataURL('image/jpeg', 0.92);
     pdf.addImage(imgData, 'JPEG', margin, margin, imgWidthPt, imgHeightPt);
@@ -21108,6 +21121,8 @@ function buildNewsletterAutoBlocks(prefix){
     .sort((a,b)=>(a.ev.date||'').localeCompare(b.ev.date||''));
   events.forEach(({ev, presents})=>{
     blocks.push({ id: uid(), kind:'event', include:true, title: ev.name, text: newsletterEventArticle(ev, presents), photoIds: newsletterPhotoIdsForEvent(ev, presents), customPhotos: [],
+      subtitle: [ev.date ? fmtDate(ev.date) : '', ev.ville || '', CALENDAR_DISCIPLINE_LABELS[convocEventDiscipline(ev)] || ''].filter(Boolean).join(' · '),
+      gold: presents.filter(r=>String(r.result)==='1').length, silver: presents.filter(r=>String(r.result)==='2').length, bronze: presents.filter(r=>String(r.result)==='3').length,
       medals: presents.filter(r=>['1','2','3'].includes(String(r.result))).length, participations: presents.length });
   });
   (data.stages||[]).filter(st=>st.validated && stageInSeasonView(st) && (st.dateStart||'').startsWith(prefix) && (st.participants||[]).length>0).forEach(st=>{
@@ -21120,14 +21135,16 @@ function buildNewsletterAutoBlocks(prefix){
   const passages = (data.beltPassages||[]).filter(p=>(p.date||'').startsWith(prefix));
   if(passages.length){
     blocks.push({ id: uid(), kind:'belt', include:true, title:'Passages de grade',
-      text: `Félicitations à ceux qui ont franchi un nouveau cap ce mois-ci :\n` + passages.map(p=>`• ${newsletterFirstLast(p.memberName)} — ${beltLabelFor(p.belt)}`).join('\n'),
+      text: 'Félicitations à ceux qui ont franchi un nouveau cap ce mois-ci !',
+      items: passages.map(p=>({ name: newsletterFirstLast(p.memberName), belt: p.belt })),
       photoIds: [], customPhotos: [], medals:0, participations:0 });
   }
   const monthNum = parseInt(prefix.slice(5,7),10);
   const bdays = data.members.filter(m=>!m.archived && !m.forNextSeason && m.birthDate && parseInt(m.birthDate.slice(5,7),10)===monthNum);
   if(bdays.length){
     blocks.push({ id: uid(), kind:'birthday', include:false, title:'Joyeux anniversaire !',
-      text: `Un joyeux anniversaire à : ${bdays.map(m=>splitMemberName(m.name).prenom).filter(Boolean).join(', ')} !`,
+      text: 'Toute l’équipe du club souhaite un très joyeux anniversaire à :',
+      names: bdays.map(m=>splitMemberName(m.name).prenom).filter(Boolean),
       photoIds: [], customPhotos: [], medals:0, participations:0 });
   }
   return blocks;
@@ -21138,12 +21155,59 @@ function newsletterPeriod(offset){
   const year = t.getFullYear(), month = t.getMonth();
   return { year, month, prefix: `${year}-${String(month+1).padStart(2,'0')}`, label: `${MONTH_NAMES_FR[month]} ${year}` };
 }
+/* ---- Brouillon (sauvegarde du travail avant génération) ----
+   Enregistré dans le navigateur de cet appareil (localStorage), un brouillon par mois, avec les
+   photos ajoutées à la main. Sauvegarde automatique à chaque modification + bouton manuel. */
+function newsletterDraftKey(prefix){ return 'tatami-newsletter-' + prefix; }
+function saveNewsletterDraft(silent){
+  const st = ui.newsletter; if(!st) return false;
+  const prefix = newsletterPeriod(st.monthOffset).prefix;
+  try{
+    st.savedAt = new Date().toISOString();
+    localStorage.setItem(newsletterDraftKey(prefix), JSON.stringify({ savedAt: st.savedAt, blocks: st.blocks, custom: st.custom }));
+    updateNewsletterSavedLabel();
+    if(!silent) showToast('Brouillon enregistré 💾');
+    return true;
+  }catch(e){
+    showToast('Brouillon trop volumineux pour être enregistré (retirez des photos)');
+    return false;
+  }
+}
+function loadNewsletterDraft(prefix){
+  try{
+    const raw = localStorage.getItem(newsletterDraftKey(prefix));
+    if(!raw) return null;
+    const d = JSON.parse(raw);
+    if(!d || !Array.isArray(d.blocks) || !Array.isArray(d.custom)) return null;
+    return d;
+  }catch(e){ return null; }
+}
+function clearNewsletterDraft(prefix){ try{ localStorage.removeItem(newsletterDraftKey(prefix)); }catch(e){} }
+let newsletterAutoSaveTimer = null;
+function scheduleNewsletterAutoSave(){
+  clearTimeout(newsletterAutoSaveTimer);
+  newsletterAutoSaveTimer = setTimeout(()=>saveNewsletterDraft(true), 700);
+}
+function updateNewsletterSavedLabel(){
+  const el = document.getElementById('nlSavedLabel');
+  const st = ui.newsletter;
+  if(!el || !st || !st.savedAt) return;
+  const d = new Date(st.savedAt);
+  el.textContent = `💾 Brouillon enregistré à ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function newsletterLoadMonth(){
+  const st = ui.newsletter;
+  const prefix = newsletterPeriod(st.monthOffset).prefix;
+  const draft = loadNewsletterDraft(prefix);
+  if(draft){ st.blocks = draft.blocks; st.custom = draft.custom; st.savedAt = draft.savedAt; st.restored = true; }
+  else { st.blocks = buildNewsletterAutoBlocks(prefix); st.custom = []; st.savedAt = null; st.restored = false; }
+}
 function openNewsletterBuilder(){
   const overlay = document.getElementById('newsletter-overlay');
   if(!overlay) return;
   if(!ui.newsletter){
-    ui.newsletter = { monthOffset: ui.dashboardMonthOffset||0, blocks: [], custom: [] };
-    ui.newsletter.blocks = buildNewsletterAutoBlocks(newsletterPeriod(ui.newsletter.monthOffset).prefix);
+    ui.newsletter = { monthOffset: ui.dashboardMonthOffset||0, blocks: [], custom: [], savedAt: null, restored: false };
+    newsletterLoadMonth();
   }
   renderNewsletterBuilder();
   overlay.classList.add('show');
@@ -21151,6 +21215,7 @@ function openNewsletterBuilder(){
 function closeNewsletterBuilder(){
   const overlay = document.getElementById('newsletter-overlay');
   if(!overlay) return;
+  saveNewsletterDraft(true);
   overlay.classList.remove('show');
   overlay.innerHTML = '';
 }
@@ -21163,14 +21228,19 @@ function renderNewsletterBuilder(){
   <div class="rio-card">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
       <h2 style="margin:0;">📰 Le Tatami</h2>
-      <button class="ghost icon-btn" id="nlCloseBtn">✕</button>
+      <button class="ghost icon-btn" id="nlCloseBtn" title="Enregistre le brouillon et ferme">✕</button>
     </div>
     <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin:10px 0;">
       <button class="ghost icon-btn" id="nlPrevBtn">◀</button>
       <div style="font-weight:700; min-width:140px; text-align:center;">${escapeHtml(period.label)}</div>
       <button class="ghost icon-btn" id="nlNextBtn">▶</button>
     </div>
-    <p class="small" style="color:var(--ink-dim); margin:0 0 10px;">Articles générés automatiquement à partir des résultats, stages et passages de grade du mois. Décochez, modifiez le texte, ou ajoutez vos propres articles (interview, portrait…). Les photos de personnes ayant retiré leur autorisation d’image sont exclues.</p>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+      <span class="small" id="nlSavedLabel" style="color:var(--ink-dim);">${st.savedAt ? '' : 'Brouillon non enregistré'}</span>
+      <button class="ghost icon-btn" id="nlSaveBtn">💾 Enregistrer le brouillon</button>
+    </div>
+    ${st.restored ? `<div class="small" style="background:#EAF3E6; border:1px solid #B9D4AE; border-radius:8px; padding:6px 10px; margin-bottom:8px;">Brouillon retrouvé pour ce mois — vos modifications sont conservées. « ↺ Régénérer » met à jour les articles automatiques (vos articles libres sont gardés).</div>` : ''}
+    <p class="small" style="color:var(--ink-dim); margin:0 0 10px;">Articles générés à partir des résultats, stages et passages de grade du mois. Décochez, modifiez, ou ajoutez vos propres articles (interview, portrait…). Les photos de personnes ayant retiré leur autorisation d’image sont exclues. Le travail est enregistré automatiquement sur cet appareil.</p>
     ${all.length===0 ? '<div class="empty">Aucun résultat ni stage ce mois-ci. Ajoutez un article libre ci-dessous.</div>' : all.map(b=>`
       <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:8px;" data-nl-block="${b.id}">
         <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
@@ -21193,28 +21263,113 @@ function renderNewsletterBuilder(){
     </div>
     <button class="primary" id="nlGenerateBtn" style="width:100%; margin-top:10px;">📄 Générer la newsletter (PDF)</button>
   </div>`;
+  updateNewsletterSavedLabel();
   const q = sel => overlay.querySelectorAll(sel);
   const find = id => [...st.blocks, ...st.custom].find(b=>b.id===id);
+  const goMonth = delta => { saveNewsletterDraft(true); st.monthOffset += delta; newsletterLoadMonth(); renderNewsletterBuilder(); };
   overlay.querySelector('#nlCloseBtn').onclick = closeNewsletterBuilder;
-  overlay.querySelector('#nlPrevBtn').onclick = ()=>{ st.monthOffset--; st.blocks = buildNewsletterAutoBlocks(newsletterPeriod(st.monthOffset).prefix); renderNewsletterBuilder(); };
-  overlay.querySelector('#nlNextBtn').onclick = ()=>{ st.monthOffset++; st.blocks = buildNewsletterAutoBlocks(newsletterPeriod(st.monthOffset).prefix); renderNewsletterBuilder(); };
-  overlay.querySelector('#nlRegenBtn').onclick = ()=>{ st.blocks = buildNewsletterAutoBlocks(newsletterPeriod(st.monthOffset).prefix); renderNewsletterBuilder(); showToast('Articles automatiques régénérés'); };
-  overlay.querySelector('#nlAddCustomBtn').onclick = ()=>{ st.custom.push({ id: uid(), kind:'custom', include:true, title:'Titre de l’article', text:'', photoIds:[], customPhotos:[], medals:0, participations:0 }); renderNewsletterBuilder(); };
-  q('[data-nl-include]').forEach(el=> el.onchange = ()=>{ const b = find(el.dataset.nlInclude); if(b) b.include = el.checked; });
-  q('[data-nl-title]').forEach(el=> el.oninput = ()=>{ const b = find(el.dataset.nlTitle); if(b) b.title = el.value; });
-  q('[data-nl-text]').forEach(el=> el.oninput = ()=>{ const b = find(el.dataset.nlText); if(b) b.text = el.value; });
-  q('[data-nl-del]').forEach(el=> el.onclick = ()=>{ st.custom = st.custom.filter(b=>b.id!==el.dataset.nlDel); renderNewsletterBuilder(); });
-  q('[data-nl-clearphotos]').forEach(el=> el.onclick = ()=>{ const b = find(el.dataset.nlClearphotos); if(b) b.customPhotos = []; renderNewsletterBuilder(); });
+  overlay.querySelector('#nlSaveBtn').onclick = ()=> saveNewsletterDraft(false);
+  overlay.querySelector('#nlPrevBtn').onclick = ()=> goMonth(-1);
+  overlay.querySelector('#nlNextBtn').onclick = ()=> goMonth(1);
+  overlay.querySelector('#nlRegenBtn').onclick = ()=>{ st.blocks = buildNewsletterAutoBlocks(newsletterPeriod(st.monthOffset).prefix); st.restored = false; saveNewsletterDraft(true); renderNewsletterBuilder(); showToast('Articles automatiques régénérés'); };
+  overlay.querySelector('#nlAddCustomBtn').onclick = ()=>{ st.custom.push({ id: uid(), kind:'custom', include:true, title:'Titre de l’article', text:'', photoIds:[], customPhotos:[], medals:0, participations:0 }); saveNewsletterDraft(true); renderNewsletterBuilder(); };
+  q('[data-nl-include]').forEach(el=> el.onchange = ()=>{ const b = find(el.dataset.nlInclude); if(b){ b.include = el.checked; scheduleNewsletterAutoSave(); } });
+  q('[data-nl-title]').forEach(el=> el.oninput = ()=>{ const b = find(el.dataset.nlTitle); if(b){ b.title = el.value; scheduleNewsletterAutoSave(); } });
+  q('[data-nl-text]').forEach(el=> el.oninput = ()=>{ const b = find(el.dataset.nlText); if(b){ b.text = el.value; scheduleNewsletterAutoSave(); } });
+  q('[data-nl-del]').forEach(el=> el.onclick = ()=>{ st.custom = st.custom.filter(b=>b.id!==el.dataset.nlDel); saveNewsletterDraft(true); renderNewsletterBuilder(); });
+  q('[data-nl-clearphotos]').forEach(el=> el.onclick = ()=>{ const b = find(el.dataset.nlClearphotos); if(b) b.customPhotos = []; saveNewsletterDraft(true); renderNewsletterBuilder(); });
   q('[data-nl-photo]').forEach(el=> el.onchange = async ()=>{
     const b = find(el.dataset.nlPhoto); const file = el.files && el.files[0];
     if(!b || !file) return;
     try{
-      const { base64, mimeType } = await resizeImageFileToBase64(file, 1200, 0.8);
+      const { base64, mimeType } = await resizeImageFileToBase64(file, 1000, 0.75);
       b.customPhotos.push(`data:${mimeType};base64,${base64}`);
+      saveNewsletterDraft(true);
       renderNewsletterBuilder();
     }catch(e){ showToast('Photo illisible : ' + (e.message||e)); }
   });
   overlay.querySelector('#nlGenerateBtn').onclick = generateNewsletterPdf;
+}
+
+/* ---- Rendu PDF « professionnel » ---- */
+const NL_SECTIONS = [
+  { key:'event',    label:'Résultats',         icon:'🏆', color:'#B7791F', tint:'#FFF8E6' },
+  { key:'stage',    label:'Stages',            icon:'🥋', color:'#2F6690', tint:'#EAF3FA' },
+  { key:'belt',     label:'Passages de grade', icon:'🎖️', color:'#3F7D4E', tint:'#EAF5EC' },
+  { key:'custom',   label:'Vie du club',       icon:'📣', color:'#C2652A', tint:'#FDF0E6' },
+  { key:'birthday', label:'Anniversaires',     icon:'🎂', color:'#C2417D', tint:'#FCEAF3' }
+];
+function newsletterLoadImage(uri){
+  return new Promise((resolve, reject)=>{ const i = new Image(); i.onload = ()=>resolve(i); i.onerror = ()=>reject(new Error('Photo illisible')); i.src = uri; });
+}
+// Recadre (« cover », sans déformation) une photo au ratio voulu. html2canvas ignore object-fit : on
+// pré-découpe donc l'image à la taille exacte affichée, pour qu'elle ne soit jamais étirée.
+async function newsletterCropPhoto(uri, outW, ratioHW, focusY){
+  const img = await newsletterLoadImage(uri);
+  const outH = Math.round(outW * ratioHW);
+  const scale = Math.max(outW/img.width, outH/img.height);
+  const sw = outW/scale, sh = outH/scale;
+  const sx = (img.width - sw)/2;
+  const sy = Math.max(0, Math.min(img.height - sh, (img.height - sh) * (focusY==null ? 0.35 : focusY)));
+  const c = document.createElement('canvas'); c.width = outW; c.height = outH;
+  c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+  return c.toDataURL('image/jpeg', 0.88);
+}
+async function newsletterPhotosHtml(uris){
+  uris = (uris||[]).filter(Boolean);
+  if(!uris.length) return '';
+  const W = 600, gap = 8;
+  let cols, ratio;
+  if(uris.length===1){
+    const img = await newsletterLoadImage(uris[0]);
+    cols = 1; ratio = Math.max(0.6, Math.min(0.85, img.height/img.width));
+  } else if(uris.length===2 || uris.length===4){ cols = 2; ratio = 0.75; }
+  else { cols = 3; ratio = 0.8; }
+  const w = Math.floor((W - gap*(cols-1)) / cols);
+  const h = Math.round(w*ratio);
+  const cropped = [];
+  for(const u of uris){ try{ cropped.push(await newsletterCropPhoto(u, w*2, ratio)); }catch(e){} }
+  if(!cropped.length) return '';
+  return `<div style="display:flex; flex-wrap:wrap; gap:${gap}px; margin-top:10px;">${cropped.map(u=>`<img src="${u}" width="${w}" height="${h}" style="display:block; width:${w}px; height:${h}px; border-radius:8px; border:3px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.25);">`).join('')}</div>`;
+}
+function newsletterTextHtml(text, color){
+  return String(text||'').split('\n').map(line=>{
+    const t = line.trim();
+    if(!t) return '';
+    if(/^(🥇|🥈|🥉)/.test(t)){
+      const bg = t.startsWith('🥇') ? '#FFF3C4' : (t.startsWith('🥈') ? '#EDEFF2' : '#F6E3D3');
+      return `<div style="display:inline-block; margin:3px 6px 3px 0; padding:4px 10px; border-radius:14px; background:${bg}; font-size:12.5px; font-weight:700;">${escapeHtml(t)}</div>`;
+    }
+    if(t.startsWith('•')) return `<div style="font-size:13px; padding:2px 0 2px 4px;"><span style="color:${color}; font-weight:800;">●</span> ${escapeHtml(t.replace(/^•\s*/,''))}</div>`;
+    return `<div style="font-size:13px; line-height:1.55; margin-top:4px;">${escapeHtml(t)}</div>`;
+  }).join('');
+}
+async function newsletterCardHtml(b, sec){
+  const uris = [...(b.photoIds||[]).map(id=>photoDataCache.get(id)).filter(Boolean), ...(b.customPhotos||[])];
+  const photos = await newsletterPhotosHtml(uris);
+  let medalsRow = '';
+  if(b.kind==='event' && (b.gold||b.silver||b.bronze)){
+    const chip = (ico, n, bg)=> n ? `<span style="display:inline-block; margin-right:6px; padding:3px 11px; border-radius:14px; background:${bg}; font-weight:800; font-size:13px;">${ico} ${n}</span>` : '';
+    medalsRow = `<div style="margin-top:6px;">${chip('🥇', b.gold, '#FFE9A0')}${chip('🥈', b.silver, '#E3E6EB')}${chip('🥉', b.bronze, '#F1D5BD')}</div>`;
+  }
+  let extra = '';
+  if(b.kind==='birthday' && (b.names||[]).length){
+    extra = `<div style="margin-top:8px;">${b.names.map(n=>`<span style="display:inline-block; margin:3px 6px 3px 0; padding:5px 12px; border-radius:16px; background:#fff; border:2px solid ${sec.color}; font-weight:700; font-size:13px;">🎈 ${escapeHtml(n)}</span>`).join('')}</div>`;
+  }
+  if(b.kind==='belt' && (b.items||[]).length){
+    extra = `<div style="margin-top:8px;">${b.items.map(it=>`<div style="display:flex; align-items:center; gap:10px; margin:4px 0; padding:6px 10px; background:#fff; border-radius:8px; border:1px solid #D6E6D9;"><span style="display:inline-flex; align-items:center;">${beltSwatchHtml(it.belt, true)}</span><span style="font-weight:700; font-size:13px;">${escapeHtml(it.name)}</span><span style="margin-left:auto; font-size:12px; color:#555;">${escapeHtml(beltLabelFor(it.belt))}</span></div>`).join('')}</div>`;
+  }
+  const hasPictoTitle = b.kind==='birthday';
+  return `<div style="background:${sec.tint}; border:2px solid ${sec.color}; border-left:8px solid ${sec.color}; border-radius:12px; padding:12px 14px; margin-bottom:12px;">
+    <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:19px; color:${sec.color}; line-height:1.15;">${hasPictoTitle ? '🎂 ' : ''}${escapeHtml(b.title||'')}</div>
+    ${b.subtitle ? `<div style="font-size:11.5px; color:#666; margin-top:2px;">${escapeHtml(b.subtitle)}</div>` : ''}
+    ${medalsRow}
+    <div style="margin-top:4px;">${newsletterTextHtml(b.text, sec.color)}</div>
+    ${extra}${photos}
+  </div>`;
+}
+function newsletterSectionHeaderHtml(sec){
+  return `<div style="display:flex; align-items:center; gap:10px; margin:6px 0 10px; padding:8px 14px; border-radius:30px; background:${sec.color}; color:#fff; font-family:'Rajdhani',sans-serif; font-weight:800; font-size:18px; letter-spacing:.08em; text-transform:uppercase;"><span style="font-size:20px;">${sec.icon}</span>${escapeHtml(sec.label)}</div>`;
 }
 async function generateNewsletterPdf(){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
@@ -21225,6 +21380,7 @@ async function generateNewsletterPdf(){
   const period = newsletterPeriod(st.monthOffset);
   const chosen = [...st.blocks, ...st.custom].filter(b=>b.include && (String(b.text||'').trim() || String(b.title||'').trim()));
   if(chosen.length===0){ showToast('Aucun article sélectionné'); return; }
+  saveNewsletterDraft(true);
   const btn = document.getElementById('nlGenerateBtn');
   if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
   try{
@@ -21234,30 +21390,37 @@ async function generateNewsletterPdf(){
     const nbEvents = chosen.filter(b=>b.kind==='event').length;
     const nbStages = chosen.filter(b=>b.kind==='stage').length;
     const nbMedals = chosen.reduce((a,b)=>a+(b.medals||0),0);
+    const kpi = (ico, n, label, color)=> `<div style="flex:1; text-align:center; background:#fff; border-radius:12px; padding:10px 6px; border-bottom:4px solid ${color};"><div style="font-size:20px;">${ico}</div><div style="font-family:'Rajdhani',sans-serif; font-size:28px; font-weight:800; color:${color}; line-height:1;">${n}</div><div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:#666; margin-top:2px;">${label}</div></div>`;
     const headerHtml = `
-      <div class="recap-header">
-        ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
-        <div>
-          <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
-          <div class="rh-sub">📰 Le Tatami — la newsletter du club — ${escapeHtml(period.label)}</div>
+      <div style="border-radius:16px; overflow:hidden; margin-bottom:16px; background:linear-gradient(135deg,#1E2420 0%,#43592B 100%); padding:22px 24px 16px; color:#fff;">
+        <div style="display:flex; align-items:center; gap:18px;">
+          ${logoSrc ? `<div style="width:74px; height:74px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0;"><img src="${logoSrc}" alt="Logo" style="height:58px; width:58px; object-fit:contain;"></div>` : ''}
+          <div>
+            <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:42px; letter-spacing:.14em; line-height:1;">LE TATAMI</div>
+            <div style="font-size:13px; opacity:.9; margin-top:4px; letter-spacing:.04em;">La newsletter de ${escapeHtml(data.clubName||'')} · <strong>${escapeHtml(period.label)}</strong></div>
+          </div>
         </div>
-      </div>
-      <div class="recap-summary">
-        <div class="box"><div class="n">${nbEvents}</div><div class="l">Compétitions</div></div>
-        ${nbStages ? `<div class="box"><div class="n">${nbStages}</div><div class="l">Stages</div></div>` : ''}
-        <div class="box"><div class="n">${nbMedals}</div><div class="l">Médailles</div></div>
+        <div style="height:5px; margin-top:14px; border-radius:3px; background:linear-gradient(90deg,#B7791F,#C2417D,#2F6690,#3F7D4E);"></div>
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          ${kpi('🏆', nbEvents, 'Compétitions', '#B7791F')}
+          ${kpi('🥇', nbMedals, 'Médailles', '#C2417D')}
+          ${nbStages ? kpi('🥋', nbStages, 'Stages', '#2F6690') : ''}
+        </div>
       </div>`;
-    const blocks = chosen.map(b=>{
-      const uris = [...(b.photoIds||[]).map(id=>photoDataCache.get(id)).filter(Boolean), ...(b.customPhotos||[])];
-      const photos = uris.length ? `<div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;">${uris.map(u=>`<img src="${u}" style="${uris.length===1 ? 'width:100%; max-height:300px;' : 'width:calc(50% - 4px); height:170px;'} object-fit:cover; border-radius:8px;">`).join('')}</div>` : '';
-      const textHtml = escapeHtml(b.text||'').replace(/\n/g,'<br>');
-      return `<div style="margin-top:18px; padding-top:12px; border-top:2px solid #2A2F26;">
-        <div style="font-size:17px; font-weight:800; color:#2A2F26;">${escapeHtml(b.title||'')}</div>
-        <div style="font-size:13px; line-height:1.55; margin-top:6px;">${textHtml}</div>${photos}</div>`;
-    });
+    const runningHeaderHtml = `<div style="display:flex; justify-content:space-between; align-items:center; border-bottom:3px solid #43592B; padding-bottom:6px; margin-bottom:12px; font-family:'Rajdhani',sans-serif; font-weight:800; letter-spacing:.1em; color:#43592B;"><span>LE TATAMI</span><span style="font-size:12px; color:#666; letter-spacing:.04em;">${escapeHtml(data.clubName||'')} · ${escapeHtml(period.label)}</span></div>`;
+    // Une « partie » par rubrique : l'en-tête de rubrique est collé à sa première carte.
+    const blocks = [];
+    for(const sec of NL_SECTIONS){
+      const items = chosen.filter(b=>b.kind===sec.key);
+      for(let i=0;i<items.length;i++){
+        const card = await newsletterCardHtml(items[i], sec);
+        blocks.push(`<div style="padding-bottom:4px;">${i===0 ? newsletterSectionHeaderHtml(sec) : ''}${card}</div>`);
+      }
+    }
+    blocks.push(`<div style="text-align:center; font-size:11px; color:#888; padding-top:6px; border-top:1px solid #ddd;">${escapeHtml(data.clubName||'')}${data.clubContact ? ' · '+escapeHtml(data.clubContact) : ''} — Le Tatami, ${escapeHtml(period.label)}</div>`);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
-    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass:'recap-doc', containerWidthPx:700, margin:24 });
+    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, runningHeaderHtml, fitOnePageMinShrink: 0.72, containerClass:'recap-doc', containerWidthPx:700, margin:24 });
     pdf.save(`le-tatami-${period.prefix}.pdf`);
     showToast('Newsletter générée');
   }catch(err){
