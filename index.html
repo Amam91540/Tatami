@@ -21434,12 +21434,12 @@ const NL_SECTIONS = [
 // Niveaux de densité (toujours 2 colonnes, photos conservées) : on essaie le plus aéré, puis on resserre
 // (photos et texte plus petits) jusqu'à ce que TOUT tienne sur UNE page A4.
 const NL_DENSITY_LEVELS = [
-  { cols:2, photoMax:6, photoW:200, fs:1 },
-  { cols:2, photoMax:6, photoW:150, fs:0.95 },
-  { cols:2, photoMax:6, photoW:120, fs:0.9 },
-  { cols:2, photoMax:6, photoW:100, fs:0.85 },
-  { cols:2, photoMax:6, photoW:80,  fs:0.8 },
-  { cols:2, photoMax:6, photoW:64,  fs:0.75 }
+  { cols:2, photoMax:6, photoW:0.52, fs:1 },
+  { cols:2, photoMax:6, photoW:0.48, fs:0.95 },
+  { cols:2, photoMax:6, photoW:0.44, fs:0.9 },
+  { cols:2, photoMax:6, photoW:0.40, fs:0.85 },
+  { cols:2, photoMax:6, photoW:0.36, fs:0.8 },
+  { cols:2, photoMax:6, photoW:0.32, fs:0.75 }
 ];
 const NL_PAGE_HEIGHT_PX = 1016; // hauteur d'une page A4 (marges de 24 pt déduites) à 700 px de large
 // Photos d'un article avec leur réglage de cadrage (fx = horizontal, fy = vertical, 0..1, 0.5 = centré).
@@ -21480,27 +21480,24 @@ async function newsletterCropPhoto(uri, outW, ratioHW, focusY, focusX){
   newsletterCropCache.set(key, out);
   return out;
 }
-// availW = largeur disponible dans la carte. d = niveau de densité.
-async function newsletterPhotosHtml(items, availW, d){
+// Colonne de photos (largeur colW) placée À CÔTÉ du texte (le texte contourne les photos : pas de place
+// perdue). Les photos sont empilées ; à partir de 4, elles passent sur 2 colonnes.
+async function newsletterPhotosHtml(items, colW, d){
   items = (items||[]).filter(x=>x && x.uri).slice(0, d.photoMax);
-  const uris = items.map(x=>x.uri);
-  if(!uris.length) return '';
+  if(!items.length) return '';
   const gap = 4;
-  let ratio, w;
-  if(uris.length===1){
-    const img = await newsletterLoadImage(uris[0]);
-    ratio = Math.max(0.6, Math.min(0.8, img.height/img.width));
-    w = Math.min(availW, d.photoW);
-  } else {
-    ratio = 0.75;
-    w = Math.min(Math.floor((availW - gap) / 2), d.photoW);
+  const twoCols = items.length >= 4;
+  const w = twoCols ? Math.floor((colW - gap) / 2) : colW;
+  let ratio = 0.75;
+  if(items.length===1){
+    const img = await newsletterLoadImage(items[0].uri);
+    ratio = Math.max(0.6, Math.min(1.1, img.height/img.width));
   }
   const h = Math.round(w*ratio);
   const cropped = [];
   for(const it of items){ try{ cropped.push(await newsletterCropPhoto(it.uri, w*2, ratio, it.fy, it.fx)); }catch(e){} }
   if(!cropped.length) return '';
-  // Cadre fixe (taille exacte, overflow masqué, jamais réduit par le flex) autour d'une image à la taille exacte.
-  return `<div style="display:flex; flex-wrap:wrap; justify-content:center; gap:${gap}px; margin-top:5px;">${cropped.map(u=>`<div style="flex:none; width:${w}px; height:${h}px; overflow:hidden; border-radius:3px; border:1px solid ${NL_LINE}; box-sizing:border-box;"><img src="${u}" width="${w}" height="${h}" style="display:block; flex:none; width:${w}px; height:${h}px; max-width:none;"></div>`).join('')}</div>`;
+  return `<div style="flex:none; width:${colW}px; display:flex; flex-wrap:wrap; justify-content:center; align-content:flex-start; gap:${gap}px;">${cropped.map(u=>`<div style="flex:none; width:${w}px; height:${h}px; overflow:hidden; border-radius:3px; border:1px solid ${NL_LINE}; box-sizing:border-box;"><img src="${u}" width="${w}" height="${h}" style="display:block; flex:none; width:${w}px; height:${h}px; max-width:none;"></div>`).join('')}</div>`;
 }
 function newsletterTextHtml(text, color, fs){
   const f = n => (n*fs).toFixed(1)+'px';
@@ -21514,10 +21511,12 @@ function newsletterTextHtml(text, color, fs){
     return `<div style="font-size:${f(10)}; line-height:1.35; margin-top:2px; color:#333;">${escapeHtml(t)}</div>`;
   }).join('');
 }
-async function newsletterCardHtml(b, sec, cardW, d){
+async function newsletterCardHtml(b, sec, cardW, d, idx){
   const f = n => (n*d.fs).toFixed(1)+'px';
   const innerW = cardW - 2 - 16; // bordures + padding
-  const photos = await newsletterPhotosHtml(newsletterPhotoItems(b), innerW, d);
+  const photoItems = newsletterPhotoItems(b);
+  const colW = Math.round(innerW * d.photoW);
+  const photos = photoItems.length ? await newsletterPhotosHtml(photoItems, colW, d) : '';
   let medalsRow = '';
   if(b.kind==='event' && (b.gold||b.silver||b.bronze)){
     const chip = (ico, n)=> n ? `<span style="display:inline-block; margin-right:4px; font-weight:700; font-size:${f(10.5)}; color:${NL_NAVY};">${ico} ${n}</span>` : '';
@@ -21535,8 +21534,10 @@ async function newsletterCardHtml(b, sec, cardW, d){
     <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:${f(13)}; color:${NL_NAVY}; line-height:1.1;">${escapeHtml(b.title||'')}</div>
     ${b.subtitle ? `<div style="font-size:${f(8.5)}; color:#8A94A3; margin-top:1px;">${escapeHtml(b.subtitle)}</div>` : ''}
     ${medalsRow}
-    <div style="margin-top:1px;">${newsletterTextHtml(b.text, NL_NAVY, d.fs)}</div>
-    ${extra}${photos}
+    <div style="display:flex; gap:8px; align-items:flex-start; margin-top:3px; ${(idx||0)%2 ? 'flex-direction:row-reverse;' : ''}">
+      ${photos}
+      <div style="flex:1; min-width:0;">${newsletterTextHtml(b.text, NL_NAVY, d.fs)}${extra}</div>
+    </div>
   </div>`;
 }
 function newsletterSectionHeaderHtml(sec){
@@ -21549,7 +21550,7 @@ async function newsletterBuildBody(chosen, d){
   const cardW = Math.floor((FULL_W - GAP) / 2);
   const cards = [];
   for(const sec of NL_SECTIONS){
-    for(const it of chosen.filter(b=>b.kind===sec.key)) cards.push(await newsletterCardHtml(it, sec, cardW, d));
+    for(const it of chosen.filter(b=>b.kind===sec.key)) cards.push(await newsletterCardHtml(it, sec, cardW, d, cards.length));
   }
   // Mesure de chaque carte (une par ligne dans une colonne de la bonne largeur).
   const probe = document.createElement('div');
