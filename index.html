@@ -21293,11 +21293,11 @@ function renderNewsletterBuilder(){
 
 /* ---- Rendu PDF « professionnel » ---- */
 const NL_SECTIONS = [
-  { key:'event',    label:'Résultats',         icon:'🏆', color:'#B7791F', tint:'#FFF8E6' },
-  { key:'stage',    label:'Stages',            icon:'🥋', color:'#2F6690', tint:'#EAF3FA' },
-  { key:'belt',     label:'Passages de grade', icon:'🎖️', color:'#3F7D4E', tint:'#EAF5EC' },
-  { key:'custom',   label:'Vie du club',       icon:'📣', color:'#C2652A', tint:'#FDF0E6' },
-  { key:'birthday', label:'Anniversaires',     icon:'🎂', color:'#C2417D', tint:'#FCEAF3' }
+  { key:'event',    label:'Résultats',         icon:'🏆', color:'#E2B24F', text:'#8A5A00', tint:'#FFFAEC' },
+  { key:'stage',    label:'Stages',            icon:'🥋', color:'#7DB4DD', text:'#1F5C8A', tint:'#F1F8FD' },
+  { key:'belt',     label:'Passages de grade', icon:'🎖️', color:'#8CC79A', text:'#2E7A41', tint:'#F2FAF4' },
+  { key:'custom',   label:'Vie du club',       icon:'📣', color:'#F0AB7A', text:'#B5561B', tint:'#FFF6EE' },
+  { key:'birthday', label:'Anniversaires',     icon:'🎂', color:'#E99AC1', text:'#B0336F', tint:'#FFF2F8' }
 ];
 function newsletterLoadImage(uri){
   return new Promise((resolve, reject)=>{ const i = new Image(); i.onload = ()=>resolve(i); i.onerror = ()=>reject(new Error('Photo illisible')); i.src = uri; });
@@ -21315,22 +21315,25 @@ async function newsletterCropPhoto(uri, outW, ratioHW, focusY){
   c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
   return c.toDataURL('image/jpeg', 0.88);
 }
-async function newsletterPhotosHtml(uris){
-  uris = (uris||[]).filter(Boolean);
+// availW = largeur disponible dans la carte. Maximum 4 photos par article (mise en page compacte).
+async function newsletterPhotosHtml(uris, availW){
+  uris = (uris||[]).filter(Boolean).slice(0, 4);
   if(!uris.length) return '';
-  const W = 600, gap = 8;
-  let cols, ratio;
+  const gap = 6;
+  let cols, ratio, w;
   if(uris.length===1){
     const img = await newsletterLoadImage(uris[0]);
     cols = 1; ratio = Math.max(0.6, Math.min(0.85, img.height/img.width));
-  } else if(uris.length===2 || uris.length===4){ cols = 2; ratio = 0.75; }
-  else { cols = 3; ratio = 0.8; }
-  const w = Math.floor((W - gap*(cols-1)) / cols);
+    w = Math.min(availW, 300);
+  } else {
+    cols = 2; ratio = 0.75;
+    w = Math.floor((availW - gap) / 2);
+  }
   const h = Math.round(w*ratio);
   const cropped = [];
   for(const u of uris){ try{ cropped.push(await newsletterCropPhoto(u, w*2, ratio)); }catch(e){} }
   if(!cropped.length) return '';
-  return `<div style="display:flex; flex-wrap:wrap; gap:${gap}px; margin-top:10px;">${cropped.map(u=>`<img src="${u}" width="${w}" height="${h}" style="display:block; width:${w}px; height:${h}px; border-radius:8px; border:3px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.25);">`).join('')}</div>`;
+  return `<div style="display:flex; flex-wrap:wrap; gap:${gap}px; margin-top:8px;">${cropped.map(u=>`<img src="${u}" width="${w}" height="${h}" style="display:block; width:${w}px; height:${h}px; border-radius:8px; border:2px solid #fff; box-shadow:0 1px 3px rgba(0,0,0,.22);">`).join('')}</div>`;
 }
 function newsletterTextHtml(text, color){
   return String(text||'').split('\n').map(line=>{
@@ -21338,38 +21341,38 @@ function newsletterTextHtml(text, color){
     if(!t) return '';
     if(/^(🥇|🥈|🥉)/.test(t)){
       const bg = t.startsWith('🥇') ? '#FFF3C4' : (t.startsWith('🥈') ? '#EDEFF2' : '#F6E3D3');
-      return `<div style="display:inline-block; margin:3px 6px 3px 0; padding:4px 10px; border-radius:14px; background:${bg}; font-size:12.5px; font-weight:700;">${escapeHtml(t)}</div>`;
+      return `<div style="display:inline-block; margin:2px 4px 2px 0; padding:3px 8px; border-radius:12px; background:${bg}; font-size:11px; font-weight:700;">${escapeHtml(t)}</div>`;
     }
-    if(t.startsWith('•')) return `<div style="font-size:13px; padding:2px 0 2px 4px;"><span style="color:${color}; font-weight:800;">●</span> ${escapeHtml(t.replace(/^•\s*/,''))}</div>`;
-    return `<div style="font-size:13px; line-height:1.55; margin-top:4px;">${escapeHtml(t)}</div>`;
+    if(t.startsWith('•')) return `<div style="font-size:11.5px; padding:1px 0 1px 2px;"><span style="color:${color}; font-weight:800;">●</span> ${escapeHtml(t.replace(/^•\s*/,''))}</div>`;
+    return `<div style="font-size:11.5px; line-height:1.45; margin-top:3px;">${escapeHtml(t)}</div>`;
   }).join('');
 }
-async function newsletterCardHtml(b, sec){
+async function newsletterCardHtml(b, sec, cardW){
+  const innerW = cardW - 6 - 2 - 24; // bordure gauche + droite + padding
   const uris = [...(b.photoIds||[]).map(id=>photoDataCache.get(id)).filter(Boolean), ...(b.customPhotos||[])];
-  const photos = await newsletterPhotosHtml(uris);
+  const photos = await newsletterPhotosHtml(uris, innerW);
   let medalsRow = '';
   if(b.kind==='event' && (b.gold||b.silver||b.bronze)){
-    const chip = (ico, n, bg)=> n ? `<span style="display:inline-block; margin-right:6px; padding:3px 11px; border-radius:14px; background:${bg}; font-weight:800; font-size:13px;">${ico} ${n}</span>` : '';
-    medalsRow = `<div style="margin-top:6px;">${chip('🥇', b.gold, '#FFE9A0')}${chip('🥈', b.silver, '#E3E6EB')}${chip('🥉', b.bronze, '#F1D5BD')}</div>`;
+    const chip = (ico, n, bg)=> n ? `<span style="display:inline-block; margin-right:5px; padding:2px 9px; border-radius:12px; background:${bg}; font-weight:800; font-size:12px;">${ico} ${n}</span>` : '';
+    medalsRow = `<div style="margin-top:5px;">${chip('🥇', b.gold, '#FFE9A0')}${chip('🥈', b.silver, '#E3E6EB')}${chip('🥉', b.bronze, '#F1D5BD')}</div>`;
   }
   let extra = '';
   if(b.kind==='birthday' && (b.names||[]).length){
-    extra = `<div style="margin-top:8px;">${b.names.map(n=>`<span style="display:inline-block; margin:3px 6px 3px 0; padding:5px 12px; border-radius:16px; background:#fff; border:2px solid ${sec.color}; font-weight:700; font-size:13px;">🎈 ${escapeHtml(n)}</span>`).join('')}</div>`;
+    extra = `<div style="margin-top:6px;">${b.names.map(n=>`<span style="display:inline-block; margin:2px 4px 2px 0; padding:3px 9px; border-radius:14px; background:#fff; border:2px solid ${sec.color}; font-weight:700; font-size:11.5px;">🎈 ${escapeHtml(n)}</span>`).join('')}</div>`;
   }
   if(b.kind==='belt' && (b.items||[]).length){
-    extra = `<div style="margin-top:8px;">${b.items.map(it=>`<div style="display:flex; align-items:center; gap:10px; margin:4px 0; padding:6px 10px; background:#fff; border-radius:8px; border:1px solid #D6E6D9;"><span style="display:inline-flex; align-items:center;">${beltSwatchHtml(it.belt, true)}</span><span style="font-weight:700; font-size:13px;">${escapeHtml(it.name)}</span><span style="margin-left:auto; font-size:12px; color:#555;">${escapeHtml(beltLabelFor(it.belt))}</span></div>`).join('')}</div>`;
+    extra = `<div style="margin-top:6px;">${b.items.map(it=>`<div style="display:flex; align-items:center; gap:8px; margin:3px 0; padding:4px 8px; background:#fff; border-radius:8px; border:1px solid #D6E6D9;"><span style="display:inline-flex; align-items:center;">${beltSwatchHtml(it.belt, true)}</span><span style="font-weight:700; font-size:11.5px;">${escapeHtml(it.name)}</span><span style="margin-left:auto; font-size:10.5px; color:#555;">${escapeHtml(beltLabelFor(it.belt))}</span></div>`).join('')}</div>`;
   }
-  const hasPictoTitle = b.kind==='birthday';
-  return `<div style="background:${sec.tint}; border:2px solid ${sec.color}; border-left:8px solid ${sec.color}; border-radius:12px; padding:12px 14px; margin-bottom:12px;">
-    <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:19px; color:${sec.color}; line-height:1.15;">${hasPictoTitle ? '🎂 ' : ''}${escapeHtml(b.title||'')}</div>
-    ${b.subtitle ? `<div style="font-size:11.5px; color:#666; margin-top:2px;">${escapeHtml(b.subtitle)}</div>` : ''}
+  return `<div style="box-sizing:border-box; width:${cardW}px; background:${sec.tint}; border:2px solid ${sec.color}; border-left:6px solid ${sec.color}; border-radius:12px; padding:10px 12px;">
+    <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:16px; color:${sec.text}; line-height:1.15;">${escapeHtml(b.title||'')}</div>
+    ${b.subtitle ? `<div style="font-size:10.5px; color:#777; margin-top:1px;">${escapeHtml(b.subtitle)}</div>` : ''}
     ${medalsRow}
-    <div style="margin-top:4px;">${newsletterTextHtml(b.text, sec.color)}</div>
+    <div style="margin-top:3px;">${newsletterTextHtml(b.text, sec.text)}</div>
     ${extra}${photos}
   </div>`;
 }
 function newsletterSectionHeaderHtml(sec){
-  return `<div style="display:flex; align-items:center; gap:10px; margin:6px 0 10px; padding:8px 14px; border-radius:30px; background:${sec.color}; color:#fff; font-family:'Rajdhani',sans-serif; font-weight:800; font-size:18px; letter-spacing:.08em; text-transform:uppercase;"><span style="font-size:20px;">${sec.icon}</span>${escapeHtml(sec.label)}</div>`;
+  return `<div style="display:inline-flex; align-items:center; gap:8px; margin:2px 0 8px; padding:5px 16px; border-radius:30px; background:${sec.tint}; border:2px solid ${sec.color}; color:${sec.text}; font-family:'Rajdhani',sans-serif; font-weight:800; font-size:15px; letter-spacing:.08em; text-transform:uppercase;"><span style="font-size:17px;">${sec.icon}</span>${escapeHtml(sec.label)}</div>`;
 }
 async function generateNewsletterPdf(){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
@@ -21387,40 +21390,48 @@ async function generateNewsletterPdf(){
     await fetchPhotosBase64(chosen.flatMap(b=>b.photoIds||[]));
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
+    // Le logo garde ses proportions d'origine (hauteur fixe, largeur calculée) : html2canvas ignore object-fit.
+    let logoW = 58;
+    if(logoSrc){ try{ const li = await newsletterLoadImage(logoSrc); logoW = Math.round(58 * li.width / li.height); }catch(e){} }
     const nbEvents = chosen.filter(b=>b.kind==='event').length;
     const nbStages = chosen.filter(b=>b.kind==='stage').length;
     const nbMedals = chosen.reduce((a,b)=>a+(b.medals||0),0);
-    const kpi = (ico, n, label, color)=> `<div style="flex:1; text-align:center; background:#fff; border-radius:12px; padding:10px 6px; border-bottom:4px solid ${color};"><div style="font-size:20px;">${ico}</div><div style="font-family:'Rajdhani',sans-serif; font-size:28px; font-weight:800; color:${color}; line-height:1;">${n}</div><div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:#666; margin-top:2px;">${label}</div></div>`;
+    const kpi = (ico, n, label, color)=> `<div style="flex:1; text-align:center; background:#fff; border-radius:12px; padding:7px 6px; border-bottom:4px solid ${color};"><span style="font-size:16px;">${ico}</span> <span style="font-family:'Rajdhani',sans-serif; font-size:24px; font-weight:800; color:#444; line-height:1;">${n}</span><div style="font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:#777;">${label}</div></div>`;
     const headerHtml = `
-      <div style="border-radius:16px; overflow:hidden; margin-bottom:16px; background:linear-gradient(135deg,#1E2420 0%,#43592B 100%); padding:22px 24px 16px; color:#fff;">
-        <div style="display:flex; align-items:center; gap:18px;">
-          ${logoSrc ? `<div style="width:74px; height:74px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0;"><img src="${logoSrc}" alt="Logo" style="height:58px; width:58px; object-fit:contain;"></div>` : ''}
+      <div style="border-radius:16px; margin-bottom:12px; background:linear-gradient(135deg,#F3F8EA 0%,#DCEBF7 100%); border:2px solid #C9DDB5; padding:14px 18px 12px; color:#2F4A1E;">
+        <div style="display:flex; align-items:center; gap:16px;">
+          ${logoSrc ? `<img src="${logoSrc}" alt="Logo" width="${logoW}" height="70" style="display:block; height:70px; width:${Math.round(logoW*70/58)}px; flex-shrink:0;">` : ''}
           <div>
-            <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:42px; letter-spacing:.14em; line-height:1;">LE TATAMI</div>
-            <div style="font-size:13px; opacity:.9; margin-top:4px; letter-spacing:.04em;">La newsletter de ${escapeHtml(data.clubName||'')} · <strong>${escapeHtml(period.label)}</strong></div>
+            <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:38px; letter-spacing:.14em; line-height:1; color:#43592B;">LE TATAMI</div>
+            <div style="font-size:12.5px; color:#4A5A3E; margin-top:3px; letter-spacing:.03em;">La newsletter de ${escapeHtml(data.clubName||'')} · <strong>${escapeHtml(period.label)}</strong></div>
           </div>
         </div>
-        <div style="height:5px; margin-top:14px; border-radius:3px; background:linear-gradient(90deg,#B7791F,#C2417D,#2F6690,#3F7D4E);"></div>
-        <div style="display:flex; gap:10px; margin-top:14px;">
-          ${kpi('🏆', nbEvents, 'Compétitions', '#B7791F')}
-          ${kpi('🥇', nbMedals, 'Médailles', '#C2417D')}
-          ${nbStages ? kpi('🥋', nbStages, 'Stages', '#2F6690') : ''}
+        <div style="height:4px; margin-top:10px; border-radius:3px; background:linear-gradient(90deg,#E2B24F,#E99AC1,#7DB4DD,#8CC79A);"></div>
+        <div style="display:flex; gap:10px; margin-top:10px;">
+          ${kpi('🏆', nbEvents, 'Compétitions', '#E2B24F')}
+          ${kpi('🥇', nbMedals, 'Médailles', '#E99AC1')}
+          ${nbStages ? kpi('🥋', nbStages, 'Stages', '#7DB4DD') : ''}
         </div>
       </div>`;
-    const runningHeaderHtml = `<div style="display:flex; justify-content:space-between; align-items:center; border-bottom:3px solid #43592B; padding-bottom:6px; margin-bottom:12px; font-family:'Rajdhani',sans-serif; font-weight:800; letter-spacing:.1em; color:#43592B;"><span>LE TATAMI</span><span style="font-size:12px; color:#666; letter-spacing:.04em;">${escapeHtml(data.clubName||'')} · ${escapeHtml(period.label)}</span></div>`;
-    // Une « partie » par rubrique : l'en-tête de rubrique est collé à sa première carte.
+    const runningHeaderHtml = `<div style="display:flex; justify-content:space-between; align-items:center; border-bottom:3px solid #B9D19C; padding-bottom:5px; margin-bottom:10px; font-family:'Rajdhani',sans-serif; font-weight:800; letter-spacing:.1em; color:#43592B;"><span>LE TATAMI</span><span style="font-size:12px; color:#777; letter-spacing:.04em;">${escapeHtml(data.clubName||'')} · ${escapeHtml(period.label)}</span></div>`;
+    // Mise en page sur 2 colonnes : une « ligne » (2 cartes) par bloc ; l'en-tête de rubrique est collé à
+    // la première ligne. Une rubrique à une seule carte occupe toute la largeur.
+    const FULL_W = 632, GAP = 10, HALF_W = Math.floor((FULL_W - GAP) / 2);
     const blocks = [];
     for(const sec of NL_SECTIONS){
       const items = chosen.filter(b=>b.kind===sec.key);
-      for(let i=0;i<items.length;i++){
-        const card = await newsletterCardHtml(items[i], sec);
-        blocks.push(`<div style="padding-bottom:4px;">${i===0 ? newsletterSectionHeaderHtml(sec) : ''}${card}</div>`);
+      const cardW = items.length===1 ? FULL_W : HALF_W;
+      for(let i=0;i<items.length;i+=2){
+        const row = [items[i], items[i+1]].filter(Boolean);
+        const cards = [];
+        for(const it of row) cards.push(await newsletterCardHtml(it, sec, cardW));
+        blocks.push(`<div style="padding-bottom:${GAP}px;">${i===0 ? newsletterSectionHeaderHtml(sec) : ''}<div style="display:flex; gap:${GAP}px; align-items:flex-start;">${cards.join('')}</div></div>`);
       }
     }
-    blocks.push(`<div style="text-align:center; font-size:11px; color:#888; padding-top:6px; border-top:1px solid #ddd;">${escapeHtml(data.clubName||'')}${data.clubContact ? ' · '+escapeHtml(data.clubContact) : ''} — Le Tatami, ${escapeHtml(period.label)}</div>`);
+    blocks.push(`<div style="text-align:center; font-size:10.5px; color:#999; padding-top:6px; border-top:1px solid #ddd;">${escapeHtml(data.clubName||'')}${data.clubContact ? ' · '+escapeHtml(data.clubContact) : ''} — Le Tatami, ${escapeHtml(period.label)}</div>`);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
-    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, runningHeaderHtml, fitOnePageMinShrink: 0.72, containerClass:'recap-doc', containerWidthPx:700, margin:24 });
+    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, runningHeaderHtml, fitOnePageMinShrink: 0.6, containerClass:'recap-doc', containerWidthPx:700, margin:24 });
     pdf.save(`le-tatami-${period.prefix}.pdf`);
     showToast('Newsletter générée');
   }catch(err){
