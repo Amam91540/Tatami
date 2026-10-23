@@ -21406,12 +21406,24 @@ const NL_SECTIONS = [
   { key:'custom',   label:'Vie du club',       icon:'📣', color:NL_YELLOW, text:NL_NAVY, tint:'#FFFFFF' },
   { key:'birthday', label:'Anniversaires',     icon:'🎂', color:NL_YELLOW, text:NL_NAVY, tint:'#FFFFFF' }
 ];
+// Niveaux de densité : on essaie le plus aéré, puis on resserre jusqu'à ce que TOUT tienne sur UNE page A4.
+const NL_DENSITY_LEVELS = [
+  { cols:2, photoMax:2, photoW:150, fs:1 },
+  { cols:3, photoMax:2, photoW:100, fs:0.95 },
+  { cols:3, photoMax:1, photoW:110, fs:0.9 },
+  { cols:4, photoMax:1, photoW:80,  fs:0.85 },
+  { cols:4, photoMax:0, photoW:0,   fs:0.82 }
+];
+const NL_PAGE_HEIGHT_PX = 1016; // hauteur d'une page A4 (marges de 24 pt déduites) à 700 px de large
 function newsletterLoadImage(uri){
   return new Promise((resolve, reject)=>{ const i = new Image(); i.onload = ()=>resolve(i); i.onerror = ()=>reject(new Error('Photo illisible')); i.src = uri; });
 }
+const newsletterCropCache = new Map();
 // Recadre (« cover », sans déformation) une photo au ratio voulu. html2canvas ignore object-fit : on
 // pré-découpe donc l'image à la taille exacte affichée, pour qu'elle ne soit jamais étirée.
 async function newsletterCropPhoto(uri, outW, ratioHW, focusY){
+  const key = `${outW}x${ratioHW}:${uri.length}:${uri.slice(-48)}`;
+  if(newsletterCropCache.has(key)) return newsletterCropCache.get(key);
   const img = await newsletterLoadImage(uri);
   const outH = Math.round(outW * ratioHW);
   const scale = Math.max(outW/img.width, outH/img.height);
@@ -21420,66 +21432,96 @@ async function newsletterCropPhoto(uri, outW, ratioHW, focusY){
   const sy = Math.max(0, Math.min(img.height - sh, (img.height - sh) * (focusY==null ? 0.35 : focusY)));
   const c = document.createElement('canvas'); c.width = outW; c.height = outH;
   c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
-  return c.toDataURL('image/jpeg', 0.88);
+  const out = c.toDataURL('image/jpeg', 0.88);
+  newsletterCropCache.set(key, out);
+  return out;
 }
-// availW = largeur disponible dans la carte. Maximum 4 photos par article (mise en page compacte).
-async function newsletterPhotosHtml(uris, availW){
-  uris = (uris||[]).filter(Boolean).slice(0, 4);
+// availW = largeur disponible dans la carte. d = niveau de densité.
+async function newsletterPhotosHtml(uris, availW, d){
+  uris = (uris||[]).filter(Boolean).slice(0, d.photoMax);
   if(!uris.length) return '';
   const gap = 4;
   let ratio, w;
   if(uris.length===1){
     const img = await newsletterLoadImage(uris[0]);
     ratio = Math.max(0.6, Math.min(0.8, img.height/img.width));
-    w = Math.min(availW, 190);
+    w = Math.min(availW, d.photoW);
   } else {
     ratio = 0.75;
-    w = Math.floor((availW - gap) / 2);
+    w = Math.min(Math.floor((availW - gap) / 2), d.photoW);
   }
   const h = Math.round(w*ratio);
   const cropped = [];
   for(const u of uris){ try{ cropped.push(await newsletterCropPhoto(u, w*2, ratio)); }catch(e){} }
   if(!cropped.length) return '';
-  return `<div style="display:flex; flex-wrap:wrap; gap:${gap}px; margin-top:6px;">${cropped.map(u=>`<img src="${u}" width="${w}" height="${h}" style="display:block; width:${w}px; height:${h}px; border-radius:3px; border:1px solid ${NL_LINE};">`).join('')}</div>`;
+  // Cadre fixe (taille exacte, overflow masqué, jamais réduit par le flex) autour d'une image à la taille exacte.
+  return `<div style="display:flex; flex-wrap:wrap; gap:${gap}px; margin-top:5px;">${cropped.map(u=>`<div style="flex:none; width:${w}px; height:${h}px; overflow:hidden; border-radius:3px; border:1px solid ${NL_LINE}; box-sizing:border-box;"><img src="${u}" width="${w}" height="${h}" style="display:block; flex:none; width:${w}px; height:${h}px; max-width:none;"></div>`).join('')}</div>`;
 }
-function newsletterTextHtml(text, color){
+function newsletterTextHtml(text, color, fs){
+  const f = n => (n*fs).toFixed(1)+'px';
   return String(text||'').split('\n').map(line=>{
     const t = line.trim();
     if(!t) return '';
     if(/^(🥇|🥈|🥉)/.test(t)){
       const bg = t.startsWith('🥇') ? '#FFF9E0' : (t.startsWith('🥈') ? '#F1F4F8' : '#FBF1E8');
-      return `<div style="display:inline-block; margin:1px 3px 1px 0; padding:1px 7px; border-radius:9px; background:${bg}; border:1px solid ${NL_LINE}; font-size:9.5px; font-weight:600;">${escapeHtml(t)}</div>`;
+      return `<div style="display:inline-block; margin:1px 3px 1px 0; padding:1px 6px; border-radius:9px; background:${bg}; border:1px solid ${NL_LINE}; font-size:${f(9.5)}; font-weight:600;">${escapeHtml(t)}</div>`;
     }
-    if(t.startsWith('•')) return `<div style="font-size:10px; padding:0 0 0 2px;"><span style="color:${NL_YELLOW}; font-weight:800;">▪</span> ${escapeHtml(t.replace(/^•\s*/,''))}</div>`;
-    return `<div style="font-size:10px; line-height:1.4; margin-top:2px; color:#333;">${escapeHtml(t)}</div>`;
+    if(t.startsWith('•')) return `<div style="font-size:${f(10)};"><span style="color:${NL_YELLOW}; font-weight:800;">▪</span> ${escapeHtml(t.replace(/^•\s*/,''))}</div>`;
+    return `<div style="font-size:${f(10)}; line-height:1.35; margin-top:2px; color:#333;">${escapeHtml(t)}</div>`;
   }).join('');
 }
-async function newsletterCardHtml(b, sec, cardW){
-  const innerW = cardW - 2 - 18; // bordures + padding
+async function newsletterCardHtml(b, sec, cardW, d){
+  const f = n => (n*d.fs).toFixed(1)+'px';
+  const innerW = cardW - 2 - 16; // bordures + padding
   const uris = [...(b.photoIds||[]).map(id=>photoDataCache.get(id)).filter(Boolean), ...(b.customPhotos||[])];
-  const photos = await newsletterPhotosHtml(uris, innerW);
+  const photos = await newsletterPhotosHtml(uris, innerW, d);
   let medalsRow = '';
   if(b.kind==='event' && (b.gold||b.silver||b.bronze)){
-    const chip = (ico, n)=> n ? `<span style="display:inline-block; margin-right:4px; font-weight:700; font-size:10.5px; color:${NL_NAVY};">${ico} ${n}</span>` : '';
-    medalsRow = `<div style="margin-top:2px;">${chip('🥇', b.gold)}${chip('🥈', b.silver)}${chip('🥉', b.bronze)}</div>`;
+    const chip = (ico, n)=> n ? `<span style="display:inline-block; margin-right:4px; font-weight:700; font-size:${f(10.5)}; color:${NL_NAVY};">${ico} ${n}</span>` : '';
+    medalsRow = `<div style="margin-top:1px;">${chip('🥇', b.gold)}${chip('🥈', b.silver)}${chip('🥉', b.bronze)}</div>`;
   }
   let extra = '';
   if(b.kind==='birthday' && (b.names||[]).length){
-    extra = `<div style="margin-top:4px;">${b.names.map(n=>`<span style="display:inline-block; margin:1px 3px 1px 0; padding:1px 8px; border-radius:10px; background:#fff; border:1px solid ${NL_NAVY}; font-weight:600; font-size:9.5px; color:${NL_NAVY};">🎈 ${escapeHtml(n)}</span>`).join('')}</div>`;
+    extra = `<div style="margin-top:3px;">${b.names.map(n=>`<span style="display:inline-block; margin:1px 3px 1px 0; padding:0 7px; border-radius:10px; background:#fff; border:1px solid ${NL_NAVY}; font-weight:600; font-size:${f(9.5)}; color:${NL_NAVY};">🎈 ${escapeHtml(n)}</span>`).join('')}</div>`;
   }
   if(b.kind==='belt' && (b.items||[]).length){
-    extra = `<div style="margin-top:4px;">${b.items.map(it=>`<div style="display:flex; align-items:center; gap:6px; margin:2px 0; padding:2px 6px; background:#fff; border-radius:4px; border:1px solid ${NL_LINE};"><span style="display:inline-flex; align-items:center;">${beltSwatchHtml(it.belt, true)}</span><span style="font-weight:600; font-size:9.5px;">${escapeHtml(it.name)}</span><span style="margin-left:auto; font-size:9px; color:#666;">${escapeHtml(beltLabelFor(it.belt))}</span></div>`).join('')}</div>`;
+    extra = `<div style="margin-top:3px;">${b.items.map(it=>`<div style="display:flex; align-items:center; gap:5px; margin:1px 0; padding:1px 5px; background:#fff; border-radius:4px; border:1px solid ${NL_LINE};"><span style="display:inline-flex; align-items:center;">${beltSwatchHtml(it.belt, true)}</span><span style="font-weight:600; font-size:${f(9.5)};">${escapeHtml(it.name)}</span><span style="margin-left:auto; font-size:${f(9)}; color:#666;">${escapeHtml(beltLabelFor(it.belt))}</span></div>`).join('')}</div>`;
   }
-  return `<div style="box-sizing:border-box; width:${cardW}px; background:#fff; border:1px solid ${NL_LINE}; border-top:2px solid ${NL_YELLOW}; border-radius:3px; padding:6px 9px 7px;">
-    <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:13px; color:${NL_NAVY}; line-height:1.15;">${escapeHtml(b.title||'')}</div>
-    ${b.subtitle ? `<div style="font-size:8.5px; color:#8A94A3; margin-top:1px; letter-spacing:.02em;">${escapeHtml(b.subtitle)}</div>` : ''}
+  return `<div style="flex:none; box-sizing:border-box; width:${cardW}px; background:#fff; border:1px solid ${NL_LINE}; border-top:2px solid ${NL_YELLOW}; border-radius:3px; padding:5px 8px 6px;">
+    <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:${f(13)}; color:${NL_NAVY}; line-height:1.1;">${escapeHtml(b.title||'')}</div>
+    ${b.subtitle ? `<div style="font-size:${f(8.5)}; color:#8A94A3; margin-top:1px;">${escapeHtml(b.subtitle)}</div>` : ''}
     ${medalsRow}
-    <div style="margin-top:2px;">${newsletterTextHtml(b.text, NL_NAVY)}</div>
+    <div style="margin-top:1px;">${newsletterTextHtml(b.text, NL_NAVY, d.fs)}</div>
     ${extra}${photos}
   </div>`;
 }
 function newsletterSectionHeaderHtml(sec){
-  return `<div style="display:flex; align-items:center; gap:8px; margin:2px 0 6px;"><span style="display:inline-block; width:16px; height:3px; background:${NL_YELLOW};"></span><span style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:${NL_NAVY};">${sec.icon} ${escapeHtml(sec.label)}</span><span style="flex:1; height:1px; background:${NL_LINE};"></span></div>`;
+  return `<div style="display:flex; align-items:center; gap:8px; margin:0 0 4px;"><span style="display:inline-block; width:16px; height:3px; background:${NL_YELLOW};"></span><span style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:${NL_NAVY};">${sec.icon} ${escapeHtml(sec.label)}</span><span style="flex:1; height:1px; background:${NL_LINE};"></span></div>`;
+}
+// Construit le HTML complet pour un niveau de densité donné.
+async function newsletterBuildBody(chosen, d){
+  const FULL_W = 632, GAP = 8;
+  const cardW = Math.floor((FULL_W - GAP*(d.cols-1)) / d.cols);
+  let html = '';
+  for(const sec of NL_SECTIONS){
+    const items = chosen.filter(b=>b.kind===sec.key);
+    if(!items.length) continue;
+    html += `<div style="margin-bottom:${GAP}px;">${newsletterSectionHeaderHtml(sec)}<div style="display:flex; flex-wrap:wrap; gap:${GAP}px; align-items:flex-start;">`;
+    for(const it of items) html += await newsletterCardHtml(it, sec, cardW, d);
+    html += `</div></div>`;
+  }
+  return html;
+}
+async function newsletterMeasureHeight(html){
+  const probe = document.createElement('div');
+  probe.className = 'recap-doc';
+  probe.style.cssText = 'position:absolute; left:-9999px; top:0; width:700px;';
+  probe.innerHTML = html;
+  document.body.appendChild(probe);
+  await waitForImages(probe);
+  const h = probe.getBoundingClientRect().height;
+  document.body.removeChild(probe);
+  return h;
 }
 async function generateNewsletterPdf(){
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
@@ -21498,47 +21540,41 @@ async function generateNewsletterPdf(){
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
     // Le logo garde ses proportions d'origine (hauteur fixe, largeur calculée) : html2canvas ignore object-fit.
-    let logoW = 60;
-    if(logoSrc){ try{ const li = await newsletterLoadImage(logoSrc); logoW = Math.round(60 * li.width / li.height); }catch(e){} }
+    let logoW = 54;
+    if(logoSrc){ try{ const li = await newsletterLoadImage(logoSrc); logoW = Math.round(54 * li.width / li.height); }catch(e){} }
     const nbEvents = chosen.filter(b=>b.kind==='event').length;
     const nbStages = chosen.filter(b=>b.kind==='stage').length;
     const nbMedals = chosen.reduce((a,b)=>a+(b.medals||0),0);
-    const sep = `<span style="display:inline-block; width:1px; height:12px; background:${NL_LINE}; margin:0 10px; vertical-align:middle;"></span>`;
+    const sep = `<span style="display:inline-block; width:1px; height:11px; background:${NL_LINE}; margin:0 9px; vertical-align:middle;"></span>`;
     const stats = [`🏆 <strong>${nbEvents}</strong> compétition${nbEvents>1?'s':''}`, `🥇 <strong>${nbMedals}</strong> médaille${nbMedals>1?'s':''}`, nbStages ? `🥋 <strong>${nbStages}</strong> stage${nbStages>1?'s':''}` : ''].filter(Boolean).join(sep);
     // Filigrane : grand logo très pâle à droite du bandeau + fins traits jaune/bleu.
     const headerHtml = `
-      <div style="position:relative; overflow:hidden; border:1px solid ${NL_LINE}; border-left:4px solid ${NL_YELLOW}; border-radius:4px; margin-bottom:10px; background:${NL_SOFT}; padding:10px 16px 8px;">
-        ${logoSrc ? `<img src="${logoSrc}" alt="" width="${Math.round(logoW*3)}" height="180" style="position:absolute; right:-20px; top:-30px; height:180px; width:${Math.round(logoW*3)}px; opacity:0.06;">` : ''}
+      <div style="position:relative; overflow:hidden; border:1px solid ${NL_LINE}; border-left:4px solid ${NL_YELLOW}; border-radius:4px; margin-bottom:8px; background:${NL_SOFT}; padding:8px 14px 6px;">
+        ${logoSrc ? `<img src="${logoSrc}" alt="" width="${Math.round(logoW*3)}" height="162" style="position:absolute; right:-20px; top:-30px; height:162px; width:${Math.round(logoW*3)}px; max-width:none; opacity:0.06;">` : ''}
         <div style="position:relative; display:flex; align-items:center; gap:14px;">
-          ${logoSrc ? `<img src="${logoSrc}" alt="Logo" width="${logoW}" height="60" style="display:block; height:60px; width:${logoW}px; flex-shrink:0;">` : ''}
+          ${logoSrc ? `<img src="${logoSrc}" alt="Logo" width="${logoW}" height="54" style="display:block; flex:none; height:54px; width:${logoW}px; max-width:none;">` : ''}
           <div>
-            <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:30px; letter-spacing:.18em; line-height:1; color:${NL_NAVY};">LE TATAMI</div>
-            <div style="font-size:11px; color:#5A6678; margin-top:3px; letter-spacing:.04em;">La newsletter de ${escapeHtml(data.clubName||'')} · ${escapeHtml(period.label)}</div>
+            <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:28px; letter-spacing:.18em; line-height:1; color:${NL_NAVY};">LE TATAMI</div>
+            <div style="font-size:10.5px; color:#5A6678; margin-top:2px; letter-spacing:.04em;">La newsletter de ${escapeHtml(data.clubName||'')} · ${escapeHtml(period.label)}</div>
           </div>
         </div>
-        <div style="position:relative; height:2px; margin-top:8px; background:linear-gradient(90deg,${NL_YELLOW} 0%,${NL_YELLOW} 18%,${NL_NAVY} 18%,${NL_NAVY} 100%);"></div>
-        <div style="position:relative; margin-top:6px; font-size:10.5px; color:${NL_NAVY};">${stats}</div>
+        <div style="position:relative; height:2px; margin-top:6px; background:linear-gradient(90deg,${NL_YELLOW} 0%,${NL_YELLOW} 18%,${NL_NAVY} 18%,${NL_NAVY} 100%);"></div>
+        <div style="position:relative; margin-top:5px; font-size:10px; color:${NL_NAVY};">${stats}</div>
       </div>`;
-    const runningHeaderHtml = `<div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid ${NL_YELLOW}; padding-bottom:4px; margin-bottom:8px; font-family:'Rajdhani',sans-serif; font-weight:800; letter-spacing:.14em; color:${NL_NAVY};"><span>LE TATAMI</span><span style="font-size:10.5px; color:#777; letter-spacing:.04em;">${escapeHtml(data.clubName||'')} · ${escapeHtml(period.label)}</span></div>`;
-    // 2 colonnes (3 quand il y a beaucoup d'articles) ; une ligne de cartes par bloc, l'en-tête de
-    // rubrique étant collé à la première ligne.
-    const FULL_W = 632, GAP = 8;
-    const COLS = chosen.length > 5 ? 3 : 2;
-    const cardW = Math.floor((FULL_W - GAP*(COLS-1)) / COLS);
-    const blocks = [];
-    for(const sec of NL_SECTIONS){
-      const items = chosen.filter(b=>b.kind===sec.key);
-      for(let i=0;i<items.length;i+=COLS){
-        const row = items.slice(i, i+COLS);
-        const cards = [];
-        for(const it of row) cards.push(await newsletterCardHtml(it, sec, cardW));
-        blocks.push(`<div style="padding-bottom:${GAP}px;">${i===0 ? newsletterSectionHeaderHtml(sec) : ''}<div style="display:flex; gap:${GAP}px; align-items:flex-start;">${cards.join('')}</div></div>`);
-      }
+    const footerHtml = `<div style="text-align:center; font-size:9px; color:#9AA3B0; padding-top:4px; border-top:1px solid ${NL_LINE};">${escapeHtml(data.clubName||'')}${data.clubContact ? ' · '+escapeHtml(data.clubContact) : ''} — Le Tatami, ${escapeHtml(period.label)}</div>`;
+    // Tout sur UNE page : on prend le niveau de densité le plus aéré qui tient dans la page ; si même le
+    // plus serré déborde, l'image est réduite pour tenir quand même sur la page.
+    let bodyHtml = '', full = '';
+    for(let i=0;i<NL_DENSITY_LEVELS.length;i++){
+      bodyHtml = await newsletterBuildBody(chosen, NL_DENSITY_LEVELS[i]);
+      full = headerHtml + bodyHtml + footerHtml;
+      const h = await newsletterMeasureHeight(full);
+      if(h <= NL_PAGE_HEIGHT_PX) break;
     }
-    blocks.push(`<div style="text-align:center; font-size:9px; color:#9AA3B0; padding-top:5px; border-top:1px solid ${NL_LINE};">${escapeHtml(data.clubName||'')}${data.clubContact ? ' · '+escapeHtml(data.clubContact) : ''} — Le Tatami, ${escapeHtml(period.label)}</div>`);
+    const canvas = await captureOffscreenSection(full, 'recap-doc', 700, 2.5);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
-    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, runningHeaderHtml, fitOnePageMinShrink: 0.6, containerClass:'recap-doc', containerWidthPx:700, margin:24 });
+    addCanvasFitOrTop(pdf, canvas, 24);
     pdf.save(`le-tatami-${period.prefix}.pdf`);
     showToast('Newsletter générée');
   }catch(err){
