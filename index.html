@@ -481,6 +481,9 @@
   #duplicate-members-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
   #family-suggestions-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:120; padding:16px; overflow:auto; }
   #family-suggestions-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
+  #newsletter-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:130; padding:16px; overflow:auto; }
+  #newsletter-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
+  #newsletter-overlay .rio-card{ background:var(--surface); border-radius:14px; padding:20px; max-width:640px; width:100%; margin-top:3vh; box-shadow:0 10px 40px rgba(0,0,0,.25); }
   #payment-form-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:130; padding:16px; overflow:auto; }
   #payment-form-overlay.show{ display:flex; align-items:flex-start; justify-content:center; }
   #member-cotisation-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:120; padding:16px; overflow:auto; }
@@ -1205,6 +1208,7 @@
           <div id="results-dashboard"></div>
           <div id="recap-category-filter" style="margin-top:14px;"></div>
           <button class="primary" id="generateRecapPdfBtn" style="width:100%; margin-top:10px;">📄 Générer le récap PDF du mois</button>
+ <button class="ghost" id="openNewsletterBtn" style="width:100%; margin-top:8px;">📰 Préparer la newsletter du mois</button>
           <button class="ghost" id="generateAnnualRecapBtn" style="width:100%; margin-top:8px;">📄 Générer le récap PDF de la saison (sept.–août)</button>
           <button class="ghost" id="generateAGReportBtn" style="width:100%; margin-top:8px;">📋 Générer le rapport annuel (Assemblée générale)</button>
         </div>
@@ -1359,6 +1363,7 @@
 <div id="convoc-whatsapp-overlay"></div>
 <div id="birthday-overlay"></div>
 <div id="compday-overlay"></div>
+<div id="newsletter-overlay"></div>
 <div id="account-form-overlay"></div>
 <div id="change-password-overlay"></div>
 <div id="photo-lightbox-overlay"></div>
@@ -18645,6 +18650,7 @@ function renderResultsTab(){
   document.getElementById('downloadPalmaresPdfBtn').onclick = ()=> generateMemberPalmaresPdf();
   document.getElementById('generateRecapPdfBtn').onclick = generateMonthlyRecapPdf;
   document.getElementById('generateAnnualRecapBtn').onclick = generateAnnualRecapPdf;
+  document.getElementById('openNewsletterBtn').onclick = ()=>{ ui.newsletter = null; openNewsletterBuilder(); };
   document.getElementById('generateAGReportBtn').onclick = generateAGReportPdf;
   renderRecapCategoryFilter();
   initAddResultForm();
@@ -21039,6 +21045,226 @@ async function generateMonthlyRecapPdf(){
 async function generateAnnualRecapPdf(){
   const seasonYear = data.settings.seasonStartYear || autoSeasonStartYear();
   await generateRecapPdf(`Saison ${schoolYearLabel(seasonYear)}`, d => inSchoolYear(d, seasonYear), `saison-${schoolYearLabel(seasonYear)}`, 'generateAnnualRecapBtn');
+}
+
+/* ---------------- NEWSLETTER MENSUELLE ---------------- */
+// Demande de Thomas du 23/10/2026 : regrouper les résultats du mois, reprendre les photos, générer des
+// articles automatiquement (modèles de phrases, modifiables) et pouvoir intégrer des articles libres
+// (interview, portrait...). Export PDF. Les articles libres/retouches sont un brouillon de session
+// (non enregistré en base) : on génère le PDF pendant la même session.
+function newsletterFirstLast(name){
+  const { prenom, nom } = splitMemberName(name);
+  return `${prenom||''} ${(nom||'').toUpperCase()}`.trim();
+}
+function newsletterPlural(n, one, many){ return `${n} ${n>1 ? many : one}`; }
+function newsletterEventArticle(ev, presents){
+  const shiai = isShiaiEvent(ev.name);
+  const disc = CALENDAR_DISCIPLINE_LABELS[convocEventDiscipline(ev)] || '';
+  const by = res => presents.filter(r=>String(r.result)===res);
+  const gold = by('1'), silver = by('2'), bronze = by('3');
+  const memberOf = r => data.members.find(x=>x.id===r.memberId);
+  const catOf = r => { const m = memberOf(r); return r.ageCategory || (m ? weightBandLabelFor(m.birthDate, m, convocEventDiscipline(ev)) : ''); };
+  const lines = [];
+  lines.push(`${ev.date ? 'Le '+fmtDate(ev.date)+', ' : ''}${newsletterPlural(presents.length, 'licencié(e) de l’AMAM a participé', 'licencié(e)s de l’AMAM ont participé')} à « ${ev.name} »${ev.ville ? ' à '+ev.ville : ''}${disc ? ' ('+disc+')' : ''}.`);
+  if(shiai){
+    lines.push('Compétition par points : bravo à tous les participants pour leur engagement !');
+  } else {
+    const medals = gold.length+silver.length+bronze.length;
+    if(medals>0){
+      const parts = [];
+      if(gold.length) parts.push(newsletterPlural(gold.length, 'médaille d’or', 'médailles d’or'));
+      if(silver.length) parts.push(newsletterPlural(silver.length, 'médaille d’argent', 'médailles d’argent'));
+      if(bronze.length) parts.push(newsletterPlural(bronze.length, 'médaille de bronze', 'médailles de bronze'));
+      lines.push(`Belle moisson pour le club : ${parts.join(', ')} !`);
+      const pod = [];
+      gold.forEach(r=>pod.push(`🥇 ${newsletterFirstLast(r.name)}${catOf(r)?' ('+catOf(r)+')':''}`));
+      silver.forEach(r=>pod.push(`🥈 ${newsletterFirstLast(r.name)}${catOf(r)?' ('+catOf(r)+')':''}`));
+      bronze.forEach(r=>pod.push(`🥉 ${newsletterFirstLast(r.name)}${catOf(r)?' ('+catOf(r)+')':''}`));
+      lines.push(pod.join('\n'));
+    } else {
+      lines.push('Pas de médaille cette fois, mais beaucoup d’expérience acquise et de belles prestations.');
+    }
+    const others = presents.filter(r=>!['1','2','3'].includes(String(r.result)));
+    if(others.length) lines.push(`Bravo aussi à ${others.map(r=>splitMemberName(r.name).prenom).filter(Boolean).join(', ')} pour leur participation.`);
+  }
+  return lines.join('\n');
+}
+function newsletterPhotoIdsForEvent(ev, presents){
+  const ids = [];
+  presents.forEach(r=>{
+    if(!r.photoFileId) return;
+    const m = data.members.find(x=>x.id===r.memberId);
+    if(m && m.docDroitImageWithdrawn) return; // autorisation d'image retirée : jamais de photo
+    ids.push(r.photoFileId);
+  });
+  (ev.photoFileIds||[]).forEach(id=>ids.push(id));
+  return ids;
+}
+function buildNewsletterAutoBlocks(prefix){
+  const blocks = [];
+  const events = (data.convocEvents||[]).filter(ev=> (ev.date||'').startsWith(prefix))
+    .map(ev=>({ ev, presents: recipientsInSeasonView(ev.recipients||[]).filter(r=>r.response==='present') }))
+    .filter(x=>x.presents.length>0)
+    .sort((a,b)=>(a.ev.date||'').localeCompare(b.ev.date||''));
+  events.forEach(({ev, presents})=>{
+    blocks.push({ id: uid(), kind:'event', include:true, title: ev.name, text: newsletterEventArticle(ev, presents), photoIds: newsletterPhotoIdsForEvent(ev, presents), customPhotos: [],
+      medals: presents.filter(r=>['1','2','3'].includes(String(r.result))).length, participations: presents.length });
+  });
+  (data.stages||[]).filter(st=>st.validated && stageInSeasonView(st) && (st.dateStart||'').startsWith(prefix) && (st.participants||[]).length>0).forEach(st=>{
+    const disc = stageDisciplineLabel(st);
+    const names = (st.participants||[]).map(p=>splitMemberName(p.name).prenom).filter(Boolean);
+    blocks.push({ id: uid(), kind:'stage', include:true, title: 'Stage — '+st.name,
+      text: `${stageDateRangeLabel(st) ? stageDateRangeLabel(st)+' : ' : ''}${newsletterPlural(st.participants.length, 'adhérent a participé', 'adhérents ont participé')} au stage « ${st.name} »${disc?' ('+disc+')':''}.\nAu programme : travail technique, progression et bonne humeur. Merci à tous les participants : ${names.join(', ')}.`,
+      photoIds: [], customPhotos: [], medals:0, participations:0 });
+  });
+  const passages = (data.beltPassages||[]).filter(p=>(p.date||'').startsWith(prefix));
+  if(passages.length){
+    blocks.push({ id: uid(), kind:'belt', include:true, title:'Passages de grade',
+      text: `Félicitations à ceux qui ont franchi un nouveau cap ce mois-ci :\n` + passages.map(p=>`• ${newsletterFirstLast(p.memberName)} — ${beltLabelFor(p.belt)}`).join('\n'),
+      photoIds: [], customPhotos: [], medals:0, participations:0 });
+  }
+  const monthNum = parseInt(prefix.slice(5,7),10);
+  const bdays = data.members.filter(m=>!m.archived && !m.forNextSeason && m.birthDate && parseInt(m.birthDate.slice(5,7),10)===monthNum);
+  if(bdays.length){
+    blocks.push({ id: uid(), kind:'birthday', include:false, title:'Joyeux anniversaire !',
+      text: `Un joyeux anniversaire à : ${bdays.map(m=>splitMemberName(m.name).prenom).filter(Boolean).join(', ')} !`,
+      photoIds: [], customPhotos: [], medals:0, participations:0 });
+  }
+  return blocks;
+}
+function newsletterPeriod(offset){
+  const base = new Date();
+  const t = new Date(base.getFullYear(), base.getMonth() + (offset||0), 1);
+  const year = t.getFullYear(), month = t.getMonth();
+  return { year, month, prefix: `${year}-${String(month+1).padStart(2,'0')}`, label: `${MONTH_NAMES_FR[month]} ${year}` };
+}
+function openNewsletterBuilder(){
+  const overlay = document.getElementById('newsletter-overlay');
+  if(!overlay) return;
+  if(!ui.newsletter){
+    ui.newsletter = { monthOffset: ui.dashboardMonthOffset||0, blocks: [], custom: [] };
+    ui.newsletter.blocks = buildNewsletterAutoBlocks(newsletterPeriod(ui.newsletter.monthOffset).prefix);
+  }
+  renderNewsletterBuilder();
+  overlay.classList.add('show');
+}
+function closeNewsletterBuilder(){
+  const overlay = document.getElementById('newsletter-overlay');
+  if(!overlay) return;
+  overlay.classList.remove('show');
+  overlay.innerHTML = '';
+}
+function renderNewsletterBuilder(){
+  const overlay = document.getElementById('newsletter-overlay');
+  const st = ui.newsletter;
+  const period = newsletterPeriod(st.monthOffset);
+  const all = [...st.blocks, ...st.custom];
+  overlay.innerHTML = `
+  <div class="rio-card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <h2 style="margin:0;">📰 Le Tatami</h2>
+      <button class="ghost icon-btn" id="nlCloseBtn">✕</button>
+    </div>
+    <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin:10px 0;">
+      <button class="ghost icon-btn" id="nlPrevBtn">◀</button>
+      <div style="font-weight:700; min-width:140px; text-align:center;">${escapeHtml(period.label)}</div>
+      <button class="ghost icon-btn" id="nlNextBtn">▶</button>
+    </div>
+    <p class="small" style="color:var(--ink-dim); margin:0 0 10px;">Articles générés automatiquement à partir des résultats, stages et passages de grade du mois. Décochez, modifiez le texte, ou ajoutez vos propres articles (interview, portrait…). Les photos de personnes ayant retiré leur autorisation d’image sont exclues.</p>
+    ${all.length===0 ? '<div class="empty">Aucun résultat ni stage ce mois-ci. Ajoutez un article libre ci-dessous.</div>' : all.map(b=>`
+      <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:8px;" data-nl-block="${b.id}">
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
+          <input type="checkbox" data-nl-include="${b.id}" ${b.include?'checked':''}>
+          <input type="text" data-nl-title="${b.id}" value="${escapeHtml(b.title)}" style="flex:1; font-weight:700;">
+          ${b.kind==='custom' ? `<button type="button" class="ghost icon-btn" data-nl-del="${b.id}" style="padding:4px 8px;">🗑</button>` : ''}
+        </label>
+        <textarea data-nl-text="${b.id}" rows="${Math.min(10, 3 + Math.floor((b.text||'').length/90))}" style="width:100%; margin-top:6px;">${escapeHtml(b.text||'')}</textarea>
+        <div class="small" style="color:var(--ink-dim); margin-top:4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          ${((b.photoIds||[]).length + (b.customPhotos||[]).length)===0
+            ? `<span style="background:#FFF6E0; border:1px solid #E8C468; color:#8a6a1a; border-radius:8px; padding:4px 8px;">📷 Aucune photo trouvée — voulez-vous en ajouter une ? (sinon l’article paraîtra sans photo)</span>`
+            : `<span>📷 ${(b.photoIds||[]).length + (b.customPhotos||[]).length} photo(s)</span>`}
+          <label class="ghost icon-btn" style="cursor:pointer; padding:3px 8px; font-size:12px;">+ Ajouter une photo<input type="file" accept="image/*" data-nl-photo="${b.id}" style="display:none;"></label>
+          ${(b.customPhotos||[]).length ? `<button type="button" class="ghost icon-btn" data-nl-clearphotos="${b.id}" style="padding:3px 8px; font-size:12px;">Retirer mes photos</button>` : ''}
+        </div>
+      </div>`).join('')}
+    <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
+      <button class="ghost" id="nlAddCustomBtn" style="flex:1;">➕ Ajouter un article libre</button>
+      <button class="ghost" id="nlRegenBtn" style="flex:1;">↺ Régénérer les articles auto</button>
+    </div>
+    <button class="primary" id="nlGenerateBtn" style="width:100%; margin-top:10px;">📄 Générer la newsletter (PDF)</button>
+  </div>`;
+  const q = sel => overlay.querySelectorAll(sel);
+  const find = id => [...st.blocks, ...st.custom].find(b=>b.id===id);
+  overlay.querySelector('#nlCloseBtn').onclick = closeNewsletterBuilder;
+  overlay.querySelector('#nlPrevBtn').onclick = ()=>{ st.monthOffset--; st.blocks = buildNewsletterAutoBlocks(newsletterPeriod(st.monthOffset).prefix); renderNewsletterBuilder(); };
+  overlay.querySelector('#nlNextBtn').onclick = ()=>{ st.monthOffset++; st.blocks = buildNewsletterAutoBlocks(newsletterPeriod(st.monthOffset).prefix); renderNewsletterBuilder(); };
+  overlay.querySelector('#nlRegenBtn').onclick = ()=>{ st.blocks = buildNewsletterAutoBlocks(newsletterPeriod(st.monthOffset).prefix); renderNewsletterBuilder(); showToast('Articles automatiques régénérés'); };
+  overlay.querySelector('#nlAddCustomBtn').onclick = ()=>{ st.custom.push({ id: uid(), kind:'custom', include:true, title:'Titre de l’article', text:'', photoIds:[], customPhotos:[], medals:0, participations:0 }); renderNewsletterBuilder(); };
+  q('[data-nl-include]').forEach(el=> el.onchange = ()=>{ const b = find(el.dataset.nlInclude); if(b) b.include = el.checked; });
+  q('[data-nl-title]').forEach(el=> el.oninput = ()=>{ const b = find(el.dataset.nlTitle); if(b) b.title = el.value; });
+  q('[data-nl-text]').forEach(el=> el.oninput = ()=>{ const b = find(el.dataset.nlText); if(b) b.text = el.value; });
+  q('[data-nl-del]').forEach(el=> el.onclick = ()=>{ st.custom = st.custom.filter(b=>b.id!==el.dataset.nlDel); renderNewsletterBuilder(); });
+  q('[data-nl-clearphotos]').forEach(el=> el.onclick = ()=>{ const b = find(el.dataset.nlClearphotos); if(b) b.customPhotos = []; renderNewsletterBuilder(); });
+  q('[data-nl-photo]').forEach(el=> el.onchange = async ()=>{
+    const b = find(el.dataset.nlPhoto); const file = el.files && el.files[0];
+    if(!b || !file) return;
+    try{
+      const { base64, mimeType } = await resizeImageFileToBase64(file, 1200, 0.8);
+      b.customPhotos.push(`data:${mimeType};base64,${base64}`);
+      renderNewsletterBuilder();
+    }catch(e){ showToast('Photo illisible : ' + (e.message||e)); }
+  });
+  overlay.querySelector('#nlGenerateBtn').onclick = generateNewsletterPdf;
+}
+async function generateNewsletterPdf(){
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    showToast('La génération de PDF n’a pas pu se charger — vérifie ta connexion');
+    return;
+  }
+  const st = ui.newsletter;
+  const period = newsletterPeriod(st.monthOffset);
+  const chosen = [...st.blocks, ...st.custom].filter(b=>b.include && (String(b.text||'').trim() || String(b.title||'').trim()));
+  if(chosen.length===0){ showToast('Aucun article sélectionné'); return; }
+  const btn = document.getElementById('nlGenerateBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Génération en cours…'; }
+  try{
+    await fetchPhotosBase64(chosen.flatMap(b=>b.photoIds||[]));
+    const logoImg = document.querySelector('header.topbar .club-logo-light');
+    const logoSrc = logoImg ? logoImg.src : '';
+    const nbEvents = chosen.filter(b=>b.kind==='event').length;
+    const nbStages = chosen.filter(b=>b.kind==='stage').length;
+    const nbMedals = chosen.reduce((a,b)=>a+(b.medals||0),0);
+    const headerHtml = `
+      <div class="recap-header">
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
+        <div>
+          <div class="rh-club">${escapeHtml(data.clubName||'')}</div>
+          <div class="rh-sub">📰 Le Tatami — la newsletter du club — ${escapeHtml(period.label)}</div>
+        </div>
+      </div>
+      <div class="recap-summary">
+        <div class="box"><div class="n">${nbEvents}</div><div class="l">Compétitions</div></div>
+        ${nbStages ? `<div class="box"><div class="n">${nbStages}</div><div class="l">Stages</div></div>` : ''}
+        <div class="box"><div class="n">${nbMedals}</div><div class="l">Médailles</div></div>
+      </div>`;
+    const blocks = chosen.map(b=>{
+      const uris = [...(b.photoIds||[]).map(id=>photoDataCache.get(id)).filter(Boolean), ...(b.customPhotos||[])];
+      const photos = uris.length ? `<div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;">${uris.map(u=>`<img src="${u}" style="${uris.length===1 ? 'width:100%; max-height:300px;' : 'width:calc(50% - 4px); height:170px;'} object-fit:cover; border-radius:8px;">`).join('')}</div>` : '';
+      const textHtml = escapeHtml(b.text||'').replace(/\n/g,'<br>');
+      return `<div style="margin-top:18px; padding-top:12px; border-top:2px solid #2A2F26;">
+        <div style="font-size:17px; font-weight:800; color:#2A2F26;">${escapeHtml(b.title||'')}</div>
+        <div style="font-size:13px; line-height:1.55; margin-top:6px;">${textHtml}</div>${photos}</div>`;
+    });
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'pt', format:'a4' });
+    await paginateBlocksIntoPdf(pdf, { blocks, headerHtml, containerClass:'recap-doc', containerWidthPx:700, margin:24 });
+    pdf.save(`le-tatami-${period.prefix}.pdf`);
+    showToast('Newsletter générée');
+  }catch(err){
+    showToast('Échec de la génération : ' + (err.message||err));
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '📄 Générer la newsletter (PDF)'; }
+  }
 }
 
 /* ---------------- RAPPORT ANNUEL (ASSEMBLÉE GÉNÉRALE) ---------------- */
