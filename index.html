@@ -21354,6 +21354,14 @@ function renderNewsletterBuilder(){
           <label class="ghost icon-btn" style="cursor:pointer; padding:3px 8px; font-size:12px;">+ Ajouter une photo<input type="file" accept="image/*" data-nl-photo="${b.id}" style="display:none;"></label>
           ${(b.customPhotos||[]).length ? `<button type="button" class="ghost icon-btn" data-nl-clearphotos="${b.id}" style="padding:3px 8px; font-size:12px;">Retirer mes photos</button>` : ''}
         </div>
+        ${newsletterPhotoItems(b).length ? `<div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;">${newsletterPhotoItems(b).map(it=>`
+          <div style="text-align:center;">
+            <div style="width:84px; height:63px; overflow:hidden; border:1px solid var(--line); border-radius:4px;"><img src="${it.uri}" style="width:84px; height:63px; object-fit:cover; object-position:${Math.round(it.fx*100)}% ${Math.round(it.fy*100)}%; display:block;"></div>
+            <div style="display:flex; justify-content:center; gap:2px; margin-top:2px;">
+              ${[['◀','x',-0.15],['▲','y',-0.15],['▼','y',0.15],['▶','x',0.15]].map(([ic,ax,dl])=>`<button type="button" class="ghost icon-btn" data-nl-focus="${b.id}" data-key="${escapeHtml(it.key)}" data-axis="${ax}" data-delta="${dl}" title="Décaler le cadrage" style="padding:1px 5px; font-size:10px;">${ic}</button>`).join('')}
+            </div>
+          </div>`).join('')}</div>
+        <div class="small" style="color:var(--ink-dim); margin-top:2px;">Les flèches décalent le cadrage de la photo dans l’article.</div>` : ''}
       </div>`).join('')}
     <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
       <button class="ghost" id="nlAddCustomBtn" style="flex:1;">➕ Ajouter un article libre</button>
@@ -21381,6 +21389,17 @@ function renderNewsletterBuilder(){
     if(newsletterRebuildBlockText(b)){ saveNewsletterDraft(true); renderNewsletterBuilder(); }
     else showToast('Cet article ne peut plus être réécrit automatiquement');
   });
+  q('[data-nl-focus]').forEach(el=> el.onclick = ()=>{
+    const b = find(el.dataset.nlFocus); if(!b) return;
+    if(!b.photoFocus) b.photoFocus = {};
+    const k = el.dataset.key;
+    const cur = b.photoFocus[k] || { x:0.5, y:0.5 };
+    const ax = el.dataset.axis;
+    cur[ax] = Math.max(0, Math.min(1, (cur[ax]==null?0.5:cur[ax]) + parseFloat(el.dataset.delta)));
+    b.photoFocus[k] = cur;
+    saveNewsletterDraft(true);
+    renderNewsletterBuilder();
+  });
   q('[data-nl-del]').forEach(el=> el.onclick = ()=>{ st.custom = st.custom.filter(b=>b.id!==el.dataset.nlDel); saveNewsletterDraft(true); renderNewsletterBuilder(); });
   q('[data-nl-clearphotos]').forEach(el=> el.onclick = ()=>{ const b = find(el.dataset.nlClearphotos); if(b) b.customPhotos = []; saveNewsletterDraft(true); renderNewsletterBuilder(); });
   q('[data-nl-photo]').forEach(el=> el.onchange = async ()=>{
@@ -21394,6 +21413,12 @@ function renderNewsletterBuilder(){
     }catch(e){ showToast('Photo illisible : ' + (e.message||e)); }
   });
   overlay.querySelector('#nlGenerateBtn').onclick = generateNewsletterPdf;
+  // Télécharge les photos Drive manquantes (aperçus de cadrage) puis ré-affiche une seule fois.
+  const missing = all.flatMap(b=>b.photoIds||[]).filter(id=>!photoDataCache.has(id));
+  if(missing.length && !st.fetchingPhotos){
+    st.fetchingPhotos = true;
+    fetchPhotosBase64(missing).then(()=>{ st.fetchingPhotos = false; if(document.getElementById('nlGenerateBtn')) renderNewsletterBuilder(); }).catch(()=>{ st.fetchingPhotos = false; });
+  }
 }
 
 /* ---- Rendu PDF « professionnel » ---- */
@@ -21417,20 +21442,37 @@ const NL_DENSITY_LEVELS = [
   { cols:2, photoMax:6, photoW:64,  fs:0.75 }
 ];
 const NL_PAGE_HEIGHT_PX = 1016; // hauteur d'une page A4 (marges de 24 pt déduites) à 700 px de large
+// Photos d'un article avec leur réglage de cadrage (fx = horizontal, fy = vertical, 0..1, 0.5 = centré).
+function newsletterPhotoKey(b, kind, idx){ return kind==='c' ? 'c'+idx : String(b.photoIds[idx]); }
+function newsletterPhotoItems(b){
+  const f = b.photoFocus || {};
+  const out = [];
+  (b.photoIds||[]).forEach((id, i)=>{ const uri = photoDataCache.get(id); if(uri){ const k = f[id] || {}; out.push({ uri, fx: k.x==null?0.5:k.x, fy: k.y==null?0.5:k.y, key:String(id) }); } });
+  (b.customPhotos||[]).forEach((uri, i)=>{ const k = f['c'+i] || {}; out.push({ uri, fx: k.x==null?0.5:k.x, fy: k.y==null?0.5:k.y, key:'c'+i }); });
+  return out;
+}
+// « de l’Académie… » / « de AMAM » : élision devant une voyelle ou un h.
+function newsletterClubOf(name){
+  const n = String(name||'').trim();
+  if(!n) return '';
+  const first = n.normalize('NFD').replace(/[\u0300-\u036f]/g,'').charAt(0).toLowerCase();
+  return 'de ' + (/[aeiouyh]/.test(first) ? 'l’' : '') + escapeHtml(n);
+}
 function newsletterLoadImage(uri){
   return new Promise((resolve, reject)=>{ const i = new Image(); i.onload = ()=>resolve(i); i.onerror = ()=>reject(new Error('Photo illisible')); i.src = uri; });
 }
 const newsletterCropCache = new Map();
 // Recadre (« cover », sans déformation) une photo au ratio voulu. html2canvas ignore object-fit : on
 // pré-découpe donc l'image à la taille exacte affichée, pour qu'elle ne soit jamais étirée.
-async function newsletterCropPhoto(uri, outW, ratioHW, focusY){
-  const key = `${outW}x${ratioHW}:${uri.length}:${uri.slice(-48)}`;
+async function newsletterCropPhoto(uri, outW, ratioHW, focusY, focusX){
+  const fx = focusX==null ? 0.5 : focusX;
+  const key = `${outW}x${ratioHW}:${fx}:${focusY}:${uri.length}:${uri.slice(-48)}`;
   if(newsletterCropCache.has(key)) return newsletterCropCache.get(key);
   const img = await newsletterLoadImage(uri);
   const outH = Math.round(outW * ratioHW);
   const scale = Math.max(outW/img.width, outH/img.height);
   const sw = outW/scale, sh = outH/scale;
-  const sx = (img.width - sw)/2;
+  const sx = Math.max(0, Math.min(img.width - sw, (img.width - sw) * fx));
   const sy = Math.max(0, Math.min(img.height - sh, (img.height - sh) * (focusY==null ? 0.5 : focusY)));
   const c = document.createElement('canvas'); c.width = outW; c.height = outH;
   c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
@@ -21439,8 +21481,9 @@ async function newsletterCropPhoto(uri, outW, ratioHW, focusY){
   return out;
 }
 // availW = largeur disponible dans la carte. d = niveau de densité.
-async function newsletterPhotosHtml(uris, availW, d){
-  uris = (uris||[]).filter(Boolean).slice(0, d.photoMax);
+async function newsletterPhotosHtml(items, availW, d){
+  items = (items||[]).filter(x=>x && x.uri).slice(0, d.photoMax);
+  const uris = items.map(x=>x.uri);
   if(!uris.length) return '';
   const gap = 4;
   let ratio, w;
@@ -21454,7 +21497,7 @@ async function newsletterPhotosHtml(uris, availW, d){
   }
   const h = Math.round(w*ratio);
   const cropped = [];
-  for(const u of uris){ try{ cropped.push(await newsletterCropPhoto(u, w*2, ratio)); }catch(e){} }
+  for(const it of items){ try{ cropped.push(await newsletterCropPhoto(it.uri, w*2, ratio, it.fy, it.fx)); }catch(e){} }
   if(!cropped.length) return '';
   // Cadre fixe (taille exacte, overflow masqué, jamais réduit par le flex) autour d'une image à la taille exacte.
   return `<div style="display:flex; flex-wrap:wrap; justify-content:center; gap:${gap}px; margin-top:5px;">${cropped.map(u=>`<div style="flex:none; width:${w}px; height:${h}px; overflow:hidden; border-radius:3px; border:1px solid ${NL_LINE}; box-sizing:border-box;"><img src="${u}" width="${w}" height="${h}" style="display:block; flex:none; width:${w}px; height:${h}px; max-width:none;"></div>`).join('')}</div>`;
@@ -21474,8 +21517,7 @@ function newsletterTextHtml(text, color, fs){
 async function newsletterCardHtml(b, sec, cardW, d){
   const f = n => (n*d.fs).toFixed(1)+'px';
   const innerW = cardW - 2 - 16; // bordures + padding
-  const uris = [...(b.photoIds||[]).map(id=>photoDataCache.get(id)).filter(Boolean), ...(b.customPhotos||[])];
-  const photos = await newsletterPhotosHtml(uris, innerW, d);
+  const photos = await newsletterPhotosHtml(newsletterPhotoItems(b), innerW, d);
   let medalsRow = '';
   if(b.kind==='event' && (b.gold||b.silver||b.bronze)){
     const chip = (ico, n)=> n ? `<span style="display:inline-block; margin-right:4px; font-weight:700; font-size:${f(10.5)}; color:${NL_NAVY};">${ico} ${n}</span>` : '';
@@ -21569,7 +21611,7 @@ async function generateNewsletterPdf(){
           ${logoSrc ? `<img src="${logoSrc}" alt="Logo" width="${logoW}" height="54" style="display:block; flex:none; height:54px; width:${logoW}px; max-width:none;">` : ''}
           <div>
             <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:28px; letter-spacing:.18em; line-height:1; color:${NL_NAVY};">LE TATAMI</div>
-            <div style="font-size:10.5px; color:#5A6678; margin-top:2px; letter-spacing:.04em;">La newsletter de ${escapeHtml(data.clubName||'')} · ${escapeHtml(period.label)}</div>
+            <div style="font-size:10.5px; color:#5A6678; margin-top:2px; letter-spacing:.04em;">La newsletter ${newsletterClubOf(data.clubName)} · ${escapeHtml(period.label)}</div>
           </div>
         </div>
         <div style="position:relative; height:2px; margin-top:6px; background:linear-gradient(90deg,${NL_YELLOW} 0%,${NL_YELLOW} 18%,${NL_NAVY} 18%,${NL_NAVY} 100%);"></div>
