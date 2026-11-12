@@ -21671,15 +21671,16 @@ const NL_SECTIONS = [
 // Niveaux de densité (toujours 2 colonnes, photos conservées) : on essaie le plus aéré, puis on resserre
 // (photos et texte plus petits) jusqu'à ce que TOUT tienne sur UNE page A4.
 const NL_DENSITY_LEVELS = [
-  { cols:2, photoMax:6, photoW:0.55, fs:1 },
-  { cols:2, photoMax:6, photoW:0.51, fs:0.95 },
-  { cols:2, photoMax:6, photoW:0.47, fs:0.9 },
-  { cols:2, photoMax:6, photoW:0.43, fs:0.85 },
-  { cols:2, photoMax:6, photoW:0.39, fs:0.8 },
-  { cols:2, photoMax:6, photoW:0.35, fs:0.75 },
-  { cols:2, photoMax:6, photoW:0.31, fs:0.72 }
+  { cols:2, photoMax:6, photoW:0.55, fs:1.25 },
+  { cols:2, photoMax:6, photoW:0.50, fs:1.22 },
+  { cols:2, photoMax:6, photoW:0.45, fs:1.19 },
+  { cols:2, photoMax:6, photoW:0.41, fs:1.16 },
+  { cols:2, photoMax:6, photoW:0.37, fs:1.13 },
+  { cols:2, photoMax:6, photoW:0.33, fs:1.10 },
+  { cols:2, photoMax:6, photoW:0.30, fs:1.06 },
+  { cols:2, photoMax:6, photoW:0.28, fs:1.02 }
 ];
-const NL_PAGE_HEIGHT_PX = 1016; // hauteur d'une page A4 (marges de 24 pt déduites) à 700 px de large
+const NL_PAGE_HEIGHT_PX = 1000; // hauteur d'une page A4 (marges de 24 pt déduites) à 700 px de large
 // Photos d'un article avec leur réglage de cadrage (fx = horizontal, fy = vertical, 0..1, 0.5 = centré).
 function newsletterPhotoKey(b, kind, idx){ return kind==='c' ? 'c'+idx : String(b.photoIds[idx]); }
 function newsletterPhotoItems(b){
@@ -21817,7 +21818,7 @@ function newsletterSectionHeaderHtml(sec){
 // Construit le HTML d'un niveau de densité : 2 colonnes, plusieurs articles empilés dans chaque
 // colonne ; chaque article est placé dans la colonne la moins haute (ordre des rubriques conservé).
 async function newsletterBuildBody(chosen, d){
-  const FULL_W = 632, GAP = 10;
+  const FULL_W = 676, GAP = 10;
   const cardW = Math.floor((FULL_W - GAP) / 2);
   const ordered = [];
   NL_SECTIONS.forEach(sec=>chosen.filter(b=>b.kind===sec.key).forEach(b=>ordered.push({ b, sec })));
@@ -21903,14 +21904,14 @@ async function generateNewsletterPdf(){
     let bodyHtml = '', full = '';
     for(let i=0;i<NL_DENSITY_LEVELS.length;i++){
       bodyHtml = await newsletterBuildBody(chosen, NL_DENSITY_LEVELS[i]);
-      full = headerHtml + bodyHtml + footerHtml;
+      full = `<div style="margin:-22px;">${headerHtml}${bodyHtml}${footerHtml}</div>`; // marges réduites (34 → 12 px)
       const h = await newsletterMeasureHeight(full);
       if(h <= NL_PAGE_HEIGHT_PX) break;
     }
     const canvas = await captureOffscreenSection(full, 'recap-doc', 700, 2.5);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
-    addCanvasFitOrTop(pdf, canvas, 24);
+    addCanvasFitOrTop(pdf, canvas, 10);
     pdf.save(`l-echo-du-dojo-${period.prefix}.pdf`);
     showToast('Newsletter générée');
   }catch(err){
