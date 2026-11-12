@@ -20197,27 +20197,39 @@ async function generateConvocEventPdf(eventId){
   try{
     const birthDateOf = r => { const m = data.members.find(x=>x.id===r.memberId); return m ? m.birthDate : null; };
   const memberOf = r => data.members.find(x=>x.id===r.memberId);
+    // Une tranche d'âge par bandeau (Poussins / Benjamins / Minimes…), sans distinguer 1re/2e année.
+    const bandKey = r => r.viaVeterans ? { idx: 998, label: 'Vétérans' }
+      : { idx: categoryRank(birthDateOf(r), memberOf(r)).bandIdx, label: groupedCategoryLabel(birthDateOf(r), memberOf(r)) };
     const sorted = [...evRecipients].sort((a,b)=>{
-      const ra = categoryRank(birthDateOf(a), memberOf(a)), rb = categoryRank(birthDateOf(b), memberOf(b));
-      if(ra.bandIdx !== rb.bandIdx) return ra.bandIdx - rb.bandIdx;
-      if(ra.suffix !== rb.suffix) return ra.suffix - rb.suffix;
+      const ka = bandKey(a), kb = bandKey(b);
+      if(ka.idx !== kb.idx) return ka.idx - kb.idx;
       return memberSurname(a.name).localeCompare(memberSurname(b.name), 'fr');
     });
-    const rowsHtml = sorted.map(r=>{
-      const memberForCat = data.members.find(x=>x.id===r.memberId);
+    const rows = [];
+    let lastLabel = null;
+    sorted.forEach(r=>{
+      const k = bandKey(r);
+      if(k.label !== lastLabel){
+        lastLabel = k.label;
+        rows.push({
+          html: `<td colspan="3" style="background:#2A2F26; color:#fff; font-weight:800; font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:8px 10px;">${escapeHtml(k.label)}</td>`,
+          isDivider:true, dividerType:'category', categoryLabel: k.label
+        });
+      }
+      const memberForCat = memberOf(r);
       const cat = r.viaVeterans
         ? `🎖️ Vétérans ${veteranLabelForMember(memberForCat) || ''}`.trim()
         : categoryYearLabelWithVeteran(birthDateOf(r), memberForCat ? memberForCat.gender : '', memberForCat);
       const statusLabel = r.response==='present' ? '✅ Présent(e)' : (r.response==='absent' ? '❌ Absent(e)' : '⏳ En attente');
-      return `<tr><td>${nameWithBoldSurname(r.name)}</td><td>${escapeHtml(cat||'')}</td><td>${statusLabel}</td></tr>`;
-    }).join('');
+      rows.push({ html: `<td>${nameWithBoldSurname(r.name)}</td><td>${escapeHtml(cat||'')}</td><td>${statusLabel}</td>`, isDivider:false, categoryLabel:k.label });
+    });
     const present = evRecipients.filter(r=>r.response==='present').length;
     const absent = evRecipients.filter(r=>r.response==='absent').length;
 
     const logoImg = document.querySelector('header.topbar .club-logo-light');
     const logoSrc = logoImg ? logoImg.src : '';
 
-    const docHtml = `
+    const buildContextHtml = (isFirst)=> !isFirst ? '' : `
       <div class="recap-header">
         ${logoSrc ? `<img src="${logoSrc}" alt="Logo">` : ''}
         <div>
@@ -20229,17 +20241,17 @@ async function generateConvocEventPdf(eventId){
         <div class="box"><div class="n">${evRecipients.length}</div><div class="l">Convoqués</div></div>
         <div class="box"><div class="n">${present}</div><div class="l">Présents</div></div>
         <div class="box"><div class="n">${absent}</div><div class="l">Absents</div></div>
-      </div>
-      <table class="recap-table" style="margin-top:18px;">
-        <tr><th>Élève</th><th>Catégorie</th><th>Réponse</th></tr>
-        ${rowsHtml}
-      </table>`;
-
+      </div>`;
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
-    const margin = 24;
-    const canvas = await captureOffscreenSection(docHtml, 'recap-doc');
-    addCanvasSliced(pdf, canvas, margin);
+    await paginateRowsIntoPdf(pdf, {
+      rows,
+      tableHeadHtml: `<th>Élève</th><th>Catégorie</th><th>Réponse</th>`,
+      buildContextHtml,
+      containerClass: 'recap-doc',
+      containerWidthPx: 700,
+      margin: 24
+    });
     const safeName = ev.name.replace(/[^\w-]+/g,'-');
     pdf.save(`convocation-${safeName}.pdf`);
     showToast('PDF généré');
