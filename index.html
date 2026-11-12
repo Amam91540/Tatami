@@ -21821,20 +21821,14 @@ async function newsletterBuildBody(chosen, d){
   const cardW = Math.floor((FULL_W - GAP) / 2);
   const ordered = [];
   NL_SECTIONS.forEach(sec=>chosen.filter(b=>b.kind===sec.key).forEach(b=>ordered.push({ b, sec })));
-  // Article « une » : celui qui a le plus de photos (en priorité un résultat de compétition).
-  let heroIdx = -1, best = 0;
-  ordered.forEach((o,i)=>{ const n = newsletterPhotoItems(o.b).length; const score = n*10 + (o.b.kind==='event'?5:0); if(n>0 && score>best){ best = score; heroIdx = i; } });
-  let heroHtml = '';
-  if(heroIdx >= 0){
-    const o = ordered.splice(heroIdx, 1)[0];
-    heroHtml = `<div style="margin-bottom:${GAP}px; border-bottom:1px solid ${NL_LINE}; padding-bottom:${GAP-4}px;">${await newsletterCardHtml(o.b, o.sec, FULL_W, d, 'hero')}</div>`;
-  }
+  // Même principe pour tous les articles ; seule la place de la photo varie (gauche / droite / bandeau),
+  // tirée au hasard mais de façon stable (graine = identifiant de l'article) pour ne pas changer d'un PDF à l'autre.
   const pattern = ['side-left', 'banner', 'side-right'];
-  let k = 0;
   const cards = [];
   for(const o of ordered){
     const hasPhoto = newsletterPhotoItems(o.b).length > 0;
-    cards.push(await newsletterCardHtml(o.b, o.sec, cardW, d, hasPhoto ? pattern[k++ % pattern.length] : 'text'));
+    const mode = hasPhoto ? pattern[newsletterHash(String(o.b.id||o.b.title||'')+(o.b.photoSeed||'')) % pattern.length] : 'text';
+    cards.push(await newsletterCardHtml(o.b, o.sec, cardW, d, mode));
   }
   const probe = document.createElement('div');
   probe.className = 'recap-doc';
@@ -21851,7 +21845,7 @@ async function newsletterBuildBody(chosen, d){
   });
   const colHtml = arr => `<div style="flex:none; width:${cardW}px; display:flex; flex-direction:column; gap:${GAP}px;">${arr.join('')}</div>`;
   const grid = cards.length ? `<div style="display:flex; gap:${GAP}px; align-items:flex-start; margin-bottom:${GAP}px; position:relative;"><div style="position:absolute; left:${cardW + Math.floor(GAP/2)}px; top:0; bottom:0; width:1px; background:${NL_LINE};"></div>${colHtml(cols[0])}${colHtml(cols[1])}</div>` : '';
-  return heroHtml + grid;
+  return grid;
 }
 async function newsletterMeasureHeight(html){
   const probe = document.createElement('div');
