@@ -21670,14 +21670,15 @@ const NL_SECTIONS = [
 ];
 // Niveaux de densité (toujours 2 colonnes, photos conservées) : on essaie le plus aéré, puis on resserre
 // (photos et texte plus petits) jusqu'à ce que TOUT tienne sur UNE page A4.
-// Priorité : TOUT sur UNE page. On réduit les photos par paliers (le texte reste grand le plus longtemps
-// possible) ; si malgré tout ça ne tient pas, la newsletter continue sur une page suivante.
+// Priorité : TOUT sur UNE page, avec des photos qui restent GRANDES. On essaie d'abord la page « normale », puis
+// une page un peu plus large (même gabarit A4, donc tout est légèrement réduit à l'impression mais rien ne
+// perd sa taille relative) ; les photos ne descendent jamais sous un seuil.
 const NL_DENSITY_LEVELS = (()=>{
   const out = [];
-  for(let w = 0.55; w >= 0.149; w -= 0.03) out.push({ cols:2, photoMax:6, photoW:+w.toFixed(2), fs:1.25 });
-  [1.2, 1.15, 1.1, 1.05, 1.0].forEach(fs=> out.push({ cols:2, photoMax:4, photoW:0.15, fs }));
+  for(let w = 0.55; w >= 0.379; w -= 0.03) out.push({ cols:2, photoMax:3, photoW:+w.toFixed(2), fs:1.25 });
   return out;
 })();
+const NL_PAGE_WIDTHS = [700, 730, 760, 790, 820, 850];
 const NL_PAGE_HEIGHT_PX = 985; // hauteur d'une page A4 (marges de 24 pt déduites) à 700 px de large
 // Photos d'un article avec leur réglage de cadrage (fx = horizontal, fy = vertical, 0..1, 0.5 = centré).
 function newsletterPhotoKey(b, kind, idx){ return kind==='c' ? 'c'+idx : String(b.photoIds[idx]); }
@@ -21744,7 +21745,7 @@ async function newsletterPhotoBlockHtml(items, W, d, opts){
   try{ const img = await newsletterLoadImage(items[0].uri); ratio = Math.max(0.62, Math.min(1.25, img.height/img.width)); }catch(e){}
   ratio *= (0.7 + 0.3*ps);
   const main = await newsletterPhotoFrame(items[0], W, ratio);
-  const rest = items.slice(1, 4);
+  const rest = items.slice(1, 3);
   let thumbs = '';
   if(rest.length){
     const w = Math.floor((W - gap*(rest.length-1)) / rest.length);
@@ -21817,11 +21818,12 @@ function newsletterSectionHeaderHtml(sec){
 // Construit le HTML d'un niveau de densité : 2 colonnes, plusieurs articles empilés dans chaque
 // colonne ; chaque article est placé dans la colonne la moins haute (ordre des rubriques conservé).
 // Cartes + hauteurs mesurées ; puis répartition en pages (2 colonnes par page, un article n'est JAMAIS coupé).
-async function newsletterBuildPages(chosen, d, capFirst, capOther){
-  const FULL_W = 696, GAP = 10;
+async function newsletterBuildPages(chosen, d, capFirst, capOther, pageW, stripH){
+  const FULL_W = (pageW||700) - 4, GAP = 10;
+  capFirst -= (stripH||0); capOther -= (stripH||0);
   const cardW = Math.floor((FULL_W - GAP) / 2);
   const ordered = [];
-  NL_SECTIONS.forEach(sec=>chosen.filter(b=>b.kind===sec.key).forEach(b=>ordered.push({ b, sec })));
+  NL_SECTIONS.filter(sec=>sec.key!=='birthday').forEach(sec=>chosen.filter(b=>b.kind===sec.key).forEach(b=>ordered.push({ b, sec })));
   // Même principe pour tous les articles ; seule la place de la photo varie (gauche / droite / bandeau),
   // tirée au hasard mais de façon stable (graine = identifiant de l'article).
   const pattern = ['side-left', 'banner', 'side-right'];
@@ -21852,12 +21854,24 @@ async function newsletterBuildPages(chosen, d, capFirst, capOther){
     pg.cols[k].push(c); pg.colH[k] += h;
   });
   const colHtml = arr => `<div style="flex:none; width:${cardW}px; display:flex; flex-direction:column; gap:${GAP}px;">${arr.join('')}</div>`;
-  return pages.map(pg=>`<div style="display:flex; gap:${GAP}px; align-items:flex-start; margin-bottom:${GAP}px; position:relative;"><div style="position:absolute; left:${cardW + Math.floor(GAP/2)}px; top:0; bottom:0; width:1px; background:${NL_LINE};"></div>${colHtml(pg.cols[0])}${colHtml(pg.cols[1])}</div>`);
+  const strip = newsletterBirthdayStrip(chosen, FULL_W, d);
+  const pagesHtml = pages.map(pg=>`<div style="display:flex; gap:${GAP}px; align-items:flex-start; margin-bottom:${GAP}px; position:relative;"><div style="position:absolute; left:${cardW + Math.floor(GAP/2)}px; top:0; bottom:0; width:1px; background:${NL_LINE};"></div>${colHtml(pg.cols[0])}${colHtml(pg.cols[1])}</div>`);
+  if(strip && pagesHtml.length) pagesHtml[pagesHtml.length-1] += strip;
+  return pagesHtml;
 }
-async function newsletterMeasureHeight(html){
+// Petite bande pleine largeur en bas de page pour les anniversaires (au lieu d'une carte en colonne).
+function newsletterBirthdayStrip(chosen, W, d){
+  const bs = chosen.filter(b=>b.kind==='birthday');
+  if(!bs.length) return '';
+  const names = bs.flatMap(b=>b.names||[]);
+  const f = n => (n*d.fs).toFixed(1)+'px';
+  const body = names.length ? names.map(n=>escapeHtml(n)).join(' · ') : escapeHtml(bs.map(b=>String(b.text||'').split('\n')[0]).join(' '));
+  return `<div style="width:${W}px; box-sizing:border-box; margin-top:2px; border-top:2px solid ${NL_YELLOW}; border-bottom:1px solid ${NL_LINE}; padding:4px 8px; display:flex; align-items:baseline; gap:8px;"><span style="flex:none; font-size:${f(9)}; letter-spacing:.14em; text-transform:uppercase; color:${NL_NAVY}; font-weight:800;">🎂 Joyeux anniversaire</span><span style="flex:1; font-size:${f(9.5)}; line-height:1.35; color:${NL_NAVY}; font-weight:600;">🎈 ${body}</span></div>`;
+}
+async function newsletterMeasureHeight(html, widthPx){
   const probe = document.createElement('div');
   probe.className = 'recap-doc';
-  probe.style.cssText = 'position:absolute; left:-9999px; top:0; width:700px;';
+  probe.style.cssText = `position:absolute; left:-9999px; top:0; width:${widthPx||700}px;`;
   probe.innerHTML = html;
   document.body.appendChild(probe);
   await waitForImages(probe);
@@ -21907,25 +21921,35 @@ async function generateNewsletterPdf(){
     const footerHtml = `<div style="text-align:center; font-size:9px; color:#9AA3B0; padding-top:4px; border-top:1px solid ${NL_LINE};">${escapeHtml(data.clubName||'')}${data.clubContact ? ' · '+escapeHtml(data.clubContact) : ''} — L’Écho du dojo, ${escapeHtml(period.label)}</div>`;
     // On essaie de tout faire tenir sur UNE page avec le moins de réduction possible ; sinon on garde les
     // photos/texte grands et la newsletter continue sur une page suivante.
-    const wrap = inner => `<div style="margin:-22px -32px;">${inner}</div>`;
     const miniHeader = `<div style="display:flex; justify-content:space-between; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:#8A94A3; border-bottom:2px solid ${NL_NAVY}; padding-bottom:3px; margin-bottom:10px;"><span style="font-family:Georgia,serif; font-weight:700; color:${NL_NAVY}; letter-spacing:.04em; font-size:13px;">L’ÉCHO <span style="color:${NL_YELLOW};">DU</span> DOJO</span><span>${escapeHtml(period.label)}</span></div>`;
-    const hH = await newsletterMeasureHeight(wrap(headerHtml));
-    const fH = await newsletterMeasureHeight(wrap(footerHtml));
-    const mH = await newsletterMeasureHeight(wrap(miniHeader));
-    const base = await newsletterMeasureHeight(wrap(''));
-    const capFirst = NL_PAGE_HEIGHT_PX - base - hH - fH - 6;
-    const capOther = NL_PAGE_HEIGHT_PX - base - mH - fH - 6;
-    let best = null;
-    for(let i=0;i<NL_DENSITY_LEVELS.length;i++){
-      const pgs = await newsletterBuildPages(chosen, NL_DENSITY_LEVELS[i], capFirst, capOther);
-      if(!best || pgs.length < best.length) best = pgs;
-      if(pgs.length === 1) break;
+    // Largeur de page virtuelle W (≥ 700) : plus W est grand, plus il y a de place pour le contenu, la page
+    // étant ensuite ramenée à la largeur A4 (réduction uniforme, sans bandes blanches). On prend le plus
+    // petit W et le niveau de photos le plus grand qui font tenir TOUT sur une page.
+    let best = null, bestW = 700;
+    outer: for(const W of NL_PAGE_WIDTHS){
+      const wrap = inner => `<div style="margin:-22px -32px;">${inner}</div>`;
+      const pageH = NL_PAGE_HEIGHT_PX * W / 700;
+      const hH = await newsletterMeasureHeight(wrap(headerHtml), W);
+      const fH = await newsletterMeasureHeight(wrap(footerHtml), W);
+      const mH = await newsletterMeasureHeight(wrap(miniHeader), W);
+      const base = await newsletterMeasureHeight(wrap(''), W);
+      const capFirst = pageH - base - hH - fH - 6;
+      const capOther = pageH - base - mH - fH - 6;
+      for(let i=0;i<NL_DENSITY_LEVELS.length;i++){
+        const d = NL_DENSITY_LEVELS[i];
+        const stripHtml = newsletterBirthdayStrip(chosen, W - 4, d);
+        const stripH = stripHtml ? (await newsletterMeasureHeight(wrap(stripHtml), W)) - base + 4 : 0;
+        const pgs = await newsletterBuildPages(chosen, d, capFirst, capOther, W, stripH);
+        if(!best || pgs.length < best.length){ best = pgs; bestW = W; }
+        if(pgs.length === 1) break outer;
+      }
     }
+    const wrapFinal = inner => `<div style="margin:-22px -32px;">${inner}</div>`;
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
     for(let i=0;i<best.length;i++){
-      const full = wrap((i===0 ? headerHtml : miniHeader) + best[i] + footerHtml);
-      const canvas = await captureOffscreenSection(full, 'recap-doc', 700, 2.5);
+      const full = wrapFinal((i===0 ? headerHtml : miniHeader) + best[i] + footerHtml);
+      const canvas = await captureOffscreenSection(full, 'recap-doc', bestW, 2.5);
       if(i>0) pdf.addPage();
       addCanvasFitOrTop(pdf, canvas, 2);
     }
