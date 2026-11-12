@@ -1209,7 +1209,7 @@
           <div id="results-dashboard"></div>
           <div id="recap-category-filter" style="margin-top:14px;"></div>
           <button class="primary" id="generateRecapPdfBtn" style="width:100%; margin-top:10px;">📄 Générer le récap PDF du mois</button>
- <button class="ghost" id="openNewsletterBtn" style="width:100%; margin-top:8px;">📰 Préparer la newsletter du mois</button>
+ <button class="ghost" id="openNewsletterBtn" style="width:100%; margin-top:8px;">📰 Préparer L’Écho du dojo du mois</button>
           <button class="ghost" id="generateAnnualRecapBtn" style="width:100%; margin-top:8px;">📄 Générer le récap PDF de la saison (sept.–août)</button>
           <button class="ghost" id="generateAGReportBtn" style="width:100%; margin-top:8px;">📋 Générer le rapport annuel (Assemblée générale)</button>
         </div>
@@ -21447,30 +21447,75 @@ function newsletterPeriod(offset){
    Enregistré dans le navigateur de cet appareil (localStorage), un brouillon par mois, avec les
    photos ajoutées à la main. Sauvegarde automatique à chaque modification + bouton manuel. */
 function newsletterDraftKey(prefix){ return 'tatami-newsletter-' + prefix; }
+// Brouillons stockés dans IndexedDB (pas de limite de taille pratique, contrairement à localStorage ~5 Mo),
+// avec un cache mémoire synchrone préchargé à l'ouverture. localStorage ne sert que de lecture de
+// secours pour les anciens brouillons.
+const newsletterDraftCache = new Map();
+let newsletterDbPromise = null;
+function newsletterDb(){
+  if(newsletterDbPromise) return newsletterDbPromise;
+  newsletterDbPromise = new Promise(resolve=>{
+    try{
+      if(typeof indexedDB === 'undefined'){ resolve(null); return; }
+      const req = indexedDB.open('tatami-newsletter', 1);
+      req.onupgradeneeded = ()=>{ req.result.createObjectStore('drafts'); };
+      req.onsuccess = ()=>resolve(req.result);
+      req.onerror = ()=>resolve(null);
+    }catch(e){ resolve(null); }
+  });
+  return newsletterDbPromise;
+}
+async function newsletterIdbPut(key, value){
+  const db = await newsletterDb(); if(!db) return false;
+  return new Promise(resolve=>{
+    try{
+      const tx = db.transaction('drafts', 'readwrite');
+      if(value === null) tx.objectStore('drafts').delete(key); else tx.objectStore('drafts').put(value, key);
+      tx.oncomplete = ()=>resolve(true); tx.onerror = ()=>resolve(false); tx.onabort = ()=>resolve(false);
+    }catch(e){ resolve(false); }
+  });
+}
+async function newsletterPreloadDrafts(){
+  const db = await newsletterDb(); if(!db) return;
+  await new Promise(resolve=>{
+    try{
+      const tx = db.transaction('drafts', 'readonly');
+      const store = tx.objectStore('drafts');
+      const req = store.openCursor();
+      req.onsuccess = ()=>{ const c = req.result; if(c){ if(!newsletterDraftCache.has(c.key)) newsletterDraftCache.set(c.key, c.value); c.continue(); } };
+      tx.oncomplete = ()=>resolve(); tx.onerror = ()=>resolve(); tx.onabort = ()=>resolve();
+    }catch(e){ resolve(); }
+  });
+}
 function saveNewsletterDraft(silent){
   const st = ui.newsletter; if(!st) return false;
   const prefix = newsletterPeriod(st.monthOffset).prefix;
-  try{
-    st.savedAt = new Date().toISOString();
-    localStorage.setItem(newsletterDraftKey(prefix), JSON.stringify({ savedAt: st.savedAt, blocks: st.blocks, custom: st.custom }));
-    updateNewsletterSavedLabel();
-    if(!silent) showToast('Brouillon enregistré 💾');
-    return true;
-  }catch(e){
-    showToast('Brouillon trop volumineux pour être enregistré (retirez des photos)');
-    return false;
-  }
+  st.savedAt = new Date().toISOString();
+  const key = newsletterDraftKey(prefix);
+  const draft = { savedAt: st.savedAt, blocks: JSON.parse(JSON.stringify(st.blocks)), custom: JSON.parse(JSON.stringify(st.custom)) };
+  newsletterDraftCache.set(key, draft);
+  newsletterIdbPut(key, draft).then(ok=>{
+    if(!ok && !silent) showToast('Enregistrement local indisponible : brouillon conservé jusqu’à la fermeture de la page');
+  });
+  updateNewsletterSavedLabel();
+  if(!silent) showToast('Brouillon enregistré 💾');
+  return true;
 }
 function loadNewsletterDraft(prefix){
-  try{
-    const raw = localStorage.getItem(newsletterDraftKey(prefix));
-    if(!raw) return null;
-    const d = JSON.parse(raw);
-    if(!d || !Array.isArray(d.blocks) || !Array.isArray(d.custom)) return null;
-    return d;
-  }catch(e){ return null; }
+  const key = newsletterDraftKey(prefix);
+  let d = newsletterDraftCache.get(key) || null;
+  if(!d){
+    try{ const raw = localStorage.getItem(key); if(raw) d = JSON.parse(raw); }catch(e){ d = null; }
+  }
+  if(!d || !Array.isArray(d.blocks) || !Array.isArray(d.custom)) return null;
+  return d;
 }
-function clearNewsletterDraft(prefix){ try{ localStorage.removeItem(newsletterDraftKey(prefix)); }catch(e){} }
+function clearNewsletterDraft(prefix){
+  const key = newsletterDraftKey(prefix);
+  newsletterDraftCache.delete(key);
+  newsletterIdbPut(key, null);
+  try{ localStorage.removeItem(key); }catch(e){}
+}
 let newsletterAutoSaveTimer = null;
 function scheduleNewsletterAutoSave(){
   clearTimeout(newsletterAutoSaveTimer);
@@ -21490,9 +21535,10 @@ function newsletterLoadMonth(){
   if(draft){ st.blocks = draft.blocks; st.custom = draft.custom; st.savedAt = draft.savedAt; st.restored = true; }
   else { st.blocks = buildNewsletterAutoBlocks(prefix); st.custom = []; st.savedAt = null; st.restored = false; }
 }
-function openNewsletterBuilder(){
+async function openNewsletterBuilder(){
   const overlay = document.getElementById('newsletter-overlay');
   if(!overlay) return;
+  await newsletterPreloadDrafts();
   if(!ui.newsletter){
     ui.newsletter = { monthOffset: ui.dashboardMonthOffset||0, blocks: [], custom: [], savedAt: null, restored: false };
     newsletterLoadMonth();
@@ -21557,7 +21603,7 @@ function renderNewsletterBuilder(){
       <button class="ghost" id="nlAddCustomBtn" style="flex:1;">➕ Ajouter un article libre</button>
       <button class="ghost" id="nlRegenBtn" style="flex:1;">↺ Régénérer les articles auto</button>
     </div>
-    <button class="primary" id="nlGenerateBtn" style="width:100%; margin-top:10px;">📄 Générer la newsletter (PDF)</button>
+    <button class="primary" id="nlGenerateBtn" style="width:100%; margin-top:10px;">📄 Générer L’Écho du dojo (PDF)</button>
   </div>`;
   updateNewsletterSavedLabel();
   const q = sel => overlay.querySelectorAll(sel);
@@ -21876,7 +21922,7 @@ async function generateNewsletterPdf(){
   }catch(err){
     showToast('Échec de la génération : ' + (err.message||err));
   }finally{
-    if(btn){ btn.disabled = false; btn.textContent = '📄 Générer la newsletter (PDF)'; }
+    if(btn){ btn.disabled = false; btn.textContent = '📄 Générer L’Écho du dojo (PDF)'; }
   }
 }
 
