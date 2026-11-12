@@ -21670,11 +21670,12 @@ const NL_SECTIONS = [
 ];
 // Niveaux de densité (toujours 2 colonnes, photos conservées) : on essaie le plus aéré, puis on resserre
 // (photos et texte plus petits) jusqu'à ce que TOUT tienne sur UNE page A4.
-// Les photos et le texte restent GRANDS : seuls de légers ajustements sont tentés pour tout faire tenir sur
-// une page ; sinon la newsletter continue sur une 2e (3e…) page, sans jamais couper un article.
+// Priorité : TOUT sur UNE page. On réduit les photos par paliers (le texte reste grand le plus longtemps
+// possible) ; si malgré tout ça ne tient pas, la newsletter continue sur une page suivante.
 const NL_DENSITY_LEVELS = (()=>{
   const out = [];
-  for(let w = 0.55; w >= 0.419; w -= 0.03) out.push({ cols:2, photoMax:6, photoW:+w.toFixed(2), fs: +(1.25 - (0.55-w)*0.5).toFixed(3) });
+  for(let w = 0.55; w >= 0.149; w -= 0.03) out.push({ cols:2, photoMax:6, photoW:+w.toFixed(2), fs:1.25 });
+  [1.2, 1.15, 1.1, 1.05, 1.0].forEach(fs=> out.push({ cols:2, photoMax:4, photoW:0.15, fs }));
   return out;
 })();
 const NL_PAGE_HEIGHT_PX = 985; // hauteur d'une page A4 (marges de 24 pt déduites) à 700 px de large
@@ -21782,7 +21783,8 @@ async function newsletterCardHtml(b, sec, cardW, d, mode){
   }
   let extra = '';
   if(b.kind==='birthday' && (b.names||[]).length){
-    extra = `<div style="margin-top:3px;">${b.names.map(n=>`<span style="display:inline-block; margin:1px 3px 1px 0; padding:0 7px; border-radius:10px; background:#fff; border:1px solid ${NL_NAVY}; font-weight:600; font-size:${f(9.5)}; color:${NL_NAVY};">🎈 ${escapeHtml(n)}</span>`).join('')}</div>`;
+    // Format compact : noms à la suite, séparés par des points, sans cadres (gain de place).
+    extra = `<div style="margin-top:2px; font-size:${f(9)}; line-height:1.35; color:${NL_NAVY}; font-weight:600;">🎈 ${b.names.map(n=>escapeHtml(n)).join(' · ')}</div>`;
   }
   if(b.kind==='belt' && (b.items||[]).length){
     extra = `<div style="margin-top:3px;">${b.items.map(it=>`<div style="display:flex; align-items:center; gap:5px; margin:1px 0; padding:1px 5px; background:#fff; border-radius:4px; border:1px solid ${NL_LINE};"><span style="display:inline-flex; align-items:center;">${beltSwatchHtml(it.belt, true)}</span><span style="font-weight:600; font-size:${f(9.5)};">${escapeHtml(it.name)}</span><span style="margin-left:auto; font-size:${f(9)}; color:#666;">${escapeHtml(beltLabelFor(it.belt))}</span></div>`).join('')}</div>`;
