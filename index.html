@@ -21515,7 +21515,7 @@ function renderNewsletterBuilder(){
   overlay.innerHTML = `
   <div class="rio-card">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-      <h2 style="margin:0;">📰 Le Tatami</h2>
+      <h2 style="margin:0;">📰 L’Écho du dojo</h2>
       <button class="ghost icon-btn" id="nlCloseBtn" title="Enregistre le brouillon et ferme">✕</button>
     </div>
     <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin:10px 0;">
@@ -21625,12 +21625,13 @@ const NL_SECTIONS = [
 // Niveaux de densité (toujours 2 colonnes, photos conservées) : on essaie le plus aéré, puis on resserre
 // (photos et texte plus petits) jusqu'à ce que TOUT tienne sur UNE page A4.
 const NL_DENSITY_LEVELS = [
-  { cols:2, photoMax:6, photoW:0.52, fs:1 },
-  { cols:2, photoMax:6, photoW:0.48, fs:0.95 },
-  { cols:2, photoMax:6, photoW:0.44, fs:0.9 },
-  { cols:2, photoMax:6, photoW:0.40, fs:0.85 },
-  { cols:2, photoMax:6, photoW:0.36, fs:0.8 },
-  { cols:2, photoMax:6, photoW:0.32, fs:0.75 }
+  { cols:2, photoMax:6, photoW:0.55, fs:1 },
+  { cols:2, photoMax:6, photoW:0.51, fs:0.95 },
+  { cols:2, photoMax:6, photoW:0.47, fs:0.9 },
+  { cols:2, photoMax:6, photoW:0.43, fs:0.85 },
+  { cols:2, photoMax:6, photoW:0.39, fs:0.8 },
+  { cols:2, photoMax:6, photoW:0.35, fs:0.75 },
+  { cols:2, photoMax:6, photoW:0.31, fs:0.72 }
 ];
 const NL_PAGE_HEIGHT_PX = 1016; // hauteur d'une page A4 (marges de 24 pt déduites) à 700 px de large
 // Photos d'un article avec leur réglage de cadrage (fx = horizontal, fy = vertical, 0..1, 0.5 = centré).
@@ -21671,24 +21672,42 @@ async function newsletterCropPhoto(uri, outW, ratioHW, focusY, focusX){
   newsletterCropCache.set(key, out);
   return out;
 }
-// Colonne de photos (largeur colW) placée À CÔTÉ du texte (le texte contourne les photos : pas de place
-// perdue). Les photos sont empilées ; à partir de 4, elles passent sur 2 colonnes.
-async function newsletterPhotosHtml(items, colW, d){
+// Bloc de photos « façon journal » : une grande photo principale (ratio suivant l'image) + une rangée de
+// vignettes dessous. Largeur W ; toujours recadré sans déformation (pré-découpe canvas).
+async function newsletterPhotoFrame(it, w, ratio){
+  const h = Math.round(w*ratio);
+  let u = '';
+  try{ u = await newsletterCropPhoto(it.uri, Math.round(w*2.5), ratio, it.fy, it.fx); }catch(e){ return ''; }
+  return `<div style="flex:none; width:${w}px; height:${h}px; overflow:hidden; border-radius:2px; box-sizing:border-box;"><img src="${u}" width="${w}" height="${h}" style="display:block; flex:none; width:${w}px; height:${h}px; max-width:none;"></div>`;
+}
+async function newsletterPhotoBlockHtml(items, W, d, opts){
   items = (items||[]).filter(x=>x && x.uri).slice(0, d.photoMax);
   if(!items.length) return '';
+  const o = opts || {};
   const gap = 4;
-  const twoCols = items.length >= 4;
-  const w = twoCols ? Math.floor((colW - gap) / 2) : colW;
-  let ratio = 0.75;
-  if(items.length===1){
-    const img = await newsletterLoadImage(items[0].uri);
-    ratio = Math.max(0.6, Math.min(1.1, img.height/img.width));
+  const ps = Math.min(1, d.photoW / 0.5);
+  const frames = [];
+  if(o.row){
+    // Bandeau : photos côte à côte sur toute la largeur (3 max par rangée).
+    const cols = Math.min(items.length, 3);
+    const w = Math.floor((W - gap*(cols-1)) / cols);
+    const ratio = ({1:0.46, 2:0.62, 3:0.72})[cols] * (0.6 + 0.4*ps);
+    for(const it of items) frames.push(await newsletterPhotoFrame(it, w, ratio));
+    return `<div style="width:${W}px; display:flex; flex-wrap:wrap; gap:${gap}px;">${frames.join('')}</div>`;
   }
-  const h = Math.round(w*ratio);
-  const cropped = [];
-  for(const it of items){ try{ cropped.push(await newsletterCropPhoto(it.uri, w*2, ratio, it.fy, it.fx)); }catch(e){} }
-  if(!cropped.length) return '';
-  return `<div style="flex:none; width:${colW}px; display:flex; flex-wrap:wrap; justify-content:center; align-content:flex-start; gap:${gap}px;">${cropped.map(u=>`<div style="flex:none; width:${w}px; height:${h}px; overflow:hidden; border-radius:3px; border:1px solid ${NL_LINE}; box-sizing:border-box;"><img src="${u}" width="${w}" height="${h}" style="display:block; flex:none; width:${w}px; height:${h}px; max-width:none;"></div>`).join('')}</div>`;
+  let ratio = 0.8;
+  try{ const img = await newsletterLoadImage(items[0].uri); ratio = Math.max(0.62, Math.min(1.25, img.height/img.width)); }catch(e){}
+  ratio *= (0.7 + 0.3*ps);
+  const main = await newsletterPhotoFrame(items[0], W, ratio);
+  const rest = items.slice(1, 4);
+  let thumbs = '';
+  if(rest.length){
+    const w = Math.floor((W - gap*(rest.length-1)) / rest.length);
+    const fr = [];
+    for(const it of rest) fr.push(await newsletterPhotoFrame(it, w, 0.72));
+    thumbs = `<div style="display:flex; gap:${gap}px; margin-top:${gap}px;">${fr.join('')}</div>`;
+  }
+  return `<div style="width:${W}px;">${main}${thumbs}</div>`;
 }
 function newsletterTextHtml(text, color, fs){
   const f = n => (n*fs).toFixed(1)+'px';
@@ -21702,16 +21721,20 @@ function newsletterTextHtml(text, color, fs){
     return `<div style="font-size:${f(10)}; line-height:1.35; margin-top:2px; color:#333;">${escapeHtml(t)}</div>`;
   }).join('');
 }
-async function newsletterCardHtml(b, sec, cardW, d, idx){
-  const f = n => (n*d.fs).toFixed(1)+'px';
-  const innerW = cardW - 2 - 16; // bordures + padding
+// mode : 'hero' (article « une », pleine largeur, grande photo), 'banner' (photos en bandeau au-dessus
+// du texte), 'side-left' / 'side-right' (photo flottante, le texte l'entoure), 'text' (sans photo).
+async function newsletterCardHtml(b, sec, cardW, d, mode){
+  mode = mode || 'text';
+  const hero = mode === 'hero';
+  const fs = d.fs * (hero ? 1.15 : 1);
+  const f = n => (n*fs).toFixed(1)+'px';
+  const innerW = cardW - 2 - 20; // bordures + padding
   const photoItems = newsletterPhotoItems(b);
-  const colW = Math.round(innerW * d.photoW);
-  const photos = photoItems.length ? await newsletterPhotosHtml(photoItems, colW, d) : '';
+  let photos = '', body = '';
   let medalsRow = '';
   if(b.kind==='event' && (b.gold||b.silver||b.bronze)){
-    const chip = (ico, n)=> n ? `<span style="display:inline-block; margin-right:4px; font-weight:700; font-size:${f(10.5)}; color:${NL_NAVY};">${ico} ${n}</span>` : '';
-    medalsRow = `<div style="margin-top:1px;">${chip('🥇', b.gold)}${chip('🥈', b.silver)}${chip('🥉', b.bronze)}</div>`;
+    const chip = (ico, n)=> n ? `<span style="display:inline-block; margin-right:6px; font-weight:700; font-size:${f(11)}; color:${NL_NAVY};">${ico} ${n}</span>` : '';
+    medalsRow = `<div style="margin-top:2px;">${chip('🥇', b.gold)}${chip('🥈', b.silver)}${chip('🥉', b.bronze)}</div>`;
   }
   let extra = '';
   if(b.kind==='birthday' && (b.names||[]).length){
@@ -21720,15 +21743,26 @@ async function newsletterCardHtml(b, sec, cardW, d, idx){
   if(b.kind==='belt' && (b.items||[]).length){
     extra = `<div style="margin-top:3px;">${b.items.map(it=>`<div style="display:flex; align-items:center; gap:5px; margin:1px 0; padding:1px 5px; background:#fff; border-radius:4px; border:1px solid ${NL_LINE};"><span style="display:inline-flex; align-items:center;">${beltSwatchHtml(it.belt, true)}</span><span style="font-weight:600; font-size:${f(9.5)};">${escapeHtml(it.name)}</span><span style="margin-left:auto; font-size:${f(9)}; color:#666;">${escapeHtml(beltLabelFor(it.belt))}</span></div>`).join('')}</div>`;
   }
-  return `<div style="flex:none; box-sizing:border-box; width:${cardW}px; background:#fff; border:1px solid ${NL_LINE}; border-top:2px solid ${NL_YELLOW}; border-radius:3px; padding:5px 8px 6px;">
-    <div style="font-size:${f(8)}; letter-spacing:.14em; text-transform:uppercase; color:#8A94A3; margin-bottom:1px;">${sec.icon} ${escapeHtml(sec.label)}</div>
-    <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:${f(13)}; color:${NL_NAVY}; line-height:1.1;">${escapeHtml(b.title||'')}</div>
+  const text = `${newsletterTextHtml(b.text, NL_NAVY, fs)}${extra}`;
+  if(photoItems.length && mode==='banner'){
+    photos = await newsletterPhotoBlockHtml(photoItems, innerW, d, { row:true });
+    body = `<div style="margin-top:4px;">${photos}</div><div style="margin-top:4px;">${text}</div>`;
+  } else if(photoItems.length){
+    const W = Math.round(innerW * (hero ? Math.min(0.62, d.photoW + 0.08) : d.photoW));
+    photos = await newsletterPhotoBlockHtml(photoItems, W, d, {});
+    const left = hero || mode==='side-left';
+    // Photo flottante : le texte coule autour (à côté puis dessous) — aucune place perdue.
+    body = `<div style="margin-top:4px; overflow:hidden;"><div style="float:${left?'left':'right'}; width:${W}px; margin:0 ${left?'9px 3px 0':'0 3px 9px'};">${photos}</div>${text}</div>`;
+  } else {
+    body = `<div style="margin-top:3px;">${text}</div>`;
+  }
+  const titleSize = hero ? 24 : 14;
+  return `<div style="flex:none; box-sizing:border-box; width:${cardW}px; background:#fff; border-top:${hero?3:2}px solid ${hero?NL_NAVY:NL_YELLOW}; padding:5px 10px 6px;">
+    <div style="font-size:${f(8)}; letter-spacing:.16em; text-transform:uppercase; color:#8A94A3; margin-bottom:1px;"><span style="display:inline-block; width:8px; height:2px; background:${NL_YELLOW}; vertical-align:middle; margin-right:4px;"></span>${sec.icon} ${escapeHtml(sec.label)}</div>
+    <div style="font-family:Georgia,'Times New Roman',serif; font-weight:700; font-size:${f(titleSize)}; color:${NL_NAVY}; line-height:1.08;">${escapeHtml(b.title||'')}</div>
     ${b.subtitle ? `<div style="font-size:${f(8.5)}; color:#8A94A3; margin-top:1px;">${escapeHtml(b.subtitle)}</div>` : ''}
     ${medalsRow}
-    <div style="display:flex; gap:8px; align-items:flex-start; margin-top:3px; ${(idx||0)%2 ? 'flex-direction:row-reverse;' : ''}">
-      ${photos}
-      <div style="flex:1; min-width:0;">${newsletterTextHtml(b.text, NL_NAVY, d.fs)}${extra}</div>
-    </div>
+    ${body}
   </div>`;
 }
 function newsletterSectionHeaderHtml(sec){
@@ -21737,13 +21771,25 @@ function newsletterSectionHeaderHtml(sec){
 // Construit le HTML d'un niveau de densité : 2 colonnes, plusieurs articles empilés dans chaque
 // colonne ; chaque article est placé dans la colonne la moins haute (ordre des rubriques conservé).
 async function newsletterBuildBody(chosen, d){
-  const FULL_W = 632, GAP = 8;
+  const FULL_W = 632, GAP = 10;
   const cardW = Math.floor((FULL_W - GAP) / 2);
-  const cards = [];
-  for(const sec of NL_SECTIONS){
-    for(const it of chosen.filter(b=>b.kind===sec.key)) cards.push(await newsletterCardHtml(it, sec, cardW, d, cards.length));
+  const ordered = [];
+  NL_SECTIONS.forEach(sec=>chosen.filter(b=>b.kind===sec.key).forEach(b=>ordered.push({ b, sec })));
+  // Article « une » : celui qui a le plus de photos (en priorité un résultat de compétition).
+  let heroIdx = -1, best = 0;
+  ordered.forEach((o,i)=>{ const n = newsletterPhotoItems(o.b).length; const score = n*10 + (o.b.kind==='event'?5:0); if(n>0 && score>best){ best = score; heroIdx = i; } });
+  let heroHtml = '';
+  if(heroIdx >= 0){
+    const o = ordered.splice(heroIdx, 1)[0];
+    heroHtml = `<div style="margin-bottom:${GAP}px; border-bottom:1px solid ${NL_LINE}; padding-bottom:${GAP-4}px;">${await newsletterCardHtml(o.b, o.sec, FULL_W, d, 'hero')}</div>`;
   }
-  // Mesure de chaque carte (une par ligne dans une colonne de la bonne largeur).
+  const pattern = ['side-left', 'banner', 'side-right'];
+  let k = 0;
+  const cards = [];
+  for(const o of ordered){
+    const hasPhoto = newsletterPhotoItems(o.b).length > 0;
+    cards.push(await newsletterCardHtml(o.b, o.sec, cardW, d, hasPhoto ? pattern[k++ % pattern.length] : 'text'));
+  }
   const probe = document.createElement('div');
   probe.className = 'recap-doc';
   probe.style.cssText = `position:absolute; left:-9999px; top:0; width:${cardW + 68}px;`;
@@ -21754,11 +21800,12 @@ async function newsletterBuildBody(chosen, d){
   document.body.removeChild(probe);
   const cols = [[], []], colH = [0, 0];
   cards.forEach((c, i)=>{
-    const k = colH[0] <= colH[1] ? 0 : 1;
-    cols[k].push(c); colH[k] += heights[i] + GAP;
+    const j = colH[0] <= colH[1] ? 0 : 1;
+    cols[j].push(c); colH[j] += heights[i] + GAP;
   });
   const colHtml = arr => `<div style="flex:none; width:${cardW}px; display:flex; flex-direction:column; gap:${GAP}px;">${arr.join('')}</div>`;
-  return `<div style="display:flex; gap:${GAP}px; align-items:flex-start; margin-bottom:${GAP}px;">${colHtml(cols[0])}${colHtml(cols[1])}</div>`;
+  const grid = cards.length ? `<div style="display:flex; gap:${GAP}px; align-items:flex-start; margin-bottom:${GAP}px; position:relative;"><div style="position:absolute; left:${cardW + Math.floor(GAP/2)}px; top:0; bottom:0; width:1px; background:${NL_LINE};"></div>${colHtml(cols[0])}${colHtml(cols[1])}</div>` : '';
+  return heroHtml + grid;
 }
 async function newsletterMeasureHeight(html){
   const probe = document.createElement('div');
@@ -21797,19 +21844,20 @@ async function generateNewsletterPdf(){
     const stats = [`🏆 <strong>${nbEvents}</strong> compétition${nbEvents>1?'s':''}`, `🥇 <strong>${nbMedals}</strong> médaille${nbMedals>1?'s':''}`, nbStages ? `🥋 <strong>${nbStages}</strong> stage${nbStages>1?'s':''}` : ''].filter(Boolean).join(sep);
     // Filigrane : grand logo très pâle à droite du bandeau + fins traits jaune/bleu.
     const headerHtml = `
-      <div style="position:relative; overflow:hidden; border:1px solid ${NL_LINE}; border-left:4px solid ${NL_YELLOW}; border-radius:4px; margin-bottom:8px; background:#fff; padding:8px 14px 6px;">
-        ${logoSrc ? `<img src="${logoSrc}" alt="" width="${Math.round(logoW*3)}" height="162" style="position:absolute; right:-20px; top:-30px; height:162px; width:${Math.round(logoW*3)}px; max-width:none; opacity:0.06;">` : ''}
-        <div style="position:relative; display:flex; align-items:center; gap:14px;">
+      <div style="position:relative; margin-bottom:10px; padding-bottom:6px; border-bottom:3px solid ${NL_NAVY};">
+        <div style="display:flex; justify-content:space-between; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:#8A94A3; border-bottom:1px solid ${NL_LINE}; padding-bottom:3px;">
+          <span>${escapeHtml(period.label)}</span><span>La newsletter ${newsletterClubOf(data.clubName)}</span>
+        </div>
+        <div style="display:flex; align-items:center; justify-content:center; gap:16px; margin:6px 0 2px;">
           ${logoSrc ? `<img src="${logoSrc}" alt="Logo" width="${logoW}" height="54" style="display:block; flex:none; height:54px; width:${logoW}px; max-width:none;">` : ''}
-          <div>
-            <div style="font-family:'Rajdhani',sans-serif; font-weight:800; font-size:28px; letter-spacing:.18em; line-height:1; color:${NL_NAVY};">LE TATAMI</div>
-            <div style="font-size:10.5px; color:#5A6678; margin-top:2px; letter-spacing:.04em;">La newsletter ${newsletterClubOf(data.clubName)} · ${escapeHtml(period.label)}</div>
+          <div style="text-align:center;">
+            <div style="font-family:Georgia,'Times New Roman',serif; font-weight:700; font-size:40px; line-height:1; letter-spacing:.02em; color:${NL_NAVY};">L’ÉCHO <span style="color:${NL_YELLOW};">DU</span> DOJO</div>
           </div>
         </div>
-        <div style="position:relative; height:2px; margin-top:6px; background:linear-gradient(90deg,${NL_YELLOW} 0%,${NL_YELLOW} 18%,${NL_NAVY} 18%,${NL_NAVY} 100%);"></div>
-        <div style="position:relative; margin-top:5px; font-size:10px; color:${NL_NAVY};">${stats}</div>
+        <div style="height:2px; margin-top:5px; background:linear-gradient(90deg,${NL_YELLOW} 0%,${NL_YELLOW} 18%,${NL_NAVY} 18%,${NL_NAVY} 100%);"></div>
+        <div style="margin-top:4px; font-size:10px; color:${NL_NAVY}; text-align:center;">${stats}</div>
       </div>`;
-    const footerHtml = `<div style="text-align:center; font-size:9px; color:#9AA3B0; padding-top:4px; border-top:1px solid ${NL_LINE};">${escapeHtml(data.clubName||'')}${data.clubContact ? ' · '+escapeHtml(data.clubContact) : ''} — Le Tatami, ${escapeHtml(period.label)}</div>`;
+    const footerHtml = `<div style="text-align:center; font-size:9px; color:#9AA3B0; padding-top:4px; border-top:1px solid ${NL_LINE};">${escapeHtml(data.clubName||'')}${data.clubContact ? ' · '+escapeHtml(data.clubContact) : ''} — L’Écho du dojo, ${escapeHtml(period.label)}</div>`;
     // Tout sur UNE page : on prend le niveau de densité le plus aéré qui tient dans la page ; si même le
     // plus serré déborde, l'image est réduite pour tenir quand même sur la page.
     let bodyHtml = '', full = '';
@@ -21823,7 +21871,7 @@ async function generateNewsletterPdf(){
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit:'pt', format:'a4' });
     addCanvasFitOrTop(pdf, canvas, 24);
-    pdf.save(`le-tatami-${period.prefix}.pdf`);
+    pdf.save(`l-echo-du-dojo-${period.prefix}.pdf`);
     showToast('Newsletter générée');
   }catch(err){
     showToast('Échec de la génération : ' + (err.message||err));
