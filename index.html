@@ -21670,16 +21670,14 @@ const NL_SECTIONS = [
 ];
 // Niveaux de densité (toujours 2 colonnes, photos conservées) : on essaie le plus aéré, puis on resserre
 // (photos et texte plus petits) jusqu'à ce que TOUT tienne sur UNE page A4.
-const NL_DENSITY_LEVELS = [
-  { cols:2, photoMax:6, photoW:0.55, fs:1.25 },
-  { cols:2, photoMax:6, photoW:0.50, fs:1.22 },
-  { cols:2, photoMax:6, photoW:0.45, fs:1.19 },
-  { cols:2, photoMax:6, photoW:0.41, fs:1.16 },
-  { cols:2, photoMax:6, photoW:0.37, fs:1.13 },
-  { cols:2, photoMax:6, photoW:0.33, fs:1.10 },
-  { cols:2, photoMax:6, photoW:0.30, fs:1.06 },
-  { cols:2, photoMax:6, photoW:0.28, fs:1.02 }
-];
+// On réduit d'abord les PHOTOS (de plus en plus petites), le texte ne diminue qu'en dernier recours :
+// ainsi tout tient sur la page SANS réduire l'ensemble (plus de bandes blanches sur les côtés).
+const NL_DENSITY_LEVELS = (()=>{
+  const out = [];
+  for(let w = 0.55; w >= 0.149; w -= 0.03) out.push({ cols:2, photoMax:6, photoW:+w.toFixed(2), fs:1.25 });
+  [1.2, 1.15, 1.1, 1.05, 1.0].forEach(fs=> out.push({ cols:2, photoMax:4, photoW:0.15, fs }));
+  return out;
+})();
 const NL_PAGE_HEIGHT_PX = 990; // hauteur d'une page A4 (marges de 24 pt déduites) à 700 px de large
 // Photos d'un article avec leur réglage de cadrage (fx = horizontal, fy = vertical, 0..1, 0.5 = centré).
 function newsletterPhotoKey(b, kind, idx){ return kind==='c' ? 'c'+idx : String(b.photoIds[idx]); }
@@ -21738,7 +21736,7 @@ async function newsletterPhotoBlockHtml(items, W, d, opts){
     // Bandeau : photos côte à côte sur toute la largeur (3 max par rangée).
     const cols = Math.min(items.length, 3);
     const w = Math.floor((W - gap*(cols-1)) / cols);
-    const ratio = ({1:0.46, 2:0.62, 3:0.72})[cols] * (0.6 + 0.4*ps);
+    const ratio = ({1:0.46, 2:0.62, 3:0.72})[cols] * (0.3 + 0.7*ps);
     for(const it of items) frames.push(await newsletterPhotoFrame(it, w, ratio));
     return `<div style="width:${W}px; display:flex; flex-wrap:wrap; gap:${gap}px;">${frames.join('')}</div>`;
   }
